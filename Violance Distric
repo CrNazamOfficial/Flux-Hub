@@ -2218,17 +2218,44 @@ RunTab("Misc", function(Add, Title, AddFeature)
 
 	Title("Server")
 	local serverRow = Add("Server Actions")
-	local serverCard = p:FindFirstChild("Row_Server Actions")
-	local serverControls = serverCard and serverCard.Top and serverCard.Top.Controls
-	if serverControls then
-		local respawnBtn = mkTabBtn(serverControls, "Respawn", false)
-		local joinBtn = mkTabBtn(serverControls, "Join Server", false)
-		local hopBtn = mkTabBtn(serverControls, "Server Hop", false)
-		respawnBtn.LayoutOrder = 0; joinBtn.LayoutOrder = 1; hopBtn.LayoutOrder = 2
-		track(respawnBtn.MouseButton1Click:Connect(function() playClick() end))
-		track(joinBtn.MouseButton1Click:Connect(function() playClick() end))
-		track(hopBtn.MouseButton1Click:Connect(function() playClick() end))
-	end
+local serverCard = p:FindFirstChild("Row_Server Actions")
+local serverControls = serverCard and serverCard.Top and serverCard.Top.Controls
+if serverControls then
+    local respawnBtn = mkTabBtn(serverControls, "Respawn", false)
+    local joinBtn = mkTabBtn(serverControls, "Join Server", false)
+    local hopBtn = mkTabBtn(serverControls, "Server Hop", false)
+    respawnBtn.LayoutOrder = 0; joinBtn.LayoutOrder = 1; hopBtn.LayoutOrder = 2
+    track(respawnBtn.MouseButton1Click:Connect(function()
+        playClick()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then pcall(function() hum.Health = 0 end) end
+    end))
+    track(joinBtn.MouseButton1Click:Connect(function()
+        playClick()
+        pcall(function()
+            game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+        end)
+    end))
+    track(hopBtn.MouseButton1Click:Connect(function()
+        playClick()
+        pcall(function()
+            local TS = game:GetService("TeleportService")
+            local HS = game:GetService("HttpService")
+            local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId)
+            local ok, res = pcall(function() return game:HttpGet(url) end)
+            if not ok or not res then return end
+            local data = HS:JSONDecode(res)
+            if not data or not data.data then return end
+            for _, srv in ipairs(data.data) do
+                if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
+                    TS:TeleportToPlaceInstance(game.PlaceId, srv.id, LocalPlayer)
+                    return
+                end
+            end
+        end)
+    end))
+end
 
 	track(closeBtn.MouseButton1Click:Connect(function() playClick(); setWindow(false) end))
 	track(loadBtn.MouseButton1Click:Connect(function()
