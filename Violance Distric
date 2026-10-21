@@ -2469,6 +2469,13 @@ revealMenu = function()
 end
 buildDone = true
 
+task.spawn(function()
+	task.wait(0.05)
+	if gui.Parent and not closing and not revealed then
+		revealMenu()
+	end
+end)
+
 -- ===== API JEMBATAN =====
 function FluxHub:Get(name)
 	local api = FeatureRegistry[name]
