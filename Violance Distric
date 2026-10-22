@@ -551,7 +551,7 @@ for _, data in ipairs(tabsData) do
 		ZIndex = 4,
 	}, sf)
 
-	local iconImg = make("ImageLabel", {
+	make("ImageLabel", {
 		Name = "Icon",
 		Position = UDim2.new(0, 4, 0, 6),
 		Size = UDim2.new(0, 44, 0, 44),
@@ -571,7 +571,7 @@ for _, data in ipairs(tabsData) do
 		ZIndex = 5,
 	}, headerBlock)
 
-	local titleLbl = make("TextLabel", {
+	make("TextLabel", {
 		Name = "Title",
 		Position = UDim2.new(0, 76, 0, 2),
 		Size = UDim2.new(1, -80, 0, 22),
@@ -584,7 +584,7 @@ for _, data in ipairs(tabsData) do
 		ZIndex = 5,
 	}, headerBlock)
 
-	local descLbl = make("TextLabel", {
+	make("TextLabel", {
 		Name = "Desc",
 		Position = UDim2.new(0, 76, 0, 26),
 		Size = UDim2.new(1, -80, 0, 32),
@@ -737,7 +737,8 @@ local function setTabState(ref, active, instant)
 		tw(ref.Button, 0.2, { BackgroundTransparency = bgTransparency })
 		tw(ref.Label, 0.2, { TextColor3 = textColor })
 		tw(ref.Icon, 0.2, { ImageTransparency = iconTransparency })
-	endend
+	end
+end
 
 local function applyPage(data)
 	for name, p in pairs(Pages) do
@@ -1275,7 +1276,6 @@ local function Row(pageObj, text)
 			s = ns; v = nv
 			refresh()
 		end
-		-- FIX bug color picker: input.Position sudah koordinat screen, jangan tambah GuiInset
 		local function inputPos(input)
 			return Vector2.new(input.Position.X, input.Position.Y)
 		end
@@ -2179,7 +2179,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		TOF_State.LaserEnabled = v
 	end)
 
-	-- AUTO PARRY
 	local AP = {
 		Enabled = false,
 		Range = 5,
@@ -2608,7 +2607,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		if not v then AP_DestroyRing() end
 	end)
 
-	-- AUTO GENERATOR
 	local AG = { Enabled = false, Mode = "PERFECT", ScourgeMode = "INSTANT", Busy = false, ScourgeActive = false, ScourgeRound = 0, LastVisible = 0, PreviousVisible = false, Conns = {} }
 	local AG_Check = nil
 	local AG_Line = nil
@@ -2769,13 +2767,8 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end
 	end)
 	AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
-	local AG_CheckNormal = AG_Row:Check("Normal", false, function(s) if s then AG_CheckNormal.Set(false, true) end end)
-	local AG_CheckInstant = AG_Row:Check("Instant", false, function(s) if s then AG_CheckNormal.Set(false, true) end end)
 	AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
 
-	-- ============================================================
-	-- BOOST GENERATOR
-	-- ============================================================
 	local BG = {
 		Enabled = false, Active = false, Sending = false, Drop = false, Remote = nil,
 		IsRunning = false, StartTime = 0, AutoRepair = false, AutoThread = nil,
@@ -3371,7 +3364,7 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 							local re = BG_RepairEvent(); if re then pcall(function() re:FireServer(BG.AutoPoint, false) end) end
 						end
 						BG.AutoPoint = nil
-						BG_StopAnim() -- FIX: sebelumnya BG.StopAnim() (typo)
+						BG_StopAnim()
 					end
 				end
 			end)
@@ -3433,9 +3426,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- AUTO DODGE CROUCH
-	-- ============================================================
 	local ADC = { Enabled = false, Thread = nil, IsCrouching = false, Range = 25 }
 	local ADC_ABYSSAL = "rbxassetid://80411309607666"
 	local ADC_VIM = game:GetService("VirtualInputManager")
@@ -3510,9 +3500,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	end)
 	ADC_Toggle.Extras = { ADC_Row:Stepper({ Min = 15, Max = 35, Step = 1, Default = 25 }, function(v) ADC.Range = v end) }
 
-	-- ============================================================
-	-- SPEED BOOST
-	-- ============================================================
 	local SB = { Enabled = false, Additional = 0.50, Conn = nil, CharConn = nil, LastBase = 0, LastApplied = 0 }
 
 	local function SB_Monitor(char)
@@ -3571,9 +3558,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	end)
 	SB_Toggle.Extras = { SB_Row:Stepper({ Min = 0.50, Max = 100, Step = 0.05, Decimals = 2, Default = 0.50 }, function(v) SB.Additional = v end) }
 
-	-- ============================================================
-	-- INVISIBLE
-	-- ============================================================
 	local INV = { Enabled = false, Module = nil, Busy = false, Loading = false, URL = "https://leekguy.vercel.app/roblox/menghub/crack_obf_invisible_93978595733734.lua", IconIds = { "rbxassetid://133149347590039", "rbxassetid://777869394766337" }, Resolved = nil, Resolving = false, LastBuild = 0, CharConns = {}, RenderCon = nil }
 
 	local function INV_Load()
@@ -3688,9 +3672,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- GOD MODE
-	-- ============================================================
 	local GM = { Enabled = false, Conn = nil }
 	local function GM_Apply()
 		local c = TOF_PLAYER.Character
@@ -3704,9 +3685,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		if state then GM.Conn = RunService.Heartbeat:Connect(GM_Apply) end
 	end)
 
-	-- ============================================================
-	-- SELF HEAL
-	-- ============================================================
 	local SH = { Enabled = false, LoopId = 0, AnimConn = nil }
 	local SH_ANIM = "95836365038528"
 	local SH_BUSY = { "isVaulting", "isRepairing", "isUnhooking", "isHealing", "isSliding" }
@@ -3753,9 +3731,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- ANTI FALL DAMAGE
-	-- ============================================================
 	local NF = { Enabled = false }
 	local NF_Remote = nil
 	local function NF_Setup()
@@ -3786,9 +3761,6 @@ end)
 RunTab("Killer", function(Add, Title, AddFeature)
 	Title("Features")
 
-	-- ============================================================
-	-- SILENT AIM VEIL
-	-- ============================================================
 	local SAV = {
 		Enabled = false,
 		Visual = false,
@@ -4321,9 +4293,6 @@ RunTab("Killer", function(Add, Title, AddFeature)
 	SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = 10, Max = 90, Step = 1, Default = 35 }, function(v) SAV.Fov = v end)
 	SAV_Toggle.Extras[2] = SAV_Row:Check("Snap Line", false, function(v) SAV.Visual = v; if not v then SAV_UpdateSnap() end end)
 
-	-- ============================================================
-	-- MASKED [ BETA ]
-	-- ============================================================
 	local MK = { Index = 1, Masks = { "Alex", "Brandon", "Cobra", "Rabbit", "Richter", "Tony" } }
 	local function MK_GetRemote(name)
 		local r = ReplicatedStorage:FindFirstChild("Remotes")
@@ -4345,9 +4314,6 @@ RunTab("Killer", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- INFINITE LUNGE
-	-- ============================================================
 	local IL = { Enabled = false, FrenzyToken = 0, PursuitToken = 0, Flags = { Frenzy = false, Pursuit = false }, Conns = {}, Hooked = false }
 	local IL_genv = (getgenv and getgenv()) or _G
 	IL_genv.VD_INF_FLAGS = IL.Flags
@@ -4463,9 +4429,6 @@ RunTab("Killer", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- BLOCK VAULT
-	-- ============================================================
 	local BV = { Enabled = false, Busy = false }
 	local function BV_GetRemotes()
 		local r = ReplicatedStorage:FindFirstChild("Remotes")
@@ -4510,9 +4473,6 @@ RunTab("Killer", function(Add, Title, AddFeature)
 		BV.Busy = false
 	end)
 
-	-- ============================================================
-	-- ANTI BLIND
-	-- ============================================================
 	local AB = { Enabled = false, Thread = nil }
 	local function AB_Loop()
 		AB.Thread = task.spawn(function()
@@ -4538,10 +4498,7 @@ RunTab("Killer", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- NO COOLDOWN SKILL
-	-- ============================================================
-	local NC = { Enabled = false, HiddenThread = nil, AbyssConn = nil, SlashConn = nil, CorruptFunc = nil, SlashFunc = nil, CancelFunc = nil, Conns = {} } -- FIX: NC.Conns diinisialisasi
+	local NC = { Enabled = false, HiddenThread = nil, AbyssConn = nil, SlashConn = nil, CorruptFunc = nil, SlashFunc = nil, CancelFunc = nil, Conns = {} }
 	local NC_ABYSS_ID = "80411309607666"
 
 	local function NC_StartLeap()
@@ -4653,16 +4610,11 @@ RunTab("Killer", function(Add, Title, AddFeature)
 			NC.Conns = {}
 		end
 	end)
-
-	-- ============================================================
-	-- TAMBAH FITUR BARU DI BAWAH GARIS INI
-	-- ============================================================
 end)
 
- RunTab("Visual", function(Add, Title, AddFeature)
+RunTab("Visual", function(Add, Title, AddFeature)
 	Title("Features")
 
-	-- FOV KILLER OUTLINE
 	local FK = {
 		Enabled = false, Conns = {}, KillerCache = setmetatable({}, { __mode = "k" }),
 		FovObjs = {}, FovScanT = 0, RayFilterT = 0, Color = Color3.fromRGB(255, 255, 255),
@@ -4824,7 +4776,6 @@ end)
 		for _, o in pairs(FK.FovObjs) do for _, b in ipairs(o.boxes) do pcall(function() b.Color3 = c end) end end
 	end)
 
-	-- GENERATOR ESP + PROGRESS
 	local GE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
 	local GE_CFG = { OUTLINE = Color3.fromRGB(139, 69, 19), BG = Color3.fromRGB(15, 15, 15), BORDER = Color3.fromRGB(60, 60, 60), TEXT = Color3.fromRGB(255, 255, 255), COL_START = Color3.fromRGB(235, 94, 40), COL_MID = Color3.fromRGB(247, 197, 65), COL_END = Color3.fromRGB(38, 194, 129) }
 	local function GE_Color(p) if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end; return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2) end
@@ -4936,8 +4887,7 @@ end)
 		end
 	end)
 
-	-- HIDE PROFILE
-	local HP = { Enabled = false, Conn = nil, Ignore = {}, Conns = {} } -- FIX: HP.Conns diinisialisasi
+	local HP = { Enabled = false, Conn = nil, Ignore = {}, Conns = {} }
 	local HP_Images = { "rbxassetid://116195390191737", "rbxassetid://71206105261987" }
 	local HP_Name = "FLUX HUB"
 	local HP_Applying = setmetatable({}, { __mode = "k" })
@@ -4970,7 +4920,7 @@ end)
 	local function HP_Protect(root)
 		if not root then return end
 		for _, o in ipairs(root:GetDescendants()) do HP_Obliterate(o) end
-		root.DescendantAdded:Connect(function(o) task.defer(function() HP_Obliterate(o) end) end)
+		 root.DescendantAdded:Connect(function(o) task.defer(function() HP_Obliterate(o) end) end)
 	end
 	local function HP_Esc(s) return (string.gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
 	local function HP_GetNames() local n = {}; for _, p in ipairs(Players:GetPlayers()) do n[p.Name] = true; n[p.DisplayName] = true end; return n end
@@ -5032,7 +4982,6 @@ end)
 		end
 	end)
 
-	-- HOOK ESP
 	local HE = { Enabled = false, Highlights = {}, Labels = {}, Tracked = {}, Conns = {}, Color = Color3.fromRGB(255, 80, 80) }
 	local function HE_GetRoot(inst)
 		local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
@@ -5102,7 +5051,6 @@ end)
 		for _, hl in pairs(HE.Highlights) do pcall(function() hl.FillColor = c end) end
 	end)
 
-	-- KILLER ESP
 	local KE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(30, 0, 0) }
 	local KE_Outline = Color3.fromRGB(51, 51, 51)
 	local function KE_IsKiller(p)
@@ -5165,7 +5113,6 @@ end)
 		end
 	end)
 
-	-- LOCK FOV
 	local LF = { Enabled = false, Value = 70, Conn = nil, CamConn = nil }
 	local function LF_Set(v) local c = workspace.CurrentCamera; if c then c.FieldOfView = v end end
 	local LF_Row = Add("Lock Fov")
@@ -5198,7 +5145,6 @@ end)
 	end)
 	LF_Toggle.Extras = { LF_Row:Stepper({ Min = 40, Max = 140, Step = 1, Default = 70 }, function(v) LF.Value = v; if LF.Enabled then LF_Set(v) end end) }
 
-	-- MAP PREDICTION
 	local MP = { Enabled = false, Gui = nil, Conns = {}, LastMap = nil, LastMapExists = false, KillerLine = nil, MapLine = nil }
 	local MP_CFG = { Accent = Color3.fromRGB(255, 255, 255), Text = Color3.fromRGB(255, 255, 255), Red = Color3.fromRGB(0, 0, 0), Black = Color3.fromRGB(0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 14, BoxWidth = 230, StartX = 0.5, StartY = 56, UpdateRate = 0.5 }
 	local function MP_Esc(s) s = tostring(s); s = string.gsub(s, "&", "&amp;"); s = string.gsub(s, "<", "&lt;"); s = string.gsub(s, ">", "&gt;"); return s end
@@ -5300,7 +5246,6 @@ end)
 		end
 	end)
 
-	-- PALLET ESP
 	local PE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
 	local PE_Outline = Color3.fromRGB(139, 69, 19)
 	local function PE_Apply(obj)
@@ -5336,7 +5281,6 @@ end)
 		end
 	end)
 
-	-- PERKS KILLER PREDICTION
 	local PK = { Enabled = false, Gui = nil, Lines = {}, Conns = {}, Color = Color3.fromRGB(0, 0, 0) }
 	local PK_CFG = { Accent = Color3.fromRGB(255, 255, 255), Text = Color3.fromRGB(255, 255, 255), Red = Color3.fromRGB(0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 13, BoxWidth = 220, StartX = 0.18, StartY = 0.30, MaxPerks = 5, LineHeight = 18, UpdateRate = 1 }
 	local function PK_Esc(s) s = tostring(s); s = string.gsub(s, "&", "&amp;"); s = string.gsub(s, "<", "&lt;"); s = string.gsub(s, ">", "&gt;"); return s end
@@ -5418,7 +5362,6 @@ end)
 		end
 	end)
 
-	-- WINDOW ESP
 	local WE = { Enabled = false, Objects = {}, Scanned = {}, Conns = {}, Color = Color3.fromRGB(255, 255, 255), ShowHL = true }
 	local function WE_Remove(win)
 		local d = WE.Objects[win]; if not d then return end
@@ -5498,7 +5441,6 @@ end)
 		end
 	end)
 
-	-- SURVIVOR ESP
 	local SE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(240, 240, 240) }
 	local SE_Outline = Color3.fromRGB(255, 255, 255)
 	local function SE_IsKiller(p)
@@ -5556,7 +5498,6 @@ end)
 		end
 	end)
 
-	-- WORLD SETTING
 	local WS = { Enabled = false, Tracked = {}, OwnSky = nil, GlobalConns = {}, Heartbeat = nil, Enforcing = false }
 	local WS_Lighting = game:GetService("Lighting")
 	local WS_FACES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
@@ -6123,7 +6064,6 @@ RunTab("Misc", function(Add, Title, AddFeature)
 	end
 end)
 
--- MINIMIZE (ICON) / CLOSE / DRAG / STARTUP
 local MINI_SIZE = 54
 local iconPos = nil
 
