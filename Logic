@@ -1,36 +1,25 @@
--- Script Auto Skip SEMUA Animasi (Super Cepat)
+-- Script Auto Skip Animasi Spesifik + Trigger Remote Skip
 -- LocalScript di StarterPlayerScripts
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local SKIP_REMOTE_NAME = "JumpFlySkipRequest"
-
--- ==========================================
--- KONFIGURASI
--- ==========================================
-local SKIP_ALL_ANIMATIONS = true        -- true = skip SEMUA animasi, false = hanya ID tertentu
-local TARGET_ANIMATION_IDS = {          -- isi ID animasi spesifik kalau SKIP_ALL = false
-    "98352002677627"
-}
-local USE_TELEPORT = false              -- true = teleport saat skip
-local TELEPORT_CFRAME = CFrame.new(116.8, 599.6, -3102.1)
-local COOLDOWN = 0.05                   -- jeda antar cek (super cepat, 50ms)
+local TARGET_ANIM_ID = "98352002677627"
 
 -- ==========================================
 -- NOTIFIKASI STATUS ON
 -- ==========================================
-local function showNotification(text, color)
+local function notify(text, color)
     local gui = Instance.new("ScreenGui")
     gui.Name = "SkipNotif_" .. tick()
     gui.ResetOnSpawn = false
     gui.Parent = player:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 45)
-    frame.Position = UDim2.new(0.5, -140, 0, 20)
+    frame.Size = UDim2.new(0, 300, 0, 45)
+    frame.Position = UDim2.new(0.5, -150, 0, 20)
     frame.BackgroundColor3 = color or Color3.fromRGB(0, 170, 0)
     frame.BorderSizePixel = 0
     frame.Parent = gui
@@ -50,93 +39,63 @@ local function showNotification(text, color)
     label.Parent = frame
 
     task.delay(2, function()
-        if frame and frame.Parent then
-            local TweenService = game:GetService("TweenService")
-            TweenService:Create(frame, TweenInfo.new(0.4), {BackgroundTransparency = 1}):Play()
-            TweenService:Create(label, TweenInfo.new(0.4), {TextTransparency = 1}):Play()
-            task.wait(0.5)
-            if gui and gui.Parent then gui:Destroy() end
-        end
+        if gui and gui.Parent then gui:Destroy() end
     end)
 end
 
-showNotification("⚡ AUTO SKIP ON - Semua Animasi", Color3.fromRGB(0, 170, 0))
+notify("✅ Status: ON - Auto Skip Aktif", Color3.fromRGB(0, 170, 0))
 
 -- ==========================================
--- FUNGSI CEK ID
+-- FUNGSI TRIGGER SKIP
 -- ==========================================
-local function isTargetAnimation(animId)
-    if SKIP_ALL_ANIMATIONS then return true end
-    for _, id in ipairs(TARGET_ANIMATION_IDS) do
-        if string.find(animId, id) then return true end
+local triggered = false
+
+local function doSkip(track)
+    if triggered then return end
+    triggered = true
+
+    -- 1. Stop animasi instan
+    pcall(function() track:Stop(0) end)
+
+    -- 2. Picu remote skip
+    local remote = ReplicatedStorage:FindFirstChild(SKIP_REMOTE_NAME, true)
+    if remote and remote:IsA("RemoteEvent") then
+        pcall(function() remote:FireServer() end)
+        print("[SKIP] Remote terkirim!")
+    else
+        warn("[SKIP] Remote '" .. SKIP_REMOTE_NAME .. "' tidak ditemukan!")
     end
-    return false
+
+    notify("⏭️ Animasi di-SKIP!", Color3.fromRGB(200, 50, 50))
+
+    task.delay(0.3, function() triggered = false end)
 end
 
 -- ==========================================
--- LOGIKA SKIP
--- ==========================================
-local skipCooldown = 0
-
-local function skipAnimations(character, humanoid)
-    local animator = humanoid:FindFirstChildOfClass("Animator")
-    if not animator then return end
-
-    local tracks = animator:GetPlayingAnimationTracks()
-    for _, track in ipairs(tracks) do
-        if track.Animation and isTargetAnimation(track.Animation.AnimationId) then
-            -- Stop instan
-            pcall(function() track:Stop(0) end)
-            pcall(function() track:Destroy() end) -- extra agresif
-
-            -- Kirim remote skip
-            local remote = ReplicatedStorage:FindFirstChild(SKIP_REMOTE_NAME, true)
-            if remote and remote:IsA("RemoteEvent") then
-                pcall(function() remote:FireServer() end)
-            end
-
-            -- Teleport opsional
-            if USE_TELEPORT then
-                local hrp = character:FindFirstChild("HumanoidRootPart")
-                if hrp then hrp.CFrame = TELEPORT_CFRAME end
-            end
-
-            showNotification("⏭️ SKIP! " .. track.Animation.AnimationId:match("%d+"), Color3.fromRGB(200, 50, 50))
-            print("[AUTO-SKIP] Animation stopped:", track.Animation.AnimationId)
-        end
-    end
-end
-
--- ==========================================
--- LOOP SUPER CEPAT (RenderStepped = tiap frame)
+-- DETEKSI ANIMASI (2 LAPIS BIAR CEPAT)
 -- ==========================================
 local function setup(character)
     local humanoid = character:WaitForChild("Humanoid")
+    local animator = humanoid:WaitForChild("Animator")
 
-    RunService.RenderStepped:Connect(function(dt)
-        if not character.Parent then return end
-        if humanoid.Health <= 0 then return end
-
-        skipCooldown = skipCooldown - dt
-        if skipCooldown <= 0 then
-            skipCooldown = COOLDOWN
-            skipAnimations(character, humanoid)
+    -- LAPIS 1: Event instan saat animasi baru diputar
+    animator.AnimationPlayed:Connect(function(track)
+        if track.Animation and string.find(track.Animation.AnimationId, TARGET_ANIM_ID) then
+            task.defer(function() doSkip(track) end)
         end
     end)
 
-    -- Fallback: pantau animasi baru via ChildAdded
-    local animator = humanoid:WaitForChild("Animator")
-    animator.AnimationPlayed:Connect(function(track)
-        task.defer(function()
-            if track.Animation and isTargetAnimation(track.Animation.AnimationId) then
-                pcall(function() track:Stop(0) end)
-                local remote = ReplicatedStorage:FindFirstChild(SKIP_REMOTE_NAME, true)
-                if remote and remote:IsA("RemoteEvent") then
-                    pcall(function() remote:FireServer() end)
+    -- LAPIS 2: Polling cepat (jaga-jaga kalau event gak ke-trigger)
+    task.spawn(function()
+        while character.Parent do
+            local tracks = animator:GetPlayingAnimationTracks()
+            for _, track in ipairs(tracks) do
+                if track.Animation and string.find(track.Animation.AnimationId, TARGET_ANIM_ID) then
+                    doSkip(track)
                 end
-                showNotification("⏭️ SKIP! " .. track.Animation.AnimationId:match("%d+"), Color3.fromRGB(200, 50, 50))
             end
-        end)
+            task.wait(0.05) -- 50ms = super cepat
+        end
     end)
 end
 
