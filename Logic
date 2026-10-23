@@ -1,106 +1,170 @@
--- Script Auto Skip Animasi Spesifik + Trigger Remote Skip
--- LocalScript di StarterPlayerScripts
+-- // KONFIGURASI
+local Config = {
+    LoopDelay = 0.15, 
+    HeightThresholdMin = -100, -- Jika turun drastis ke bawah map
+    HeightThresholdMax = 500,  -- Jika terlempar terlalu tinggi
+    AutoSkipEnabled = false,
+    ForwardDistance = 10 -- Jarak paksa maju (stud) saat ketinggian aneh
+}
 
+-- // LAYANAN
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
-local player = Players.LocalPlayer
-local SKIP_REMOTE_NAME = "JumpFlySkipRequest"
-local TARGET_ANIM_ID = "98352002677627"
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local SkipRemote = ReplicatedStorage:WaitForChild("JumpFlySkipRequest")
 
--- ==========================================
--- NOTIFIKASI STATUS ON
--- ==========================================
-local function notify(text, color)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "SkipNotif_" .. tick()
-    gui.ResetOnSpawn = false
-    gui.Parent = player:WaitForChild("PlayerGui")
+-- // VARIABEL STATE
+local SkipConnection = nil
+local IsResetting = false
 
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 300, 0, 45)
-    frame.Position = UDim2.new(0.5, -150, 0, 20)
-    frame.BackgroundColor3 = color or Color3.fromRGB(0, 170, 0)
-    frame.BorderSizePixel = 0
-    frame.Parent = gui
+-- // MEMBUAT UI BULAT ANTI-HILANG SAAT RESPAWN
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoSkipUI_Bulat"
+ScreenGui.ResetOnSpawn = false -- Wajib false agar tidak hilang saat respawn
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = PlayerGui
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 60, 0, 60) 
+MainFrame.Position = UDim2.new(0, 20, 0.5, -30)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -10, 1, 0)
-    label.Position = UDim2.new(0, 5, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.TextColor3 = Color3.new(1, 1, 1)
-    label.TextScaled = true
-    label.Font = Enum.Font.GothamBold
-    label.Parent = frame
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(1, 0) 
+UICorner.Parent = MainFrame
 
-    task.delay(2, function()
-        if gui and gui.Parent then gui:Destroy() end
-    end)
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Size = UDim2.new(0.8, 0, 0.8, 0) 
+ToggleButton.Position = UDim2.new(0.1, 0, 0.1, 0)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50) 
+ToggleButton.Text = "OFF"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.TextSize = 14
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Parent = MainFrame
+
+local ButtonCorner = Instance.new("UICorner")
+ButtonCorner.CornerRadius = UDim.new(1, 0)
+ButtonCorner.Parent = ToggleButton
+
+-- // FITUR DRAG MANUAL (Anti-Bug saat Respawn)
+local dragging = false
+local dragInput, dragStart, startPos
+
+local function update(input)
+    local delta = input.Position - dragStart
+    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 end
 
-notify("✅ Status: ON - Auto Skip Aktif", Color3.fromRGB(0, 170, 0))
-
--- ==========================================
--- FUNGSI TRIGGER SKIP
--- ==========================================
-local triggered = false
-
-local function doSkip(track)
-    if triggered then return end
-    triggered = true
-
-    -- 1. Stop animasi instan
-    pcall(function() track:Stop(0) end)
-
-    -- 2. Picu remote skip
-    local remote = ReplicatedStorage:FindFirstChild(SKIP_REMOTE_NAME, true)
-    if remote and remote:IsA("RemoteEvent") then
-        pcall(function() remote:FireServer() end)
-        print("[SKIP] Remote terkirim!")
-    else
-        warn("[SKIP] Remote '" .. SKIP_REMOTE_NAME .. "' tidak ditemukan!")
-    end
-
-    notify("⏭️ Animasi di-SKIP!", Color3.fromRGB(200, 50, 50))
-
-    task.delay(0.3, function() triggered = false end)
-end
-
--- ==========================================
--- DETEKSI ANIMASI (2 LAPIS BIAR CEPAT)
--- ==========================================
-local function setup(character)
-    local humanoid = character:WaitForChild("Humanoid")
-    local animator = humanoid:WaitForChild("Animator")
-
-    -- LAPIS 1: Event instan saat animasi baru diputar
-    animator.AnimationPlayed:Connect(function(track)
-        if track.Animation and string.find(track.Animation.AnimationId, TARGET_ANIM_ID) then
-            task.defer(function() doSkip(track) end)
-        end
-    end)
-
-    -- LAPIS 2: Polling cepat (jaga-jaga kalau event gak ke-trigger)
-    task.spawn(function()
-        while character.Parent do
-            local tracks = animator:GetPlayingAnimationTracks()
-            for _, track in ipairs(tracks) do
-                if track.Animation and string.find(track.Animation.AnimationId, TARGET_ANIM_ID) then
-                    doSkip(track)
-                end
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
             end
-            task.wait(0.05) -- 50ms = super cepat
+        end)
+    end
+end)
+
+MainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        update(input)
+    end
+end)
+
+-- // LOGIC AUTO SKIP
+local function ToggleAutoSkip()
+    Config.AutoSkipEnabled = not Config.AutoSkipEnabled
+    
+    if Config.AutoSkipEnabled then
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(50, 200, 50) 
+        ToggleButton.Text = "ON"
+        
+        SkipConnection = task.spawn(function()
+            while Config.AutoSkipEnabled do
+                pcall(function()
+                    SkipRemote:FireServer()
+                end)
+                task.wait(Config.LoopDelay)
+            end
+        end)
+    else
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50) 
+        ToggleButton.Text = "OFF"
+        if SkipConnection then
+            task.cancel(SkipConnection)
         end
-    end)
+    end
 end
 
-if player.Character then setup(player.Character) end
-player.CharacterAdded:Connect(function(c)
-    task.wait(0.5)
-    setup(c)
+ToggleButton.MouseButton1Click:Connect(ToggleAutoSkip)
+
+-- // LOGIC DETEKSI KETINGGIAN & PINDAH POSISI INSTAN (Maju seperti W)
+RunService.Heartbeat:Connect(function()
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    
+    if hrp and humanoid and humanoid.Health > 0 and not IsResetting then
+        
+        local currentY = hrp.Position.Y
+        local isFallingThroughMap = currentY < Config.HeightThresholdMin
+        local isFlyingTooHigh = currentY > Config.HeightThresholdMax
+        
+        if isFallingThroughMap or isFlyingTooHigh then
+            IsResetting = true
+            
+            -- Matikan physics sementara agar tidak glitch
+            hrp.Anchored = true
+            humanoid.WalkSpeed = 0
+            humanoid.JumpPower = 0
+            
+            print("[Auto-Skip] Ketinggian tidak masuk akal! Posisi dipindahkan ke depan.")
+            
+            -- Ambil arah hadap karakter
+            local lookVector = hrp.CFrame.LookVector
+            local currentPos = hrp.Position
+            
+            -- Set posisi baru: Maju ke depan sejauh ForwardDistance
+            local newPosition = currentPos + (lookVector * Config.ForwardDistance)
+            
+            -- Teleport instan (tanpa animasi jalan)
+            hrp.CFrame = CFrame.new(newPosition, newPosition + lookVector)
+            hrp.Velocity = Vector3.new(0, 0, 0)
+            
+            -- Tunggu sebentar untuk stabilisasi ground
+            task.wait(0.2)
+            
+            -- Kembalikan kontrol normal 100%
+            hrp.Anchored = false
+            humanoid.WalkSpeed = 16
+            humanoid.JumpPower = 50
+            
+            IsResetting = false
+        end
+    end
 end)
+
+print("Script Auto Skip (Teleport W) & UI Anti-Respawn berhasil dimuat!")
