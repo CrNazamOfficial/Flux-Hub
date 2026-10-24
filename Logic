@@ -21,7 +21,7 @@ local ZONES = {
 
 local Y_TOLERANCE  = 8.0
 local DWELL        = 0.12
-local SPEED        = 1600
+local SPEED        = 1200
 local CRUISE_EXTRA = 150
 local COOLDOWN     = 2.0
 local BUSY_TIMEOUT = 10
