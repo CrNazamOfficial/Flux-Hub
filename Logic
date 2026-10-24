@@ -20,11 +20,14 @@ local ZONES = {
 }
 
 local Y_TOLERANCE  = 8.0
-local DWELL        = 0.15
+local DWELL        = 1.5          -- wajib diam 1.5 detik baru aktif
 local SPEED        = 1200
 local CRUISE_EXTRA = 150
 local COOLDOWN     = 2.0
 local BUSY_TIMEOUT = 10
+
+local MOVE_SPEED_THRESHOLD = 1.5  -- ambang velocity horizontal dianggap gerak
+local MOVE_POS_THRESHOLD   = 0.08 -- ambang perpindahan posisi per frame
 
 local PROTECT_STATES = {
     Enum.HumanoidStateType.FallingDown,
@@ -41,6 +44,7 @@ local busySince       = 0
 local lastTeleportEnd = 0
 local dwellZone       = nil
 local dwellStart      = 0
+local lastPos         = nil
 
 local protectOn    = false
 local protectOrig  = {}
@@ -86,7 +90,35 @@ local function isWoodBelow(root, char)
     params.IgnoreWater = false
     local result = Workspace:Raycast(root.Position, Vector3.new(0, -15, 0), params)
     if not result then return false end
-    return result.Instance.Name == "FireflyEmitterPart"
+    local m = result.Material
+    return m == Enum.Material.Wood or m == Enum.Material.WoodPlanks
+end
+
+-- cek apakah karakter sedang bergerak (velocity / posisi / input gerak)
+local function isMoving(root, hum, moveDir)
+    -- 1) velocity horizontal
+    local v
+    pcall(function() v = root.AssemblyLinearVelocity end)
+    if v then
+        local hv = Vector3.new(v.X, 0, v.Z).Magnitude
+        if hv > MOVE_SPEED_THRESHOLD then return true end
+    end
+    -- 2) perpindahan posisi
+    if lastPos then
+        local d = (root.Position - lastPos)
+        local hd = Vector3.new(d.X, 0, d.Z).Magnitude
+        if hd > MOVE_POS_THRESHOLD then return true end
+    end
+    -- 3) input gerak (WASD / thumbstick)
+    if moveDir and moveDir.Magnitude > 0.15 then return true end
+    -- 4) jump
+    pcall(function()
+        if hum and (hum.Jump or hum:GetState() == Enum.HumanoidStateType.Jumping) then
+            -- treat as moving (bukan diam)
+            -- pakai flag via return
+        end
+    end)
+    return false
 end
 
 local function zeroVel(root)
@@ -318,7 +350,9 @@ refresh()
 local function setEnabled(v)
     enabled = v
     dwellZone = nil
+    dwellStart = 0
     lastTeleportEnd = 0
+    lastPos = nil
     if enabled then
         if teleporting and (tick() - busySince) > 3 then
             teleporting = false
@@ -417,6 +451,8 @@ track(RunService.Heartbeat:Connect(function()
     local char, root, hum = getChar()
     if not char then
         dwellZone = nil
+        dwellStart = 0
+        lastPos = nil
         if protectOn then dropProtect() end
         return
     end
@@ -436,20 +472,37 @@ track(RunService.Heartbeat:Connect(function()
 
     if not enabled then
         dwellZone = nil
+        dwellStart = 0
+        lastPos = root.Position
         if protectOn and not teleporting then setProtect(false) end
         return
     end
 
     if teleporting then return end
 
+    -- ambil arah gerak dari Humanoid.MoveDirection
+    local moveDir
+    pcall(function() moveDir = hum.MoveDirection end)
+
+    local moving = isMoving(root, hum, moveDir)
+    lastPos = root.Position
+
     local zone = matchZone(root, hum)
     local wood = isWoodBelow(root, char)
-    local canTrigger = zone ~= nil and wood
+    local canTrigger = (zone ~= nil) and wood
 
     setProtect(canTrigger)
 
     if not canTrigger or (now - lastTeleportEnd) < COOLDOWN then
         dwellZone = nil
+        dwellStart = 0
+        return
+    end
+
+    -- sedang bergerak -> reset timer diam, jangan teleport
+    if moving then
+        dwellZone = nil
+        dwellStart = 0
         return
     end
 
@@ -459,8 +512,10 @@ track(RunService.Heartbeat:Connect(function()
         return
     end
 
+    -- wajib diam penuh DWELL (1.5 dtk)
     if (now - dwellStart) >= DWELL then
         dwellZone   = nil
+        dwellStart  = 0
         teleporting = true
         busySince   = now
         task.spawn(doTeleport, zone)
@@ -470,6 +525,8 @@ end))
 track(player.CharacterAdded:Connect(function()
     teleporting = false
     dwellZone   = nil
+    dwellStart  = 0
+    lastPos     = nil
     dropProtect()
 end))
 
