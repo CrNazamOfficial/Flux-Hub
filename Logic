@@ -4,6 +4,10 @@ local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
+while not player do
+	task.wait()
+	player = Players.LocalPlayer
+end
 
 local ENV = _G
 pcall(function()
@@ -21,31 +25,27 @@ local ZONES = {
 }
 
 local Y_EXACT = 0.12
-local MAX_SWEEP = 400
-local PROTECT_BAND = 8
 local SPEED = 2000
 local CRUISE_EXTRA = 150
 local COOLDOWN = 0.5
 local BUSY_TIMEOUT = 10
+local GROUND_GRACE = 0.25
+local TOGGLE_KEY = Enum.KeyCode.Q
 
 local conns = {}
-local function track(c)
-	conns[#conns + 1] = c
-	return c
-end
-
+local charConns = {}
+local alive = true
 local enabled = false
 local teleporting = false
 local busySince = 0
 local lastTeleportEnd = 0
-local prevList = nil
+local groundZone = nil
+local groundTime = 0
 
-local protectOn = false
-local protectOrig = {}
-local protectConn = nil
-local protectChar = nil
-local protectHum = nil
-local stateOrig = {}
+local function track(c)
+	conns[#conns + 1] = c
+	return c
+end
 
 local PROTECT_STATES = {
 	Enum.HumanoidStateType.FallingDown,
@@ -56,52 +56,44 @@ local PROTECT_STATES = {
 local function getChar()
 	local char = player.Character
 	if not char then return nil end
-	local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not root or not hum then return nil end
-	if hum.Health <= 0 then return nil end
+	local hum = char:FindFirstChildOfClass("Humanoid") or char:FindFirstChildWhichIsA("Humanoid", true)
+	if not hum or hum.Health <= 0 then return nil end
+	local root = char:FindFirstChild("HumanoidRootPart") or hum.RootPart or char.PrimaryPart
+	if not root then return nil end
 	return char, root, hum
 end
 
-local function getYList(char, root, hum)
-	local ry = root.Position.Y
-	local list = { ry, ry, ry, ry }
+local function feetOffset(root, hum)
+	local o = 0
 	pcall(function()
-		list[2] = char:GetPivot().Position.Y
+		o = hum.HipHeight + root.Size.Y / 2
 	end)
-	pcall(function()
-		local cf, size = char:GetBoundingBox()
-		list[3] = cf.Position.Y - size.Y / 2
-	end)
-	pcall(function()
-		list[4] = ry - (hum.HipHeight + root.Size.Y / 2)
-	end)
-	for i = 1, 4 do
-		if type(list[i]) ~= "number" or list[i] ~= list[i] then
-			list[i] = ry
-		end
-	end
-	return list
+	return o
 end
 
-local function detectZone(list, prev)
+local function floorY(char, root)
+	local result = nil
+	pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { char }
+		local hit = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), params)
+		if hit then result = hit.Position.Y end
+	end)
+	return result
+end
+
+local function matchZone(char, root, hum)
+	local y = root.Position.Y
+	local refs = { y, y - feetOffset(root, hum) }
+	local fy = floorY(char, root)
+	if fy then refs[#refs + 1] = fy end
 	local best = nil
 	local bestDiff = math.huge
 	for _, z in ipairs(ZONES) do
-		for i = 1, #list do
-			local cur = list[i]
-			local diff = math.abs(cur - z.y)
-			local hit = diff <= Y_EXACT
-			if not hit and prev then
-				local pv = prev[i]
-				if pv and math.abs(cur - pv) <= MAX_SWEEP then
-					if (pv < z.y and cur > z.y) or (pv > z.y and cur < z.y) then
-						hit = true
-						diff = 0
-					end
-				end
-			end
-			if hit and diff < bestDiff then
+		for _, ry in ipairs(refs) do
+			local diff = math.abs(ry - z.y)
+			if diff <= Y_EXACT and diff < bestDiff then
 				best = z
 				bestDiff = diff
 			end
@@ -110,86 +102,58 @@ local function detectZone(list, prev)
 	return best
 end
 
-local function nearZone(list)
-	for _, z in ipairs(ZONES) do
-		for i = 1, #list do
-			if math.abs(list[i] - z.y) <= PROTECT_BAND then
-				return true
-			end
-		end
+local function isGrounded(hum)
+	local ok, mat = pcall(function() return hum.FloorMaterial end)
+	if ok and mat ~= Enum.Material.Air then return true end
+	local ok2, st = pcall(function() return hum:GetState() end)
+	if ok2 and (st == Enum.HumanoidStateType.Running
+		or st == Enum.HumanoidStateType.RunningNoPhysics
+		or st == Enum.HumanoidStateType.Landed) then
+		return true
 	end
 	return false
 end
 
-local function guardPart(part)
-	if protectOrig[part] == nil then
-		local old = true
-		pcall(function() old = part.CanTouch end)
-		protectOrig[part] = old
+local function protectBegin(char, hum)
+	local g = { parts = {}, states = {}, conn = nil }
+	local function guardPart(part)
+		if g.parts[part] == nil then
+			local old = true
+			pcall(function() old = part.CanTouch end)
+			g.parts[part] = old
+		end
+		pcall(function() part.CanTouch = false end)
 	end
-	pcall(function() part.CanTouch = false end)
-end
-
-local function dropProtect()
-	protectOn = false
-	if protectConn then
-		pcall(function() protectConn:Disconnect() end)
-		protectConn = nil
+	for _, d in ipairs(char:GetDescendants()) do
+		if d:IsA("BasePart") then guardPart(d) end
 	end
-	protectOrig = {}
-	stateOrig = {}
-	protectChar = nil
-	protectHum = nil
-end
-
-local function setProtect(on)
-	if on == protectOn then return end
-	if on then
-		local char, _, hum = getChar()
-		if not char then return end
-		protectOn = true
-		protectChar = char
-		protectHum = hum
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BasePart") then guardPart(d) end
-		end
-		protectConn = char.DescendantAdded:Connect(function(d)
-			if protectOn and d:IsA("BasePart") then guardPart(d) end
-		end)
-		for _, st in ipairs(PROTECT_STATES) do
-			pcall(function()
-				stateOrig[st] = hum:GetStateEnabled(st)
-				hum:SetStateEnabled(st, false)
-			end)
-		end
-	else
-		local hum = protectHum
-		for part, old in pairs(protectOrig) do
-			pcall(function()
-				if part and part.Parent then part.CanTouch = old end
-			end)
-		end
-		if hum and hum.Parent then
-			for st, old in pairs(stateOrig) do
-				pcall(function() hum:SetStateEnabled(st, old) end)
-			end
-		end
-		dropProtect()
-	end
-end
-
-local function blockAnims(hum)
-	pcall(function()
-		local animator = hum:FindFirstChildOfClass("Animator")
-		if not animator then return end
-		for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
-			local v = 0
-			pcall(function() v = tr.Priority.Value end)
-			if v >= Enum.AnimationPriority.Action.Value then
-				pcall(function() tr:Stop(0) end)
-			end
-		end
+	g.conn = char.DescendantAdded:Connect(function(d)
+		if d:IsA("BasePart") then guardPart(d) end
 	end)
+	for _, st in ipairs(PROTECT_STATES) do
+		pcall(function()
+			g.states[st] = hum:GetStateEnabled(st)
+			hum:SetStateEnabled(st, false)
+		end)
+	end
+	return g
+end
+
+local function protectEnd(g, hum)
+	if not g then return end
+	if g.conn then
+		pcall(function() g.conn:Disconnect() end)
+	end
+	for part, old in pairs(g.parts) do
+		pcall(function()
+			if part and part.Parent then part.CanTouch = old end
+		end)
+	end
+	if hum and hum.Parent then
+		for st, old in pairs(g.states) do
+			pcall(function() hum:SetStateEnabled(st, old) end)
+		end
+	end
 end
 
 local function doTeleport(zone)
@@ -199,11 +163,13 @@ local function doTeleport(zone)
 		return
 	end
 	busySince = tick()
-	pcall(function() setProtect(true) end)
 
 	local saved = {}
 	local oldAutoRotate = true
 	pcall(function() oldAutoRotate = hum.AutoRotate end)
+
+	local guard = nil
+	pcall(function() guard = protectBegin(char, hum) end)
 
 	local function zeroVel()
 		pcall(function()
@@ -219,7 +185,6 @@ local function doTeleport(zone)
 				pcall(function() d.CanCollide = false end)
 			end
 		end
-		pcall(function() hum.Sit = false end)
 		hum.AutoRotate = false
 		hum.PlatformStand = true
 
@@ -237,7 +202,7 @@ local function doTeleport(zone)
 		local current = p0
 		for _, wp in ipairs(waypoints) do
 			while true do
-				if not root.Parent or char ~= player.Character or hum.Health <= 0 then
+				if not alive or not root.Parent or char ~= player.Character or hum.Health <= 0 then
 					error("aborted")
 				end
 				local diff = wp - current
@@ -258,15 +223,13 @@ local function doTeleport(zone)
 				end
 				root.CFrame = CFrame.new(current) * rot
 				zeroVel()
-				blockAnims(hum)
 				if current == wp then break end
 			end
 		end
 
-		for _ = 1, 3 do
+		for _ = 1, 5 do
 			root.CFrame = CFrame.new(target) * rot
 			zeroVel()
-			blockAnims(hum)
 			RunService.Heartbeat:Wait()
 		end
 	end)
@@ -287,66 +250,95 @@ local function doTeleport(zone)
 		end
 	end)
 	zeroVel()
+	pcall(function() protectEnd(guard, hum) end)
 
-	prevList = nil
+	groundZone = nil
+	groundTime = 0
 	lastTeleportEnd = tick()
 	teleporting = false
-	if not enabled then
-		pcall(function() setProtect(false) end)
+end
+
+local function tryJump()
+	if not alive or not enabled or teleporting then return end
+	local now = tick()
+	if (now - lastTeleportEnd) < COOLDOWN then return end
+	local char, root, hum = getChar()
+	if not char then return end
+
+	local zone = nil
+	if isGrounded(hum) then
+		zone = matchZone(char, root, hum)
 	end
+	if not zone and groundZone and (now - groundTime) <= GROUND_GRACE then
+		zone = groundZone
+	end
+	if not zone then return end
+
+	teleporting = true
+	busySince = now
+	groundZone = nil
+	task.spawn(doTeleport, zone)
 end
 
 track(RunService.Heartbeat:Connect(function()
-	local char, root, hum = getChar()
-	if not char then
-		prevList = nil
-		if protectOn then dropProtect() end
-		return
-	end
-
-	if protectOn and protectChar ~= char then
-		dropProtect()
-	end
-
 	local now = tick()
-
 	if teleporting and (now - busySince) > BUSY_TIMEOUT then
 		teleporting = false
 	end
-
-	if not enabled then
-		prevList = nil
-		if protectOn and not teleporting then setProtect(false) end
+	if not enabled or teleporting then
+		groundZone = nil
 		return
 	end
-
-	if teleporting then
-		prevList = nil
+	local char, root, hum = getChar()
+	if not char then
+		groundZone = nil
 		return
 	end
-
-	local list = getYList(char, root, hum)
-	local prev = prevList
-	prevList = list
-
-	setProtect(nearZone(list))
-	if protectOn then blockAnims(hum) end
-
-	if (now - lastTeleportEnd) < COOLDOWN then return end
-
-	local zone = detectZone(list, prev)
-	if zone then
-		teleporting = true
-		busySince = now
-		prevList = nil
-		task.spawn(doTeleport, zone)
+	if isGrounded(hum) then
+		local z = matchZone(char, root, hum)
+		if z then
+			groundZone = z
+			groundTime = now
+		else
+			groundZone = nil
+		end
 	end
 end))
 
-track(player.CharacterAdded:Connect(function()
+local function clearCharConns()
+	for _, c in ipairs(charConns) do
+		pcall(function() c:Disconnect() end)
+	end
+	charConns = {}
+end
+
+local function hookChar(char)
+	clearCharConns()
+	task.spawn(function()
+		local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 10)
+		if not hum or not alive or player.Character ~= char then return end
+		charConns[#charConns + 1] = hum.StateChanged:Connect(function(_, new)
+			if new == Enum.HumanoidStateType.Jumping then
+				tryJump()
+			end
+		end)
+		charConns[#charConns + 1] = hum:GetPropertyChangedSignal("Jump"):Connect(function()
+			if hum.Jump then tryJump() end
+		end)
+	end)
+end
+
+track(player.CharacterAdded:Connect(function(char)
 	teleporting = false
-	prevList = nil
-	dropProtect()
+	groundZone = nil
+	hookChar(char)
+end))
+if player.Character then
+	hookChar(player.Character)
+end
+
+track(UserInputService.JumpRequest:Connect(function()
+	tryJump()
 end))
 
 local GUI_NAME = "AutoJumpTPGui"
@@ -414,17 +406,8 @@ refresh()
 
 local function setEnabled(v)
 	enabled = v
-	prevList = nil
+	groundZone = nil
 	lastTeleportEnd = 0
-	if enabled then
-		if teleporting and (tick() - busySince) > 3 then
-			teleporting = false
-		end
-	else
-		if not teleporting then
-			pcall(function() setProtect(false) end)
-		end
-	end
 	refresh()
 end
 
@@ -516,12 +499,23 @@ track(UserInputService.InputEnded:Connect(function(input)
 	end
 end))
 
+track(UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+	if UserInputService:GetFocusedTextBox() then return end
+	if input.KeyCode == TOGGLE_KEY then
+		setEnabled(not enabled)
+	elseif input.KeyCode == Enum.KeyCode.Space then
+		tryJump()
+	end
+end))
+
 ENV.__AutoJumpTP_Cleanup = function()
+	alive = false
 	enabled = false
-	pcall(function() setProtect(false) end)
 	for _, c in ipairs(conns) do
 		pcall(function() c:Disconnect() end)
 	end
 	conns = {}
+	clearCharConns()
 	pcall(function() gui:Destroy() end)
 end
