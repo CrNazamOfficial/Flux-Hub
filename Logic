@@ -5,29 +5,44 @@ local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
 
+local ENV = _G
+pcall(function()
+	if getgenv then ENV = getgenv() end
+end)
+if ENV.__AutoJumpTP_Cleanup then
+	pcall(ENV.__AutoJumpTP_Cleanup)
+	ENV.__AutoJumpTP_Cleanup = nil
+end
+
 local ZONES = {
 	{ y = 229.1,  target = Vector3.new(132.3, 599.6, -3088.7) },
 	{ y = 956.1,  target = Vector3.new(-874.9, 1358.6, -5560.9) },
 	{ y = 1024.1, target = Vector3.new(-6940.3, 1352.3, -7211.2) },
 }
 
-local Y_EXACT = 0.0501
-local GROUND_MEMORY = 0.35
+local Y_EXACT = 0.06
+local GROUND_MEMORY = 0.4
 local Y_LOW_SLACK = 2
-local JUMP_ARC = 15
-local MAX_DRIFT = 20
+local JUMP_ARC = 40
+local MAX_DRIFT = 25
 local JUMP_COUNT_NEEDED = 3
-local JUMP_MIN_GAP = 0.12
-local JUMP_MAX_GAP = 0.6
+local JUMP_MIN_GAP = 0.1
+local JUMP_MAX_GAP = 0.7
 local PROTECT_LOW = 6
 local PROTECT_HIGH = 30
 local SPEED = 2000
 local CRUISE_EXTRA = 150
-local COOLDOWN = 0.6
-local BUSY_TIMEOUT = 20
+local COOLDOWN = 0.5
+local BUSY_TIMEOUT = 10
+
+local conns = {}
+local function track(c)
+	conns[#conns + 1] = c
+	return c
+end
 
 local enabled = false
-local busy = false
+local teleporting = false
 local busySince = 0
 local lockedZone = nil
 local startPos = nil
@@ -76,15 +91,24 @@ local function guardPart(part)
 	pcall(function() part.CanTouch = false end)
 end
 
+local function dropProtect()
+	protectOn = false
+	if protectConn then
+		pcall(function() protectConn:Disconnect() end)
+		protectConn = nil
+	end
+	protectOrig = {}
+	stateOrig = {}
+	protectChar = nil
+	protectHum = nil
+end
+
 local function setProtect(on)
 	if on == protectOn then return end
-	protectOn = on
 	if on then
 		local char, _, hum = getChar()
-		if not char then
-			protectOn = false
-			return
-		end
+		if not char then return end
+		protectOn = true
 		protectChar = char
 		protectHum = hum
 		for _, d in ipairs(char:GetDescendants()) do
@@ -100,25 +124,18 @@ local function setProtect(on)
 			end)
 		end
 	else
-		if protectConn then
-			protectConn:Disconnect()
-			protectConn = nil
-		end
+		local hum = protectHum
 		for part, old in pairs(protectOrig) do
 			pcall(function()
 				if part and part.Parent then part.CanTouch = old end
 			end)
 		end
-		protectOrig = {}
-		local hum = protectHum
 		if hum and hum.Parent then
 			for st, old in pairs(stateOrig) do
 				pcall(function() hum:SetStateEnabled(st, old) end)
 			end
 		end
-		stateOrig = {}
-		protectChar = nil
-		protectHum = nil
+		dropProtect()
 	end
 end
 
@@ -131,68 +148,50 @@ local function inProtectZone(y)
 	return false
 end
 
-RunService.Heartbeat:Connect(function()
-	if not enabled then
-		if protectOn then setProtect(false) end
-		return
-	end
-
+track(RunService.Heartbeat:Connect(function()
 	local char, root, hum = getChar()
 	if not char then
-		if protectOn then setProtect(false) end
+		if protectOn then dropProtect() end
 		return
 	end
 
 	if protectOn and protectChar ~= char then
-		setProtect(false)
+		dropProtect()
 	end
 
-	local want = busy or inProtectZone(root.Position.Y)
-	setProtect(want)
+	if not teleporting then
+		local grounded = false
+		pcall(function()
+			grounded = hum.FloorMaterial ~= Enum.Material.Air
+		end)
+		if grounded then
+			groundY = root.Position.Y
+			groundT = tick()
+		end
+	end
+
+	if not enabled then
+		if protectOn and not teleporting then setProtect(false) end
+		return
+	end
+
+	setProtect(teleporting or inProtectZone(root.Position.Y))
 
 	if jumpCount > 0 and (tick() - lastJump) > JUMP_MAX_GAP then
 		resetCounter()
 	end
-
-	if busy then return end
-	local grounded = false
-	pcall(function()
-		grounded = hum.FloorMaterial ~= Enum.Material.Air
-	end)
-	if grounded then
-		groundY = root.Position.Y
-		groundT = tick()
-	end
-end)
+end))
 
 local function doTeleport(zone)
 	local char, root, hum = getChar()
 	if not char then
-		busy = false
+		teleporting = false
 		return
 	end
-	busy = true
 	busySince = tick()
-	setProtect(true)
+	pcall(function() setProtect(true) end)
 
 	local saved = {}
-
-	local function lockParts()
-		for _, d in ipairs(char:GetDescendants()) do
-			if d:IsA("BasePart") then
-				table.insert(saved, { part = d, collide = d.CanCollide })
-				pcall(function() d.CanCollide = false end)
-			end
-		end
-	end
-
-	local function restoreParts()
-		for _, e in ipairs(saved) do
-			if e.part and e.part.Parent then
-				pcall(function() e.part.CanCollide = e.collide end)
-			end
-		end
-	end
 
 	local function zeroVel()
 		pcall(function()
@@ -202,7 +201,12 @@ local function doTeleport(zone)
 	end
 
 	pcall(function()
-		lockParts()
+		for _, d in ipairs(char:GetDescendants()) do
+			if d:IsA("BasePart") then
+				table.insert(saved, { part = d, collide = d.CanCollide })
+				pcall(function() d.CanCollide = false end)
+			end
+		end
 		hum.PlatformStand = true
 
 		local rot = root.CFrame.Rotation
@@ -251,7 +255,13 @@ local function doTeleport(zone)
 		end
 	end)
 
-	pcall(restoreParts)
+	pcall(function()
+		for _, e in ipairs(saved) do
+			if e.part and e.part.Parent then
+				e.part.CanCollide = e.collide
+			end
+		end
+	end)
 	pcall(function()
 		if hum and hum.Parent then
 			hum.PlatformStand = false
@@ -265,17 +275,19 @@ local function doTeleport(zone)
 	groundT = 0
 	resetCounter()
 	lastTeleportEnd = tick()
-	busy = false
-	if not enabled then setProtect(false) end
+	teleporting = false
+	if not enabled then
+		pcall(function() setProtect(false) end)
+	end
 end
 
 local function onJump()
 	if not enabled then return end
 	local now = tick()
 
-	if busy then
+	if teleporting then
 		if now - busySince > BUSY_TIMEOUT then
-			busy = false
+			teleporting = false
 		else
 			return
 		end
@@ -308,7 +320,7 @@ local function onJump()
 			if jumpCount >= JUMP_COUNT_NEEDED then
 				local zone = lockedZone
 				resetCounter()
-				busy = true
+				teleporting = true
 				busySince = now
 				task.spawn(doTeleport, zone)
 			end
@@ -317,18 +329,20 @@ local function onJump()
 		resetCounter()
 	end
 
-	local refY = pos.Y
+	local refs = { pos.Y }
 	if groundY and (now - groundT) <= GROUND_MEMORY then
-		refY = groundY
+		refs[#refs + 1] = groundY
 	end
 
 	local best = nil
 	local bestDiff = math.huge
 	for _, z in ipairs(ZONES) do
-		local diff = math.abs(refY - z.y)
-		if diff <= Y_EXACT and diff < bestDiff then
-			best = z
-			bestDiff = diff
+		for _, ry in ipairs(refs) do
+			local diff = math.abs(ry - z.y)
+			if diff <= Y_EXACT and diff < bestDiff then
+				best = z
+				bestDiff = diff
+			end
 		end
 	end
 	if not best then return end
@@ -339,25 +353,22 @@ local function onJump()
 	lastJump = now
 end
 
-UserInputService.JumpRequest:Connect(onJump)
+track(UserInputService.JumpRequest:Connect(onJump))
 
-player.CharacterAdded:Connect(function()
-	busy = false
+track(UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.Space then
+		onJump()
+	end
+end))
+
+track(player.CharacterAdded:Connect(function()
+	teleporting = false
 	groundY = nil
 	groundT = 0
 	resetCounter()
-	if protectOn then
-		protectOn = false
-		if protectConn then
-			protectConn:Disconnect()
-			protectConn = nil
-		end
-		protectOrig = {}
-		stateOrig = {}
-		protectChar = nil
-		protectHum = nil
-	end
-end)
+	dropProtect()
+end))
 
 local GUI_NAME = "AutoJumpTPGui"
 local function getGuiParent()
@@ -394,6 +405,7 @@ btn.Text = "Off"
 btn.Font = Enum.Font.GothamBold
 btn.TextSize = 15
 btn.Active = true
+btn.Selectable = false
 btn.Parent = gui
 
 local corner = Instance.new("UICorner")
@@ -421,6 +433,22 @@ local function refresh()
 end
 refresh()
 
+local function setEnabled(v)
+	enabled = v
+	resetCounter()
+	lastTeleportEnd = 0
+	if enabled then
+		if teleporting and (tick() - busySince) > 3 then
+			teleporting = false
+		end
+	else
+		if not teleporting then
+			pcall(function() setProtect(false) end)
+		end
+	end
+	refresh()
+end
+
 local function clampXY(x, y)
 	local s = gui.AbsoluteSize
 	local b = btn.AbsoluteSize
@@ -437,10 +465,10 @@ do
 	setPos(abs.X, abs.Y)
 end
 
-gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+track(gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 	local abs = btn.AbsolutePosition - gui.AbsolutePosition
 	setPos(abs.X, abs.Y)
-end)
+end))
 
 local dragging = false
 local dragMoved = false
@@ -458,18 +486,14 @@ local function finishDrag()
 	if not dragging then return end
 	dragging = false
 	dragInput = nil
-	if not dragMoved then
-		enabled = not enabled
-		resetCounter()
-		if not enabled and not busy then
-			setProtect(false)
-		end
-		refresh()
-	end
+	local moved = dragMoved
 	dragMoved = false
+	if not moved then
+		setEnabled(not enabled)
+	end
 end
 
-btn.InputBegan:Connect(function(input)
+track(btn.InputBegan:Connect(function(input)
 	if isPress(input) and not dragging then
 		dragging = true
 		dragMoved = false
@@ -484,9 +508,9 @@ btn.InputBegan:Connect(function(input)
 			end
 		end)
 	end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
+track(UserInputService.InputChanged:Connect(function(input)
 	if not dragging or not dragInput then return end
 	local isMouse = dragInput.UserInputType == Enum.UserInputType.MouseButton1
 		and input.UserInputType == Enum.UserInputType.MouseMovement
@@ -502,13 +526,23 @@ UserInputService.InputChanged:Connect(function(input)
 	if dragMoved then
 		setPos(btnStartX + delta.X, btnStartY + delta.Y)
 	end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(input)
+track(UserInputService.InputEnded:Connect(function(input)
 	if not dragging or not dragInput then return end
 	if input == dragInput
 		or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
 			and input.UserInputType == Enum.UserInputType.MouseButton1) then
 		finishDrag()
 	end
-end)
+end))
+
+ENV.__AutoJumpTP_Cleanup = function()
+	enabled = false
+	pcall(function() setProtect(false) end)
+	for _, c in ipairs(conns) do
+		pcall(function() c:Disconnect() end)
+	end
+	conns = {}
+	pcall(function() gui:Destroy() end)
+end
