@@ -1,9 +1,12 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
+while not player do
+	task.wait()
+	player = Players.LocalPlayer
+end
 
 local ENV = _G
 pcall(function()
@@ -22,7 +25,8 @@ local ZONES = {
 
 local TOGGLE_KEY = Enum.KeyCode.Q
 local Y_EXACT = 0.12
-local DWELL = 0.15
+local ZONE_RANGE = 12
+local DWELL = 0.04
 local SPEED = 2000
 local CRUISE_EXTRA = 150
 local COOLDOWN = 0.5
@@ -32,14 +36,16 @@ local INVISIBLE_MIN = 0.99
 local GROUND_TOL = 1.0
 local GROUND_BELOW_TOL = 1.0
 local RAY_UP = 1.5
-local RAY_LEN = 3.0
-local AIR_MIN = 0.08
-local JUMP_VY = 12
-local JUMP_KEEP = 0.4
+local RAY_LEN = 5
 local SIDE_OFFSET = 1.2
-local RISE_MIN = 1.5
-local SETTLE_VY = 2
+local AIR_MIN = 0.05
+local JUMP_VY = 12
+local JUMP_WINDOW = 6
 local PENDING_TIMEOUT = 1.5
+
+local BLOCK_ANIM = true
+local BLOCK_MOVERS = true
+local MAX_RISE_VY = 120
 
 local conns = {}
 local function track(c)
@@ -51,15 +57,19 @@ local enabled = false
 local teleporting = false
 local busySince = 0
 local lastTeleportEnd = 0
+local gen = 0
+
+local boundChar = nil
+local boundHum = nil
 
 local airStart = 0
-local airborne = false
-local jumped = false
+local airSeen = false
 local jumpedAt = 0
-local pending = false
 local pendingSince = 0
-local dwellStart = 0
-local lastGroundBottom = nil
+local matchStart = 0
+
+local okAnim = {}
+local lastAnimScan = 0
 
 local protectOn = false
 local protectOrig = {}
@@ -72,6 +82,31 @@ local PROTECT_STATES = {
 	Enum.HumanoidStateType.FallingDown,
 	Enum.HumanoidStateType.Ragdoll,
 	Enum.HumanoidStateType.Physics,
+	Enum.HumanoidStateType.Flying,
+}
+
+local MOVER_CLASSES = {
+	BodyVelocity = true,
+	BodyPosition = true,
+	BodyGyro = true,
+	BodyForce = true,
+	BodyThrust = true,
+	BodyAngularVelocity = true,
+	RocketPropulsion = true,
+	VectorForce = true,
+	LinearVelocity = true,
+	AngularVelocity = true,
+	AlignPosition = true,
+	AlignOrientation = true,
+	LineForce = true,
+	Torque = true,
+}
+
+local ACTION_PRIORITY = {
+	Action = true,
+	Action2 = true,
+	Action3 = true,
+	Action4 = true,
 }
 
 local FOOT_NAMES = {
@@ -98,13 +133,10 @@ pcall(function() rayParams.RespectCanCollide = true end)
 
 local function resetFlow()
 	airStart = 0
-	airborne = false
-	jumped = false
+	airSeen = false
 	jumpedAt = 0
-	pending = false
 	pendingSince = 0
-	dwellStart = 0
-	lastGroundBottom = nil
+	matchStart = 0
 end
 
 local function getChar()
@@ -131,7 +163,11 @@ end
 local function feetOffset(root, hum)
 	local o = 0
 	pcall(function()
-		o = hum.HipHeight + root.Size.Y / 2
+		if hum.RigType == Enum.HumanoidRigType.R6 then
+			o = root.Size.Y / 2 + 2
+		else
+			o = hum.HipHeight + root.Size.Y / 2
+		end
 	end)
 	return o
 end
@@ -196,15 +232,19 @@ local function castFloor(char, origin)
 	return nil
 end
 
-local function readFloor(char, root, bottomY)
+local function readFloor(char, root, bottomY, estFeet)
 	local best = nil
 	local p = root.Position
+	local high = math.max(bottomY, estFeet)
 	for _, o in ipairs(FLOOR_OFFSETS) do
-		local origin = Vector3.new(p.X + o.X, bottomY + RAY_UP, p.Z + o.Z)
+		local origin = Vector3.new(p.X + o.X, high + RAY_UP, p.Z + o.Z)
 		local res = castFloor(char, origin)
 		if res then
-			local gap = bottomY - res.Position.Y
-			if gap >= -GROUND_BELOW_TOL and gap <= GROUND_TOL then
+			local gapA = bottomY - res.Position.Y
+			local gapB = estFeet - res.Position.Y
+			local okA = gapA >= -GROUND_BELOW_TOL and gapA <= GROUND_TOL
+			local okB = gapB >= -GROUND_BELOW_TOL and gapB <= GROUND_TOL
+			if okA or okB then
 				if best == nil or res.Position.Y > best.Position.Y then
 					best = res
 				end
@@ -217,10 +257,15 @@ local function readFloor(char, root, bottomY)
 	return nil, nil
 end
 
-local function matchZone(root, hum, bottomY, surfaceY)
+local function buildRefs(root, hum, bottomY, surfaceY)
 	local rootY = root.Position.Y
 	local refs = { rootY, rootY - feetOffset(root, hum), bottomY }
 	if surfaceY then refs[#refs + 1] = surfaceY end
+	return refs
+end
+
+local function matchZone(root, hum, bottomY, surfaceY)
+	local refs = buildRefs(root, hum, bottomY, surfaceY)
 	local best = nil
 	local bestDiff = math.huge
 	for _, z in ipairs(ZONES) do
@@ -235,6 +280,19 @@ local function matchZone(root, hum, bottomY, surfaceY)
 	return best
 end
 
+local function nearZone(root, bottomY, surfaceY)
+	local refs = { root.Position.Y, bottomY }
+	if surfaceY then refs[#refs + 1] = surfaceY end
+	for _, z in ipairs(ZONES) do
+		for _, ry in ipairs(refs) do
+			if math.abs(ry - z.y) <= ZONE_RANGE then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 local function guardPart(part)
 	if protectOrig[part] == nil then
 		local old = true
@@ -242,6 +300,12 @@ local function guardPart(part)
 		protectOrig[part] = old
 	end
 	pcall(function() part.CanTouch = false end)
+end
+
+local function killMover(d)
+	if BLOCK_MOVERS and MOVER_CLASSES[d.ClassName] then
+		pcall(function() d:Destroy() end)
+	end
 end
 
 local function dropProtect()
@@ -266,9 +330,12 @@ local function setProtect(on)
 		protectHum = hum
 		for _, d in ipairs(char:GetDescendants()) do
 			if d:IsA("BasePart") then guardPart(d) end
+			killMover(d)
 		end
 		protectConn = char.DescendantAdded:Connect(function(d)
-			if protectOn and d:IsA("BasePart") then guardPart(d) end
+			if not protectOn then return end
+			if d:IsA("BasePart") then guardPart(d) end
+			killMover(d)
 		end)
 		for _, st in ipairs(PROTECT_STATES) do
 			pcall(function()
@@ -292,13 +359,106 @@ local function setProtect(on)
 	end
 end
 
+local function refreshAnimate(char)
+	pcall(function()
+		local a = char:FindFirstChild("Animate")
+		if not a then return end
+		for _, d in ipairs(a:GetDescendants()) do
+			if d:IsA("Animation") and d.AnimationId ~= "" then
+				okAnim[d.AnimationId] = true
+			end
+		end
+	end)
+end
+
+local function readTracks(hum)
+	local t = nil
+	pcall(function()
+		local a = hum:FindFirstChildOfClass("Animator")
+		if a then t = a:GetPlayingAnimationTracks() end
+	end)
+	return t
+end
+
+local function trackId(tr)
+	local id = ""
+	pcall(function() id = tr.Animation.AnimationId end)
+	return id
+end
+
+local function learnAnims(hum)
+	local tracks = readTracks(hum)
+	if not tracks then return end
+	for _, tr in ipairs(tracks) do
+		local id = trackId(tr)
+		if id ~= "" then okAnim[id] = true end
+	end
+end
+
+local function blockAnims(hum)
+	local tracks = readTracks(hum)
+	if not tracks then return end
+	local hasList = next(okAnim) ~= nil
+	for _, tr in ipairs(tracks) do
+		local id = trackId(tr)
+		if not okAnim[id] then
+			local kill = hasList
+			if not kill then
+				pcall(function()
+					kill = ACTION_PRIORITY[tr.Priority.Name] == true
+				end)
+			end
+			if kill then
+				pcall(function() tr:Stop(0) end)
+			end
+		end
+	end
+end
+
+local function blockFly(root, hum)
+	pcall(function()
+		if hum.PlatformStand then hum.PlatformStand = false end
+	end)
+	pcall(function()
+		if root.Anchored then root.Anchored = false end
+	end)
+	pcall(function()
+		local st = hum:GetState()
+		if st == Enum.HumanoidStateType.Flying
+			or st == Enum.HumanoidStateType.FallingDown
+			or st == Enum.HumanoidStateType.Ragdoll
+			or st == Enum.HumanoidStateType.Physics then
+			hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+		end
+	end)
+	pcall(function()
+		local v = root.AssemblyLinearVelocity
+		if v.Y > MAX_RISE_VY then
+			root.AssemblyLinearVelocity = Vector3.new(v.X, 0, v.Z)
+		end
+	end)
+end
+
+local function bindChar(char, hum)
+	gen = gen + 1
+	boundChar = char
+	boundHum = hum
+	teleporting = false
+	resetFlow()
+	dropProtect()
+	okAnim = {}
+	lastAnimScan = 0
+	refreshAnimate(char)
+end
+
 local function doTeleport(zone)
+	local myGen = gen
 	local char, root, hum = getChar()
 	if not char then
-		teleporting = false
+		if myGen == gen then teleporting = false end
 		return
 	end
-	busySince = tick()
+	busySince = os.clock()
 	pcall(function() setProtect(true) end)
 
 	local saved = {}
@@ -385,27 +545,31 @@ local function doTeleport(zone)
 	end)
 	zeroVel()
 
-	resetFlow()
-	lastTeleportEnd = tick()
-	teleporting = false
-	if not enabled then
-		pcall(function() setProtect(false) end)
+	if myGen == gen then
+		resetFlow()
+		lastTeleportEnd = os.clock()
+		teleporting = false
+		if not enabled then
+			pcall(function() setProtect(false) end)
+		end
 	end
 end
 
-track(RunService.Heartbeat:Connect(function()
+local function step()
 	local char, root, hum = getChar()
 	if not char then
 		resetFlow()
+		boundChar = nil
+		boundHum = nil
 		if protectOn then dropProtect() end
 		return
 	end
 
-	if protectOn and protectChar ~= char then
-		dropProtect()
+	if char ~= boundChar or hum ~= boundHum then
+		bindChar(char, hum)
 	end
 
-	local now = tick()
+	local now = os.clock()
 
 	if teleporting and (now - busySince) > BUSY_TIMEOUT then
 		teleporting = false
@@ -420,8 +584,22 @@ track(RunService.Heartbeat:Connect(function()
 	if teleporting then return end
 
 	local bottomY = lowestPoint(char, root, hum)
-	local surfaceY = readFloor(char, root, bottomY)
+	local estFeet = root.Position.Y - feetOffset(root, hum)
+	local surfaceY = readFloor(char, root, bottomY, estFeet)
 	local grounded = surfaceY ~= nil
+
+	local near = nearZone(root, bottomY, surfaceY)
+	setProtect(near)
+
+	if BLOCK_ANIM and (now - lastAnimScan) > 0.4 then
+		lastAnimScan = now
+		refreshAnimate(char)
+		if not near then learnAnims(hum) end
+	end
+	if near then
+		blockFly(root, hum)
+		if BLOCK_ANIM then blockAnims(hum) end
+	end
 
 	local vy = 0
 	pcall(function() vy = root.AssemblyLinearVelocity.Y end)
@@ -438,157 +616,81 @@ track(RunService.Heartbeat:Connect(function()
 			jumpNow = true
 		end
 	end)
-	if (not grounded) and lastGroundBottom and (bottomY - lastGroundBottom) > RISE_MIN then
-		jumpNow = true
-	end
 	if jumpNow then
-		jumped = true
 		jumpedAt = now
 	end
 
-	local looseZone = matchZone(root, hum, bottomY, surfaceY)
-	setProtect(looseZone ~= nil)
-
 	if not grounded then
 		if airStart == 0 then airStart = now end
-		if (now - airStart) >= AIR_MIN and not airborne then
-			airborne = true
-			pending = false
-			dwellStart = 0
+		if (now - airStart) >= AIR_MIN then
+			airSeen = true
 		end
 		return
 	end
 
 	airStart = 0
 
-	local settled = math.abs(vy) < SETTLE_VY
-	if settled then
-		lastGroundBottom = bottomY
+	if airSeen then
+		airSeen = false
+		if jumpedAt > 0 and (now - jumpedAt) <= JUMP_WINDOW then
+			pendingSince = now
+			matchStart = 0
+		end
 	end
 
-	if airborne then
-		airborne = false
-		pending = jumped
-		jumped = false
-		pendingSince = now
-		dwellStart = 0
-	elseif jumped and (now - jumpedAt) > JUMP_KEEP then
-		jumped = false
-	end
-
-	if not pending then
-		dwellStart = 0
-		return
-	end
+	if pendingSince == 0 then return end
 
 	if (now - pendingSince) > PENDING_TIMEOUT then
-		pending = false
-		dwellStart = 0
+		pendingSince = 0
+		matchStart = 0
 		return
 	end
 
 	if (now - lastTeleportEnd) < COOLDOWN then return end
 
-	if not settled then
-		dwellStart = 0
-		return
-	end
-
 	local zone = matchZone(root, hum, bottomY, surfaceY)
 	if not zone then
-		dwellStart = 0
+		matchStart = 0
 		return
 	end
 
-	if dwellStart == 0 then
-		dwellStart = now
+	if matchStart == 0 then
+		matchStart = now
 		return
 	end
 
-	if (now - dwellStart) >= DWELL then
-		pending = false
-		dwellStart = 0
+	if (now - matchStart) >= DWELL then
+		pendingSince = 0
+		matchStart = 0
 		teleporting = true
 		busySince = now
 		task.spawn(doTeleport, zone)
 	end
+end
+
+track(RunService.Heartbeat:Connect(function()
+	pcall(step)
+end))
+
+track(UserInputService.JumpRequest:Connect(function()
+	if enabled then
+		jumpedAt = os.clock()
+	end
 end))
 
 track(player.CharacterAdded:Connect(function()
-	teleporting = false
-	resetFlow()
-	dropProtect()
+	boundChar = nil
+	boundHum = nil
 end))
 
-local GUI_NAME = "AutoJumpTPGui"
-local function getGuiParent()
-	local ok, h = pcall(function()
-		if gethui then return gethui() end
-		return nil
-	end)
-	if ok and h then return h end
-	local ok2 = pcall(function() return CoreGui.Name end)
-	if ok2 then return CoreGui end
-	return player:WaitForChild("PlayerGui")
-end
-
-local parent = getGuiParent()
-pcall(function()
-	local old = parent:FindFirstChild(GUI_NAME)
-	if old then old:Destroy() end
-end)
-
-local gui = Instance.new("ScreenGui")
-gui.Name = GUI_NAME
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.DisplayOrder = 999
-gui.Parent = parent
-
-local btn = Instance.new("TextButton")
-btn.Name = "Toggle"
-btn.Size = UDim2.new(0, 50, 0, 50)
-btn.Position = UDim2.new(0, 20, 0, 200)
-btn.AutoButtonColor = false
-btn.Text = "Off"
-btn.Font = Enum.Font.GothamBold
-btn.TextSize = 15
-btn.Active = true
-btn.Selectable = false
-btn.Parent = gui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(1, 0)
-corner.Parent = btn
-
-local stroke = Instance.new("UIStroke")
-stroke.Thickness = 2
-stroke.Parent = btn
-
-local function refresh()
-	if enabled then
-		btn.Text = "On"
-		btn.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
-		btn.BackgroundTransparency = 0.1
-		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		stroke.Color = Color3.fromRGB(120, 255, 170)
-	else
-		btn.Text = "Off"
-		btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		btn.BackgroundTransparency = 0.5
-		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		stroke.Color = Color3.fromRGB(255, 255, 255)
-	end
-end
-refresh()
+local uiRefresh = function() end
 
 local function setEnabled(v)
 	enabled = v
 	resetFlow()
 	lastTeleportEnd = 0
 	if enabled then
-		if teleporting and (tick() - busySince) > 3 then
+		if teleporting and (os.clock() - busySince) > 3 then
 			teleporting = false
 		end
 	else
@@ -596,103 +698,185 @@ local function setEnabled(v)
 			pcall(function() setProtect(false) end)
 		end
 	end
-	refresh()
+	uiRefresh()
 end
 
 track(UserInputService.InputBegan:Connect(function(input)
-	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 	if input.KeyCode ~= TOGGLE_KEY then return end
 	if UserInputService:GetFocusedTextBox() then return end
 	setEnabled(not enabled)
 end))
 
-local function clampXY(x, y)
-	local s = gui.AbsoluteSize
-	local b = btn.AbsoluteSize
-	return math.clamp(x, 0, math.max(0, s.X - b.X)), math.clamp(y, 0, math.max(0, s.Y - b.Y))
-end
+local GUI_NAME = "AutoJumpTPGui"
+local gui = nil
 
-local function setPos(x, y)
-	local cx, cy = clampXY(x, y)
-	btn.Position = UDim2.new(0, cx, 0, cy)
-end
+local function buildGui()
+	local candidates = {}
+	pcall(function()
+		if gethui then candidates[#candidates + 1] = gethui() end
+	end)
+	pcall(function()
+		candidates[#candidates + 1] = game:GetService("CoreGui")
+	end)
+	pcall(function()
+		candidates[#candidates + 1] = player:WaitForChild("PlayerGui", 10)
+	end)
 
-do
-	local abs = btn.AbsolutePosition - gui.AbsolutePosition
-	setPos(abs.X, abs.Y)
-end
-
-track(gui:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-	local abs = btn.AbsolutePosition - gui.AbsolutePosition
-	setPos(abs.X, abs.Y)
-end))
-
-local dragging = false
-local dragMoved = false
-local dragInput = nil
-local pressPos = nil
-local btnStartX = 0
-local btnStartY = 0
-
-local function isPress(input)
-	return input.UserInputType == Enum.UserInputType.MouseButton1
-		or input.UserInputType == Enum.UserInputType.Touch
-end
-
-local function finishDrag()
-	if not dragging then return end
-	dragging = false
-	dragInput = nil
-	local moved = dragMoved
-	dragMoved = false
-	if not moved then
-		setEnabled(not enabled)
-	end
-end
-
-track(btn.InputBegan:Connect(function(input)
-	if isPress(input) and not dragging then
-		dragging = true
-		dragMoved = false
-		dragInput = input
-		pressPos = Vector2.new(input.Position.X, input.Position.Y)
-		local abs = btn.AbsolutePosition - gui.AbsolutePosition
-		btnStartX = abs.X
-		btnStartY = abs.Y
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End and dragInput == input then
-				finishDrag()
-			end
+	for _, c in ipairs(candidates) do
+		pcall(function()
+			local old = c:FindFirstChild(GUI_NAME)
+			if old then old:Destroy() end
 		end)
 	end
-end))
 
-track(UserInputService.InputChanged:Connect(function(input)
-	if not dragging or not dragInput then return end
-	local isMouse = dragInput.UserInputType == Enum.UserInputType.MouseButton1
-		and input.UserInputType == Enum.UserInputType.MouseMovement
-	local isTouch = dragInput.UserInputType == Enum.UserInputType.Touch
-		and input == dragInput
-	if not (isMouse or isTouch) then return end
+	local g = Instance.new("ScreenGui")
+	g.Name = GUI_NAME
+	g.ResetOnSpawn = false
+	g.IgnoreGuiInset = true
+	g.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	g.DisplayOrder = 999
 
-	local cur = Vector2.new(input.Position.X, input.Position.Y)
-	local delta = cur - pressPos
-	if not dragMoved and delta.Magnitude > 8 then
-		dragMoved = true
+	local mounted = false
+	for _, c in ipairs(candidates) do
+		local ok = pcall(function() g.Parent = c end)
+		if ok and g.Parent == c then
+			mounted = true
+			break
+		end
 	end
-	if dragMoved then
-		setPos(btnStartX + delta.X, btnStartY + delta.Y)
+	if not mounted then
+		g:Destroy()
+		return
 	end
-end))
+	gui = g
 
-track(UserInputService.InputEnded:Connect(function(input)
-	if not dragging or not dragInput then return end
-	if input == dragInput
-		or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
-			and input.UserInputType == Enum.UserInputType.MouseButton1) then
-		finishDrag()
+	local btn = Instance.new("TextButton")
+	btn.Name = "Toggle"
+	btn.Size = UDim2.new(0, 50, 0, 50)
+	btn.Position = UDim2.new(0, 20, 0, 200)
+	btn.AutoButtonColor = false
+	btn.Text = "Off"
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 15
+	btn.Active = true
+	btn.Selectable = false
+	btn.Parent = g
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = btn
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2
+	stroke.Parent = btn
+
+	uiRefresh = function()
+		if enabled then
+			btn.Text = "On"
+			btn.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+			btn.BackgroundTransparency = 0.1
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			stroke.Color = Color3.fromRGB(120, 255, 170)
+		else
+			btn.Text = "Off"
+			btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			btn.BackgroundTransparency = 0.5
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			stroke.Color = Color3.fromRGB(255, 255, 255)
+		end
 	end
-end))
+	uiRefresh()
+
+	local function clampXY(x, y)
+		local s = g.AbsoluteSize
+		local b = btn.AbsoluteSize
+		return math.clamp(x, 0, math.max(0, s.X - b.X)), math.clamp(y, 0, math.max(0, s.Y - b.Y))
+	end
+
+	local function setPos(x, y)
+		local cx, cy = clampXY(x, y)
+		btn.Position = UDim2.new(0, cx, 0, cy)
+	end
+
+	do
+		local abs = btn.AbsolutePosition - g.AbsolutePosition
+		setPos(abs.X, abs.Y)
+	end
+
+	track(g:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		local abs = btn.AbsolutePosition - g.AbsolutePosition
+		setPos(abs.X, abs.Y)
+	end))
+
+	local dragging = false
+	local dragMoved = false
+	local dragInput = nil
+	local pressPos = nil
+	local btnStartX = 0
+	local btnStartY = 0
+
+	local function isPress(input)
+		return input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+	end
+
+	local function finishDrag()
+		if not dragging then return end
+		dragging = false
+		dragInput = nil
+		local moved = dragMoved
+		dragMoved = false
+		if not moved then
+			setEnabled(not enabled)
+		end
+	end
+
+	track(btn.InputBegan:Connect(function(input)
+		if isPress(input) and not dragging then
+			dragging = true
+			dragMoved = false
+			dragInput = input
+			pressPos = Vector2.new(input.Position.X, input.Position.Y)
+			local abs = btn.AbsolutePosition - g.AbsolutePosition
+			btnStartX = abs.X
+			btnStartY = abs.Y
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End and dragInput == input then
+					finishDrag()
+				end
+			end)
+		end
+	end))
+
+	track(UserInputService.InputChanged:Connect(function(input)
+		if not dragging or not dragInput then return end
+		local isMouse = dragInput.UserInputType == Enum.UserInputType.MouseButton1
+			and input.UserInputType == Enum.UserInputType.MouseMovement
+		local isTouch = dragInput.UserInputType == Enum.UserInputType.Touch
+			and input == dragInput
+		if not (isMouse or isTouch) then return end
+
+		local cur = Vector2.new(input.Position.X, input.Position.Y)
+		local delta = cur - pressPos
+		if not dragMoved and delta.Magnitude > 8 then
+			dragMoved = true
+		end
+		if dragMoved then
+			setPos(btnStartX + delta.X, btnStartY + delta.Y)
+		end
+	end))
+
+	track(UserInputService.InputEnded:Connect(function(input)
+		if not dragging or not dragInput then return end
+		if input == dragInput
+			or (dragInput.UserInputType == Enum.UserInputType.MouseButton1
+				and input.UserInputType == Enum.UserInputType.MouseButton1) then
+			finishDrag()
+		end
+	end))
+end
+
+pcall(buildGui)
 
 ENV.__AutoJumpTP_Cleanup = function()
 	enabled = false
@@ -701,5 +885,7 @@ ENV.__AutoJumpTP_Cleanup = function()
 		pcall(function() c:Disconnect() end)
 	end
 	conns = {}
-	pcall(function() gui:Destroy() end)
+	if gui then
+		pcall(function() gui:Destroy() end)
+	end
 end
