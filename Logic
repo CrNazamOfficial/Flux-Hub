@@ -21,7 +21,8 @@ local ZONES = {
 }
 
 local Y_EXACT = 0.12
-local DWELL = 0.15
+local MAX_SWEEP = 400
+local PROTECT_BAND = 8
 local SPEED = 2000
 local CRUISE_EXTRA = 150
 local COOLDOWN = 0.5
@@ -37,8 +38,7 @@ local enabled = false
 local teleporting = false
 local busySince = 0
 local lastTeleportEnd = 0
-local dwellZone = nil
-local dwellStart = 0
+local prevList = nil
 
 local protectOn = false
 local protectOrig = {}
@@ -56,36 +56,69 @@ local PROTECT_STATES = {
 local function getChar()
 	local char = player.Character
 	if not char then return nil end
-	local root = char:FindFirstChild("HumanoidRootPart")
+	local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if not root or not hum then return nil end
 	if hum.Health <= 0 then return nil end
 	return char, root, hum
 end
 
-local function feetOffset(root, hum)
-	local o = 0
+local function getYList(char, root, hum)
+	local ry = root.Position.Y
+	local list = { ry, ry, ry, ry }
 	pcall(function()
-		o = hum.HipHeight + root.Size.Y / 2
+		list[2] = char:GetPivot().Position.Y
 	end)
-	return o
+	pcall(function()
+		local cf, size = char:GetBoundingBox()
+		list[3] = cf.Position.Y - size.Y / 2
+	end)
+	pcall(function()
+		list[4] = ry - (hum.HipHeight + root.Size.Y / 2)
+	end)
+	for i = 1, 4 do
+		if type(list[i]) ~= "number" or list[i] ~= list[i] then
+			list[i] = ry
+		end
+	end
+	return list
 end
 
-local function matchZone(root, hum)
-	local y = root.Position.Y
-	local refs = { y, y - feetOffset(root, hum) }
+local function detectZone(list, prev)
 	local best = nil
 	local bestDiff = math.huge
 	for _, z in ipairs(ZONES) do
-		for _, ry in ipairs(refs) do
-			local diff = math.abs(ry - z.y)
-			if diff <= Y_EXACT and diff < bestDiff then
+		for i = 1, #list do
+			local cur = list[i]
+			local diff = math.abs(cur - z.y)
+			local hit = diff <= Y_EXACT
+			if not hit and prev then
+				local pv = prev[i]
+				if pv and math.abs(cur - pv) <= MAX_SWEEP then
+					if (pv < z.y and cur > z.y) or (pv > z.y and cur < z.y) then
+						hit = true
+						diff = 0
+					end
+				end
+			end
+			if hit and diff < bestDiff then
 				best = z
 				bestDiff = diff
 			end
 		end
 	end
 	return best
+end
+
+local function nearZone(list)
+	for _, z in ipairs(ZONES) do
+		for i = 1, #list do
+			if math.abs(list[i] - z.y) <= PROTECT_BAND then
+				return true
+			end
+		end
+	end
+	return false
 end
 
 local function guardPart(part)
@@ -145,6 +178,20 @@ local function setProtect(on)
 	end
 end
 
+local function blockAnims(hum)
+	pcall(function()
+		local animator = hum:FindFirstChildOfClass("Animator")
+		if not animator then return end
+		for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
+			local v = 0
+			pcall(function() v = tr.Priority.Value end)
+			if v >= Enum.AnimationPriority.Action.Value then
+				pcall(function() tr:Stop(0) end)
+			end
+		end
+	end)
+end
+
 local function doTeleport(zone)
 	local char, root, hum = getChar()
 	if not char then
@@ -172,6 +219,7 @@ local function doTeleport(zone)
 				pcall(function() d.CanCollide = false end)
 			end
 		end
+		pcall(function() hum.Sit = false end)
 		hum.AutoRotate = false
 		hum.PlatformStand = true
 
@@ -210,6 +258,7 @@ local function doTeleport(zone)
 				end
 				root.CFrame = CFrame.new(current) * rot
 				zeroVel()
+				blockAnims(hum)
 				if current == wp then break end
 			end
 		end
@@ -217,6 +266,7 @@ local function doTeleport(zone)
 		for _ = 1, 3 do
 			root.CFrame = CFrame.new(target) * rot
 			zeroVel()
+			blockAnims(hum)
 			RunService.Heartbeat:Wait()
 		end
 	end)
@@ -238,8 +288,7 @@ local function doTeleport(zone)
 	end)
 	zeroVel()
 
-	dwellZone = nil
-	dwellStart = 0
+	prevList = nil
 	lastTeleportEnd = tick()
 	teleporting = false
 	if not enabled then
@@ -250,7 +299,7 @@ end
 track(RunService.Heartbeat:Connect(function()
 	local char, root, hum = getChar()
 	if not char then
-		dwellZone = nil
+		prevList = nil
 		if protectOn then dropProtect() end
 		return
 	end
@@ -266,38 +315,37 @@ track(RunService.Heartbeat:Connect(function()
 	end
 
 	if not enabled then
-		dwellZone = nil
+		prevList = nil
 		if protectOn and not teleporting then setProtect(false) end
 		return
 	end
 
-	if teleporting then return end
-
-	local zone = matchZone(root, hum)
-	setProtect(zone ~= nil)
-
-	if not zone or (now - lastTeleportEnd) < COOLDOWN then
-		dwellZone = nil
+	if teleporting then
+		prevList = nil
 		return
 	end
 
-	if dwellZone ~= zone then
-		dwellZone = zone
-		dwellStart = now
-		return
-	end
+	local list = getYList(char, root, hum)
+	local prev = prevList
+	prevList = list
 
-	if (now - dwellStart) >= DWELL then
-		dwellZone = nil
+	setProtect(nearZone(list))
+	if protectOn then blockAnims(hum) end
+
+	if (now - lastTeleportEnd) < COOLDOWN then return end
+
+	local zone = detectZone(list, prev)
+	if zone then
 		teleporting = true
 		busySince = now
+		prevList = nil
 		task.spawn(doTeleport, zone)
 	end
 end))
 
 track(player.CharacterAdded:Connect(function()
 	teleporting = false
-	dwellZone = nil
+	prevList = nil
 	dropProtect()
 end))
 
@@ -366,7 +414,7 @@ refresh()
 
 local function setEnabled(v)
 	enabled = v
-	dwellZone = nil
+	prevList = nil
 	lastTeleportEnd = 0
 	if enabled then
 		if teleporting and (tick() - busySince) > 3 then
