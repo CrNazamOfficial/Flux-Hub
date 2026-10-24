@@ -111,12 +111,18 @@ local function RegisterTheme(name, defaultColor)
 end
 
 local PanelToggleBusy = {}
+local _PanelRegistryRef = nil
+local function SetPanelRegistry(ref) _PanelRegistryRef = ref end
 local function SafePanelToggle(name, newState)
+	local reg = _PanelRegistryRef and _PanelRegistryRef[name]
+	if not reg and ToggleRegistry then reg = ToggleRegistry[name] end
+	if not reg or type(reg.Get) ~= "function" or type(reg.Set) ~= "function" then return end
 	if PanelToggleBusy[name] then return end
-	local reg = ToggleRegistry and ToggleRegistry[name]
-	if not reg or type(reg.Set) ~= "function" then return end
 	PanelToggleBusy[name] = true
-	pcall(function() reg.Set(newState) end)
+	local cur = false
+	pcall(function() cur = reg.Get() end)
+	local target = (newState ~= nil) and newState or (not cur)
+	if cur ~= target then pcall(function() reg.Set(target) end) end
 	task.delay(0.05, function() PanelToggleBusy[name] = nil end)
 end
 
@@ -4786,6 +4792,7 @@ end)
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
+	SetPanelRegistry(ToggleRegistry)
 	local SAVE_FILE = "FluxHub_Panel.json"
 	local FEATURES = PANEL_FEATURES
 	local isFeature = {}
@@ -4819,11 +4826,12 @@ RunTab("Panel", function(Add, Title, AddFeature)
 	local closeBtn = footerBtn("Close", 10 + (fw + 6) * 2, false)
 	makeDrag({ Handles = { WinHeader }, Target = Win, Size = Vector2.new(winW, winH), Threshold = 4 })
 	local function updateFloatVisual(name)
-		local fb = floatBtns[name]; if not fb then return end
-		local reg = ToggleRegistry[name]
-		local on = false
-		if reg then local okGet, val = pcall(reg.Get); on = okGet and val == true end
-		if fb.Last == on then return end
+	local fb = floatBtns[name]; if not fb then return end
+	local reg = ToggleRegistry[name]
+	if not reg then return end
+	local on = false
+	pcall(function() on = reg.Get() == true end)
+	if fb.Last == on then return end
 		fb.Last = on
 		tw(fb.Stroke, 0.15, { Color = on and C.White or C.TextDim })
 		tw(fb.Button, 0.15, { TextColor3 = on and C.Text or C.TextDim, BackgroundTransparency = on and 0.02 or 0.1 })
@@ -4846,10 +4854,11 @@ RunTab("Panel", function(Add, Title, AddFeature)
 			Handles = { b }, Target = b, Size = Vector2.new(BTN_W, BTN_H),
 			CanDrag = function() return not locked end,
 			OnTap = function()
-				playClick()
-				SafePanelToggle(name, not (ToggleRegistry[name] and ToggleRegistry[name].Get()))
-				updateFloatVisual(name)
-			end,
+	playClick()
+	SafePanelToggle(name)
+	task.wait(0.08)
+	updateFloatVisual(name)
+end,
 		})
 		updateFloatVisual(name)
 	end
@@ -4886,9 +4895,21 @@ RunTab("Panel", function(Add, Title, AddFeature)
 		track(item.MouseButton1Click:Connect(function() playClick(); setSelected(name, not selected[name]) end))
 	end
 	for _, name in ipairs(FEATURES) do
-		local reg = ToggleRegistry[name]
-		if reg and reg.Listeners then reg.Listeners[#reg.Listeners + 1] = function() updateFloatVisual(name) end end
+	local reg = ToggleRegistry[name]
+	if reg then
+		reg.Listeners = reg.Listeners or {}
+		reg.Listeners[#reg.Listeners + 1] = function(state)
+			updateFloatVisual(name)
+			local c = checkApis[name]
+			if c and selected[name] ~= state then
+				selected[name] = state and true or nil
+				c.render(state)
+			end
+		end
+	else
+		warn("[FluxHub Panel] Toggle tidak ditemukan: " .. name)
 	end
+end
 	task.spawn(function()
 		while gui.Parent do task.wait(0.3); for name in pairs(floatBtns) do updateFloatVisual(name) end end
 	end)
