@@ -20,16 +20,8 @@ local ZONES = {
 	{ y = 1024.1, target = Vector3.new(-6940.3, 1352.3, -7211.2) },
 }
 
-local Y_EXACT = 0.06
-local GROUND_MEMORY = 0.4
-local Y_LOW_SLACK = 2
-local JUMP_ARC = 40
-local MAX_DRIFT = 25
-local JUMP_COUNT_NEEDED = 3
-local JUMP_MIN_GAP = 0.1
-local JUMP_MAX_GAP = 0.7
-local PROTECT_LOW = 6
-local PROTECT_HIGH = 30
+local Y_EXACT = 0.12
+local DWELL = 0.15
 local SPEED = 2000
 local CRUISE_EXTRA = 150
 local COOLDOWN = 0.5
@@ -44,13 +36,9 @@ end
 local enabled = false
 local teleporting = false
 local busySince = 0
-local lockedZone = nil
-local startPos = nil
-local jumpCount = 0
-local lastJump = 0
 local lastTeleportEnd = 0
-local groundY = nil
-local groundT = 0
+local dwellZone = nil
+local dwellStart = 0
 
 local protectOn = false
 local protectOrig = {}
@@ -65,13 +53,6 @@ local PROTECT_STATES = {
 	Enum.HumanoidStateType.Physics,
 }
 
-local function resetCounter()
-	lockedZone = nil
-	startPos = nil
-	jumpCount = 0
-	lastJump = 0
-end
-
 local function getChar()
 	local char = player.Character
 	if not char then return nil end
@@ -80,6 +61,31 @@ local function getChar()
 	if not root or not hum then return nil end
 	if hum.Health <= 0 then return nil end
 	return char, root, hum
+end
+
+local function feetOffset(root, hum)
+	local o = 0
+	pcall(function()
+		o = hum.HipHeight + root.Size.Y / 2
+	end)
+	return o
+end
+
+local function matchZone(root, hum)
+	local y = root.Position.Y
+	local refs = { y, y - feetOffset(root, hum) }
+	local best = nil
+	local bestDiff = math.huge
+	for _, z in ipairs(ZONES) do
+		for _, ry in ipairs(refs) do
+			local diff = math.abs(ry - z.y)
+			if diff <= Y_EXACT and diff < bestDiff then
+				best = z
+				bestDiff = diff
+			end
+		end
+	end
+	return best
 end
 
 local function guardPart(part)
@@ -139,49 +145,6 @@ local function setProtect(on)
 	end
 end
 
-local function inProtectZone(y)
-	for _, z in ipairs(ZONES) do
-		if y >= z.y - PROTECT_LOW and y <= z.y + PROTECT_HIGH then
-			return true
-		end
-	end
-	return false
-end
-
-track(RunService.Heartbeat:Connect(function()
-	local char, root, hum = getChar()
-	if not char then
-		if protectOn then dropProtect() end
-		return
-	end
-
-	if protectOn and protectChar ~= char then
-		dropProtect()
-	end
-
-	if not teleporting then
-		local grounded = false
-		pcall(function()
-			grounded = hum.FloorMaterial ~= Enum.Material.Air
-		end)
-		if grounded then
-			groundY = root.Position.Y
-			groundT = tick()
-		end
-	end
-
-	if not enabled then
-		if protectOn and not teleporting then setProtect(false) end
-		return
-	end
-
-	setProtect(teleporting or inProtectZone(root.Position.Y))
-
-	if jumpCount > 0 and (tick() - lastJump) > JUMP_MAX_GAP then
-		resetCounter()
-	end
-end))
-
 local function doTeleport(zone)
 	local char, root, hum = getChar()
 	if not char then
@@ -192,6 +155,8 @@ local function doTeleport(zone)
 	pcall(function() setProtect(true) end)
 
 	local saved = {}
+	local oldAutoRotate = true
+	pcall(function() oldAutoRotate = hum.AutoRotate end)
 
 	local function zeroVel()
 		pcall(function()
@@ -207,6 +172,7 @@ local function doTeleport(zone)
 				pcall(function() d.CanCollide = false end)
 			end
 		end
+		hum.AutoRotate = false
 		hum.PlatformStand = true
 
 		local rot = root.CFrame.Rotation
@@ -265,15 +231,15 @@ local function doTeleport(zone)
 	pcall(function()
 		if hum and hum.Parent then
 			hum.PlatformStand = false
+			hum.AutoRotate = oldAutoRotate
 			hum.Jump = false
 			hum:ChangeState(Enum.HumanoidStateType.GettingUp)
 		end
 	end)
 	zeroVel()
 
-	groundY = nil
-	groundT = 0
-	resetCounter()
+	dwellZone = nil
+	dwellStart = 0
 	lastTeleportEnd = tick()
 	teleporting = false
 	if not enabled then
@@ -281,92 +247,57 @@ local function doTeleport(zone)
 	end
 end
 
-local function onJump()
-	if not enabled then return end
-	local now = tick()
-
-	if teleporting then
-		if now - busySince > BUSY_TIMEOUT then
-			teleporting = false
-		else
-			return
-		end
-	end
-
-	if now - lastTeleportEnd < COOLDOWN then return end
-
-	local char, root = getChar()
+track(RunService.Heartbeat:Connect(function()
+	local char, root, hum = getChar()
 	if not char then
-		resetCounter()
+		dwellZone = nil
+		if protectOn then dropProtect() end
 		return
 	end
-	local pos = root.Position
 
-	if jumpCount > 0 and lockedZone and startPos then
-		local gap = now - lastJump
-		if gap < JUMP_MIN_GAP then return end
-
-		local dx = pos.X - startPos.X
-		local dz = pos.Z - startPos.Z
-		local flat = math.sqrt(dx * dx + dz * dz)
-		local valid = gap <= JUMP_MAX_GAP
-			and pos.Y >= lockedZone.y - Y_LOW_SLACK
-			and pos.Y <= lockedZone.y + JUMP_ARC
-			and flat <= MAX_DRIFT
-
-		if valid then
-			jumpCount = jumpCount + 1
-			lastJump = now
-			if jumpCount >= JUMP_COUNT_NEEDED then
-				local zone = lockedZone
-				resetCounter()
-				teleporting = true
-				busySince = now
-				task.spawn(doTeleport, zone)
-			end
-			return
-		end
-		resetCounter()
+	if protectOn and protectChar ~= char then
+		dropProtect()
 	end
 
-	local refs = { pos.Y }
-	if groundY and (now - groundT) <= GROUND_MEMORY then
-		refs[#refs + 1] = groundY
+	local now = tick()
+
+	if teleporting and (now - busySince) > BUSY_TIMEOUT then
+		teleporting = false
 	end
 
-	local best = nil
-	local bestDiff = math.huge
-	for _, z in ipairs(ZONES) do
-		for _, ry in ipairs(refs) do
-			local diff = math.abs(ry - z.y)
-			if diff <= Y_EXACT and diff < bestDiff then
-				best = z
-				bestDiff = diff
-			end
-		end
+	if not enabled then
+		dwellZone = nil
+		if protectOn and not teleporting then setProtect(false) end
+		return
 	end
-	if not best then return end
 
-	lockedZone = best
-	startPos = pos
-	jumpCount = 1
-	lastJump = now
-end
+	if teleporting then return end
 
-track(UserInputService.JumpRequest:Connect(onJump))
+	local zone = matchZone(root, hum)
+	setProtect(zone ~= nil)
 
-track(UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.Space then
-		onJump()
+	if not zone or (now - lastTeleportEnd) < COOLDOWN then
+		dwellZone = nil
+		return
+	end
+
+	if dwellZone ~= zone then
+		dwellZone = zone
+		dwellStart = now
+		return
+	end
+
+	if (now - dwellStart) >= DWELL then
+		dwellZone = nil
+		teleporting = true
+		busySince = now
+		task.spawn(doTeleport, zone)
 	end
 end))
 
 track(player.CharacterAdded:Connect(function()
 	teleporting = false
-	groundY = nil
-	groundT = 0
-	resetCounter()
+	dwellZone = nil
 	dropProtect()
 end))
 
@@ -435,7 +366,7 @@ refresh()
 
 local function setEnabled(v)
 	enabled = v
-	resetCounter()
+	dwellZone = nil
 	lastTeleportEnd = 0
 	if enabled then
 		if teleporting and (tick() - busySince) > 3 then
