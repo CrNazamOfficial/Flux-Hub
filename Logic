@@ -19,15 +19,16 @@ local ZONES = {
     { y = 1024.1, target = Vector3.new(-6940.3, 1352.3, -7211.2) },
 }
 
-local Y_TOLERANCE  = 8.0
-local DWELL        = 1.5          -- wajib diam 1.5 detik baru aktif
+-- Y_TOLERANCE DIPERKETAT: harus benar-benar pas di salah satu 3 Y zona
+local Y_TOLERANCE  = 0.01
+local DWELL        = 1.5
 local SPEED        = 1200
 local CRUISE_EXTRA = 150
 local COOLDOWN     = 2.0
 local BUSY_TIMEOUT = 10
 
-local MOVE_SPEED_THRESHOLD = 1.5  -- ambang velocity horizontal dianggap gerak
-local MOVE_POS_THRESHOLD   = 0.08 -- ambang perpindahan posisi per frame
+local MOVE_SPEED_THRESHOLD = 1.5
+local MOVE_POS_THRESHOLD   = 0.08
 
 local PROTECT_STATES = {
     Enum.HumanoidStateType.FallingDown,
@@ -68,6 +69,7 @@ local function feetOffset(root, hum)
     return o
 end
 
+-- cek Y terhadap 3 zona. Hanya lolos jika Y (atau Y-kaki) benar-benar pas
 local function matchZone(root, hum)
     local y = root.Position.Y
     local refs = { y, y - feetOffset(root, hum) }
@@ -83,41 +85,39 @@ local function matchZone(root, hum)
     return best
 end
 
+-- wood DIBAWAH karakter (bukan sekadar ada wood di sekitar)
 local function isWoodBelow(root, char)
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {char}
     params.IgnoreWater = false
+    -- 15 stud ke bawah, harus kena wood/wplanks
     local result = Workspace:Raycast(root.Position, Vector3.new(0, -15, 0), params)
     if not result then return false end
     local m = result.Material
-    return m == Enum.Material.Wood or m == Enum.Material.WoodPlanks
+    if not (m == Enum.Material.Wood or m == Enum.Material.WoodPlanks) then
+        return false
+    end
+    -- wood harus tepat di bawah kaki (bukan jauh miring)
+    local feetY = root.Position.Y - feetOffset(root, hum)
+    local gap = math.abs(result.Position.Y - feetY)
+    if gap > 2.0 then return false end
+    return true
 end
 
--- cek apakah karakter sedang bergerak (velocity / posisi / input gerak)
 local function isMoving(root, hum, moveDir)
-    -- 1) velocity horizontal
     local v
     pcall(function() v = root.AssemblyLinearVelocity end)
     if v then
         local hv = Vector3.new(v.X, 0, v.Z).Magnitude
         if hv > MOVE_SPEED_THRESHOLD then return true end
     end
-    -- 2) perpindahan posisi
     if lastPos then
         local d = (root.Position - lastPos)
         local hd = Vector3.new(d.X, 0, d.Z).Magnitude
         if hd > MOVE_POS_THRESHOLD then return true end
     end
-    -- 3) input gerak (WASD / thumbstick)
     if moveDir and moveDir.Magnitude > 0.15 then return true end
-    -- 4) jump
-    pcall(function()
-        if hum and (hum.Jump or hum:GetState() == Enum.HumanoidStateType.Jumping) then
-            -- treat as moving (bukan diam)
-            -- pakai flag via return
-        end
-    end)
     return false
 end
 
@@ -480,7 +480,6 @@ track(RunService.Heartbeat:Connect(function()
 
     if teleporting then return end
 
-    -- ambil arah gerak dari Humanoid.MoveDirection
     local moveDir
     pcall(function() moveDir = hum.MoveDirection end)
 
@@ -499,7 +498,6 @@ track(RunService.Heartbeat:Connect(function()
         return
     end
 
-    -- sedang bergerak -> reset timer diam, jangan teleport
     if moving then
         dwellZone = nil
         dwellStart = 0
@@ -512,7 +510,6 @@ track(RunService.Heartbeat:Connect(function()
         return
     end
 
-    -- wajib diam penuh DWELL (1.5 dtk)
     if (now - dwellStart) >= DWELL then
         dwellZone   = nil
         dwellStart  = 0
