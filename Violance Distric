@@ -3263,405 +3263,407 @@ RunTab("Killer", function(Add, Title, AddFeature)
 	-- ============================================================
 	-- 1. SILENT AIM VEIL (logic asli + hook global fix crash)
 	-- ============================================================
-	local SAV = {
-		Enabled = false, Visual = true, Fov = 35,
-		Conns = {}, Ping = 0, SpearRemote = nil, VfxRemote = nil,
-		Target = nil, PrevRoot = nil, UpdatedAt = 0, List = {},
-		Holding = false, Job = nil, Steer = nil, ThrownRoot = nil, ThrownName = nil,
-		ArmedUntil = 0, HookInstalled = false,
-		Calib = { g = nil, speedScale = 1, count = 0 },
-		Tracker = setmetatable({}, { __mode = "k" }),
-		KillerCache = setmetatable({}, { __mode = "k" }),
-		UsedParts = setmetatable({}, { __mode = "k" }),
-		Recent = {},
-		CalibText = "Calib: nonaktif (G manual)",
-		SteerText = "Homing: -",
-		LastThrowText = "Throw: -",
-		PendingLog = nil,
-	}
-	local calib = genv and genv.__SILENTAIM_CALIB
-	if type(calib) ~= "table" then calib = { g = nil, speedScale = 1, count = 0 }; if genv then genv.__SILENTAIM_CALIB = calib end end
-	SAV.Calib = calib
-	local SAV_CFG = {
-		PROJECTILE_GRAVITY = 96, AIM_OFFSET_Y = 0, PREDICT = true, MAX_PREDICT_SPEED = 60,
-		MAX_DIST = 260, STALE = 0.3, HYSTERESIS = 3, LEAD_PING = 2.2, EXTRA_LEAD = 0.12,
-		VEL_SMOOTH = 0.25, ZZ_WINDOW = 0.5, ZZ_DEADZONE = 0.35, ZZ_FULL = 1.2, ZZ_LEAD_MIN = 0.4,
-		STEER_DELAY = 0.35, STEER_MAX = 4, STEER_TURN = 18, STEER_NEAR = 60, STEER_STOP = 2.5,
-		MIN_SPEED_RATIO = 0.4, WEAK_THROW = 0.45, SNAP_ORIGIN = "Bottom", SNAP_THICK = 2, SNAP_TRANS = 0.1,
-		AUTO_CALIBRATE = false, CALIB_MIN_SAMPLES = 5, CALIB_MIN_SPAN = 0.15, CALIB_MAX_RMS = 3,
-	}
-	local function SAV_RefreshPing()
-		local ok, v = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
-		if ok and type(v) == "number" then SAV.Ping = math.clamp(v, 0, 0.4) end
+	local CONFIG = {
+	DEFAULT_SILENT = true, DEFAULT_VISUAL = true, DEFAULT_FOV = 35,
+	MIN_FOV = 10, MAX_FOV = 90, FOV_STEP = 5,
+	PROJECTILE_GRAVITY = 96, DEFAULT_SPEED = 185, AIM_OFFSET_Y = 0,
+	PREDICT_MOVEMENT = true, PREDICT_MAX_TIME = 1.4, MAX_PREDICT_SPEED = 60,
+	MAX_TARGET_DISTANCE = 600, TARGET_STALE_TIME = 0.3, TARGET_HYSTERESIS = 3,
+	LEAD_PING_MULT = 2.2, EXTRA_LEAD = 0.12, VELOCITY_SMOOTH = 0.25,
+	ZIGZAG_WINDOW = 0.5, ZIGZAG_DEADZONE = 0.35, ZIGZAG_FULL = 1.2, ZIGZAG_LEAD_MIN = 0.4,
+	AUTO_CALIBRATE = false, HOLD_VALID = 0.6, JOB_TIMEOUT = 2.0,
+	PICK_RADIUS = 90, PICK_WINDOW = 0.8, PICK_MIN_RATIO = 0.15,
+	STEER_DELAY = 0.3, STEER_MAX_TIME = 5, STEER_MAX_TIME_CAP = 14,
+	STEER_TURN_RATE = 40, STEER_NEAR_DIST = 60, STEER_STOP_DIST = 2.5,
+	MIN_SPEED_RATIO = 0.4, MIN_STEER_SPEED = 30, MAX_SNAP_DISTANCE = 260,
+	TARGET_TEXT = "[ TARGET ]", TARGET_TEXT_SIZE = 12, TARGET_TEXT_OFFSET_Y = 2.2,
+	TARGET_TEXT_COLOR = Color3.fromRGB(255, 255, 255), TARGET_TEXT_STROKE = true,
+}
+local calib = { ver = 2, g = nil, speed = nil, bySpeed = {}, count = 0 }
+local SAV = { Conns = {} }
+local state = { silent = false, visual = CONFIG.DEFAULT_VISUAL, fov = CONFIG.DEFAULT_FOV }
+local aim = {
+	target = nil, prevRoot = nil, updatedAt = 0, list = {}, holding = false,
+	holdStart = nil, lastHold = 0, lastHoldEnd = nil, pendingLog = nil,
+	job = nil, steer = nil, thrownRoot = nil, thrownName = nil, armedUntil = 0,
+}
+local killerCache = setmetatable({}, { __mode = "k" })
+local tracker = setmetatable({}, { __mode = "k" })
+local usedParts = setmetatable({}, { __mode = "k" })
+local recent = {}
+local ping = 0
+local spearRemote = nil
+local vfxRemote = nil
+local SAV_TargetLabel = nil
+
+local function SAV_RefreshPing()
+	local ok, v = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
+	if ok and type(v) == "number" then ping = math.clamp(v, 0, 0.4) end
+end
+local function SAV_FindRemotes()
+	local r = ReplicatedStorage:FindFirstChild("Remotes")
+	local k = r and r:FindFirstChild("Killers")
+	local v = k and k:FindFirstChild("Veil")
+	if v then spearRemote = v:FindFirstChild("Spearthrow"); vfxRemote = v:FindFirstChild("vfx") end
+end
+local function SAV_IsKillerChar(char, now)
+	local c = killerCache[char]
+	if c then if c.isKiller then return true end; if now - c.t < 2 then return false end end
+	local found = char:FindFirstChild("Lookscriptkiller", true) ~= nil
+	killerCache[char] = { isKiller = found, t = now }
+	return found
+end
+local function SAV_IsCharacterPart(p)
+	local m = p:FindFirstAncestorOfClass("Model")
+	return m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
+end
+local function SAV_CurrentGravity()
+	if CONFIG.PROJECTILE_GRAVITY ~= nil then return CONFIG.PROJECTILE_GRAVITY end
+	if calib.g ~= nil then return calib.g end
+	return workspace.Gravity
+end
+local function SAV_SpeedFor(charge) return CONFIG.DEFAULT_SPEED end
+local function SAV_CurrentCharge(now)
+	if aim.holding and aim.holdStart then return math.clamp(now - aim.holdStart, 0, 10) end
+	if aim.lastHoldEnd and now - aim.lastHoldEnd <= CONFIG.HOLD_VALID then return math.clamp(aim.lastHold or 0, 0, 10) end
+	return 0
+end
+local function SAV_ResolveOrigin(origin)
+	if typeof(origin) ~= "Vector3" then return nil end
+	local c = Players.LocalPlayer.Character
+	local mr = c and c:FindFirstChild("HumanoidRootPart")
+	if mr and (origin - mr.Position).Magnitude > 25 then return mr.Position + Vector3.new(0, 1.5, 0) end
+	return origin
+end
+local function SAV_AnalyzeMotion(tr, now)
+	local h = tr.hist
+	local cutoff = now - CONFIG.ZIGZAG_WINDOW
+	while #h > 0 and h[1].t < cutoff do table.remove(h, 1) end
+	local n = #h
+	if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
+	local t0, x0, z0 = h[1].t, h[1].x, h[1].z
+	local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
+	for i = 1, n do
+		local t = h[i].t - t0; local x = h[i].x - x0; local z = h[i].z - z0
+		st = st + t; stt = stt + t * t; sx = sx + x; stx = stx + t * x; sz = sz + z; stz = stz + t * z
 	end
-	local function SAV_FindRemotes()
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		local k = r and r:FindFirstChild("Killers")
-		local v = k and k:FindFirstChild("Veil")
-		if v then SAV.SpearRemote = v:FindFirstChild("Spearthrow"); SAV.VfxRemote = v:FindFirstChild("vfx") end
+	local D = n * stt - st * st
+	if math.abs(D) < 1e-9 then return nil, 1 end
+	local bx = (n * stx - st * sx) / D; local ax = (sx - bx * st) / n
+	local bz = (n * stz - st * sz) / D; local az = (sz - bz * st) / n
+	local sq = 0
+	for i = 1, n do
+		local t = h[i].t - t0
+		local ex = (h[i].x - x0) - (ax + bx * t); local ez = (h[i].z - z0) - (az + bz * t)
+		sq = sq + ex * ex + ez * ez
 	end
-	local function SAV_IsKiller(char, now)
-		local c = SAV.KillerCache[char]
-		if c then if c.isKiller then return true end; if now - c.t < 2 then return false end end
-		local found = char:FindFirstChild("Lookscriptkiller", true) ~= nil
-		SAV.KillerCache[char] = { isKiller = found, t = now }
-		return found
-	end
-	local function SAV_IsCharPart(p)
-		local m = p:FindFirstAncestorOfClass("Model")
-		return m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
-	end
-	local function SAV_Gravity()
-		if SAV_CFG.PROJECTILE_GRAVITY ~= nil then return SAV_CFG.PROJECTILE_GRAVITY end
-		if SAV.Calib.g ~= nil then return SAV.Calib.g end
-		return workspace.Gravity
-	end
-	local function SAV_GravitySource()
-		if SAV_CFG.PROJECTILE_GRAVITY ~= nil then return "manual" end
-		if SAV.Calib.g ~= nil then return "auto" end
-		return "default"
-	end
-	local function SAV_ResolveOrigin(origin)
-		if typeof(origin) ~= "Vector3" then return nil end
-		local c = Players.LocalPlayer.Character
-		local mr = c and c:FindFirstChild("HumanoidRootPart")
-		if mr and (origin - mr.Position).Magnitude > 25 then return mr.Position + Vector3.new(0, 1.5, 0) end
-		return origin
-	end
-	local function SAV_Analyze(tr, now)
-		local h = tr.hist
-		local cutoff = now - SAV_CFG.ZZ_WINDOW
-		while #h > 0 and h[1].t < cutoff do table.remove(h, 1) end
-		local n = #h
-		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
-		local t0, x0, z0 = h[1].t, h[1].x, h[1].z
-		local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
-		for i = 1, n do
-			local t = h[i].t - t0
-			local x = h[i].x - x0
-			local z = h[i].z - z0
-			st = st + t; stt = stt + t * t
-			sx = sx + x; stx = stx + t * x
-			sz = sz + z; stz = stz + t * z
-		end
-		local D = n * stt - st * st
-		if math.abs(D) < 1e-9 then return nil, 1 end
-		local bx = (n * stx - st * sx) / D
-		local ax = (sx - bx * st) / n
-		local bz = (n * stz - st * sz) / D
-		local az = (sz - bz * st) / n
-		local sq = 0
-		for i = 1, n do
-			local t = h[i].t - t0
-			local ex = (h[i].x - x0) - (ax + bx * t)
-			local ez = (h[i].z - z0) - (az + bz * t)
-			sq = sq + ex * ex + ez * ez
-		end
-		local rms = math.sqrt(sq / n)
-		local span = math.max(SAV_CFG.ZZ_FULL - SAV_CFG.ZZ_DEADZONE, 0.01)
-		local stable = math.clamp(1 - (rms - SAV_CFG.ZZ_DEADZONE) / span, 0, 1)
-		return Vector3.new(bx, 0, bz), stable
-	end
-	local function SAV_TrackVel(root, now)
-		local pos = root.Position
-		local tr = SAV.Tracker[root]
-		if not tr then tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1 }; SAV.Tracker[root] = tr end
-		local jump = (pos - tr.pos).Magnitude
-		if jump > 15 then tr.hist = { { t = now, x = pos.X, z = pos.Z } }; tr.vel = Vector3.new(); tr.pred = nil; tr.stable = 1; tr.pos = pos; tr.t = now; return tr.vel end
-		table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
-		tr.pred, tr.stable = SAV_Analyze(tr, now)
-		if jump < 0.001 then if now - tr.t > 0.15 then tr.vel = Vector3.new() end; return tr.vel end
-		local dt = now - tr.t
-		if dt <= 0 or dt > 0.35 then tr.vel = Vector3.new()
-		else local raw = (pos - tr.pos) / dt; if raw.Magnitude > 180 then tr.vel = Vector3.new() else tr.vel = tr.vel:Lerp(raw, SAV_CFG.VEL_SMOOTH) end end
-		tr.pos = pos; tr.t = now
-		return tr.vel
-	end
-	local function SAV_Solve(origin, speed, base, hv, g, lead)
-		local t = (base - origin).Magnitude / speed
-		local dirOut, aimPos = nil, base
-		for _ = 1, 6 do
-			aimPos = base + hv * (t + lead)
-			local d = aimPos - origin
-			local hd = Vector3.new(d.X, 0, d.Z)
-			local x = hd.Magnitude
-			local y = d.Y
-			if x < 0.01 then dirOut = Vector3.new(0, y >= 0 and 1 or -1, 0); t = math.abs(y) / speed
-			elseif g <= 0 then dirOut = d.Unit; t = d.Magnitude / speed
-			else
-				local v2 = speed * speed
-				local disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
-				local theta
-				if disc >= 0 then theta = math.atan((v2 - math.sqrt(disc)) / (g * x)) else theta = math.rad(45) end
+	local rms = math.sqrt(sq / n)
+	local span = math.max(CONFIG.ZIGZAG_FULL - CONFIG.ZIGZAG_DEADZONE, 0.01)
+	local stable = math.clamp(1 - (rms - CONFIG.ZIGZAG_DEADZONE) / span, 0, 1)
+	return Vector3.new(bx, 0, bz), stable
+end
+local function SAV_TrackVelocity(root, now)
+	local pos = root.Position
+	local tr = tracker[root]
+	if not tr then tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1 }; tracker[root] = tr end
+	local jump = (pos - tr.pos).Magnitude
+	if jump > 15 then tr.hist = { { t = now, x = pos.X, z = pos.Z } }; tr.vel = Vector3.new(); tr.pred = nil; tr.stable = 1; tr.pos = pos; tr.t = now; return tr.vel end
+	table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
+	tr.pred, tr.stable = SAV_AnalyzeMotion(tr, now)
+	if jump < 0.001 then if now - tr.t > 0.15 then tr.vel = Vector3.new() end; return tr.vel end
+	local dt = now - tr.t
+	if dt <= 0 or dt > 0.35 then tr.vel = Vector3.new()
+	else local raw = (pos - tr.pos) / dt; if raw.Magnitude > 180 then tr.vel = Vector3.new() else tr.vel = tr.vel:Lerp(raw, CONFIG.VELOCITY_SMOOTH) end end
+	tr.pos = pos; tr.t = now
+	return tr.vel
+end
+local function SAV_SolveDirection(origin, speed, base, hv, g, lead)
+	local t = (base - origin).Magnitude / speed
+	local dirOut, aimPos = nil, base
+	for _ = 1, 8 do
+		aimPos = base + hv * (math.min(t, CONFIG.PREDICT_MAX_TIME) + lead)
+		local d = aimPos - origin
+		local hd = Vector3.new(d.X, 0, d.Z)
+		local x = hd.Magnitude; local y = d.Y
+		if x < 0.01 then dirOut = Vector3.new(0, y >= 0 and 1 or -1, 0); t = math.abs(y) / speed
+		elseif g <= 0 then dirOut = d.Unit; t = d.Magnitude / speed
+		else
+			local v2 = speed * speed
+			local disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
+			if disc >= 0 then
+				local theta = math.atan((v2 - math.sqrt(disc)) / (g * x))
 				local hdir = hd / x
 				dirOut = hdir * math.cos(theta) + Vector3.new(0, math.sin(theta), 0)
 				local vx = speed * math.cos(theta)
 				if vx > 0.01 then t = x / vx end
-			end
+			else dirOut = d.Unit; t = d.Magnitude / speed end
 		end
-		if not dirOut or dirOut.X ~= dirOut.X or dirOut.Y ~= dirOut.Y or dirOut.Z ~= dirOut.Z then return nil end
-		return dirOut, aimPos
 	end
-	local function SAV_ComputeDir(args)
-		if not SAV.Enabled then return nil end
-		local t = SAV.Target
-		if not t then return nil end
-		if os.clock() - SAV.UpdatedAt > SAV_CFG.STALE then return nil end
-		local root = t.root
-		if not (root and root.Parent) then return nil end
-		local speed = args[2]
-		local origin = SAV_ResolveOrigin(args[3])
-		if not origin or type(speed) ~= "number" or speed <= 1 then return nil end
-		speed = speed * SAV.Calib.speedScale
-		local g = SAV_Gravity()
-		local stable = t.stable or 1
-		local lead = (SAV.Ping * SAV_CFG.LEAD_PING + SAV_CFG.EXTRA_LEAD) * (SAV_CFG.ZZ_LEAD_MIN + (1 - SAV_CFG.ZZ_LEAD_MIN) * stable)
-		local base = root.Position + Vector3.new(0, SAV_CFG.AIM_OFFSET_Y, 0)
-		local hv = t.hv or Vector3.new()
-		local dir, aimPos = SAV_Solve(origin, speed, base, hv, g, lead)
-		if not dir then return nil end
-		SAV.ThrownRoot = root; SAV.ThrownName = t.name
-		local dist = (aimPos - origin).Magnitude
-		SAV.LastThrowText = string.format("Throw: %s (%d st)", t.name, math.floor(dist))
-		SAV.PendingLog = string.format("throw target=%s dist=%.1f", t.name, dist)
-		return dir
+	if not dirOut or dirOut.X ~= dirOut.X or dirOut.Y ~= dirOut.Y or dirOut.Z ~= dirOut.Z then return nil end
+	return dirOut, aimPos
+end
+local function SAV_ParseThrow(args)
+	local first = args[1]
+	if type(first) == "table" then
+		local d, o = first.Direction, first.Origin
+		if typeof(d) ~= "Vector3" or typeof(o) ~= "Vector3" then return nil end
+		local sp = first.Speed
+		if type(sp) ~= "number" or sp <= 1 then sp = nil end
+		return { tbl = true, dir = d, origin = o, speed = sp }
+	elseif typeof(first) == "Vector3" then
+		local sp = args[2]
+		if type(sp) ~= "number" or sp <= 1 then return nil end
+		return { tbl = false, dir = first, origin = args[3], speed = sp }
 	end
-	local function SAV_BeginJob(args)
-		local origin = SAV_ResolveOrigin(args[3])
-		local speed = args[2]
-		if not origin or type(speed) ~= "number" or speed <= 1 then return end
-		local wantHoming = SAV.Enabled and SAV.ThrownRoot ~= nil
-		if (not SAV_CFG.AUTO_CALIBRATE) and (not wantHoming) then return end
-		local now = os.clock()
-		SAV.Job = { t0 = now, origin = origin, speed = speed, dir = args[1], cands = {}, part = nil, firstT = 0, samples = {}, root = wantHoming and SAV.ThrownRoot or nil, name = SAV.ThrownName }
-		SAV.Steer = nil; SAV.ArmedUntil = now + 3
+	return nil
+end
+local function SAV_ApplyDirection(args, info, newDir)
+	if info.tbl then
+		local copy = {}; for k, v in pairs(args[1]) do copy[k] = v end
+		copy.Direction = newDir; args[1] = copy
+	else args[1] = newDir end
+end
+local function SAV_ComputeDir(info)
+	if not state.silent then return nil end
+	local t = aim.target
+	if not t then return nil end
+	if os.clock() - aim.updatedAt > CONFIG.TARGET_STALE_TIME then return nil end
+	local root = t.root
+	if not (root and root.Parent) then return nil end
+	local speed = info.speed
+	local origin = SAV_ResolveOrigin(info.origin)
+	if not origin or type(speed) ~= "number" or speed <= 1 then return nil end
+	local g = SAV_CurrentGravity()
+	local stable = t.stable or 1
+	local lead = (ping * CONFIG.LEAD_PING_MULT + CONFIG.EXTRA_LEAD) * (CONFIG.ZIGZAG_LEAD_MIN + (1 - CONFIG.ZIGZAG_LEAD_MIN) * stable)
+	local base = root.Position + Vector3.new(0, CONFIG.AIM_OFFSET_Y, 0)
+	local hv = t.hv or Vector3.new()
+	local dir, aimPos = SAV_SolveDirection(origin, speed, base, hv, g, lead)
+	if not dir then return nil end
+	local dist = (aimPos - origin).Magnitude
+	aim.thrownRoot = root; aim.thrownName = t.name
+	aim.pendingLog = string.format("throw target=%s dist=%.1f speed=%.0f", t.name, dist, speed)
+	return dir
+end
+local function SAV_BeginJob(info)
+	local origin = SAV_ResolveOrigin(info.origin)
+	local speed = info.speed
+	if not origin or type(speed) ~= "number" or speed <= 1 then return end
+	local wantHoming = state.silent and aim.thrownRoot ~= nil
+	if (not CONFIG.AUTO_CALIBRATE) and (not wantHoming) then return end
+	local now = os.clock()
+	aim.job = { t0 = now, origin = origin, speed = speed, charge = info.charge or 0, dir = info.dir, cands = {}, part = nil, firstT = 0, samples = {}, root = wantHoming and aim.thrownRoot or nil, name = aim.thrownName }
+	aim.steer = nil; aim.armedUntil = now + 3
+end
+local function SAV_FinishJob(job, now)
+	local s = job.samples; local n = #s; local avg = nil
+	if n >= 2 then local span = s[n].t - s[1].t; if span > 0.05 then avg = (s[n].pos - s[1].pos).Magnitude / span end end
+	if state.silent and job.root and job.root.Parent and job.part and job.part.Parent then
+		if avg and avg < CONFIG.MIN_STEER_SPEED then return end
+		local sp = avg or job.speed
+		local dist = (job.root.Position - job.part.Position).Magnitude
+		local maxT = math.clamp(dist / math.max(sp, 1) * 2 + 1.5, CONFIG.STEER_MAX_TIME, CONFIG.STEER_MAX_TIME_CAP)
+		aim.steer = { part = job.part, root = job.root, name = job.name, t0 = now, maxTime = maxT, speed = sp, minSpeed = sp * CONFIG.MIN_SPEED_RATIO, slow = 0 }
 	end
-	local function SAV_StepSteer(now, dt)
-		local st = SAV.Steer
-		if not st then return end
-		local p, root = st.part, st.root
-		if not (p and p.Parent and root and root.Parent) then SAV.Steer = nil; return end
-		if now - st.t0 > SAV_CFG.STEER_MAX then SAV.Steer = nil; return end
-		if not SAV.Enabled then SAV.Steer = nil; return end
-		local pos = p.Position
-		local dist = (root.Position - pos).Magnitude
-		if dist <= SAV_CFG.STEER_STOP then SAV.SteerText = "Homing: dekat target"; SAV.Steer = nil; return end
-		local hv = Vector3.new(); local stable = 1
-		local tr = SAV.Tracker[root]
-		if SAV_CFG.PREDICT and tr then
-			hv = Vector3.new(tr.vel.X, 0, tr.vel.Z); stable = tr.stable or 1
-			if tr.pred then hv = tr.pred:Lerp(hv, stable) end
-			if hv.Magnitude > SAV_CFG.MAX_PREDICT_SPEED then hv = hv.Unit * SAV_CFG.MAX_PREDICT_SPEED end
+end
+local function SAV_PickPart(job, now)
+	for i = 1, #recent do
+		local e = recent[i]; local p = e.part
+		if p and p.Parent and e.t >= job.t0 - CONFIG.PICK_WINDOW and not usedParts[p] and not job.cands[p] and not SAV_IsCharacterPart(p) then
+			if (p.Position - job.origin).Magnitude <= CONFIG.PICK_RADIUS then job.cands[p] = { pos = p.Position, t = now } end
 		end
-		local anchored = p.Anchored
-		local cur, sp = nil, st.speed
-		if not anchored then
-			cur = p.AssemblyLinearVelocity; sp = cur.Magnitude
-			if sp < st.minSpeed then st.slow = st.slow + dt; if st.slow > 0.25 then SAV.SteerText = "Homing: berhenti (jatuh)"; SAV.Steer = nil end; return end
-			st.slow = 0
-		end
-		local lead = (SAV.Ping * SAV_CFG.LEAD_PING + SAV_CFG.EXTRA_LEAD) * (SAV_CFG.ZZ_LEAD_MIN + (1 - SAV_CFG.ZZ_LEAD_MIN) * stable)
-		local aimPos = root.Position + Vector3.new(0, SAV_CFG.AIM_OFFSET_Y, 0) + hv * (dist / math.max(sp, 1) + lead)
-		local want = aimPos - pos
-		if want.Magnitude < 0.001 then return end
-		want = want.Unit
-		local newDir = want
-		if cur then
-			local cd = cur.Unit
-			local ang = math.acos(math.clamp(cd:Dot(want), -1, 1))
-			local maxTurn = SAV_CFG.STEER_TURN * dt
-			if dist > SAV_CFG.STEER_NEAR and ang > maxTurn and ang > 0 then
-				local mix = cd:Lerp(want, maxTurn / ang)
-				if mix.Magnitude > 0.001 then newDir = mix.Unit end
-			end
-		end
-		if anchored then
-			local step = math.min(sp * dt, dist)
-			local np = pos + newDir * step
-			p.CFrame = CFrame.new(np, np + newDir)
-		else p.AssemblyLinearVelocity = newDir * sp end
 	end
-	local function SAV_StepJob(now)
-		for i = #SAV.Recent, 1, -1 do if now - SAV.Recent[i].t > 4 then table.remove(SAV.Recent, i) end end
-		local job = SAV.Job
-		if not job then return end
-		if not job.part then
-			if now - job.t0 > 1.5 then SAV.Job = nil; return end
-			local best, bestSpeed = nil, 0
-			for i = 1, #SAV.Recent do
-				local e = SAV.Recent[i]
-				local p = e.part
-				if p and p.Parent and e.t >= job.t0 - 0.5 and not SAV.UsedParts[p] and not job.cands[p] and not SAV_IsCharPart(p) then
-					if (p.Position - job.origin).Magnitude <= 40 then job.cands[p] = { pos = p.Position, t = now } end
-				end
-			end
-			for p, c in pairs(job.cands) do
-				if not p.Parent then job.cands[p] = nil
-				else
-					local age = now - c.t
-					if age >= 0.1 then
-						local sp = (p.Position - c.pos).Magnitude / age
-						if sp > bestSpeed then bestSpeed = sp; best = p end
-					end
-				end
-			end
-			if best and bestSpeed >= job.speed * 0.3 then job.part = best; job.firstT = now; SAV.UsedParts[best] = true; table.insert(job.samples, { t = 0, pos = best.Position }) end
-			return
-		end
-		local p = job.part
-		if not p.Parent then
-			SAV.Job = nil
-			if SAV.Enabled and job.root and job.root.Parent then
-				local avg = nil; local s = job.samples
-				if #s >= 2 then local span = s[#s].t - s[1].t; if span > 0.05 then avg = (s[#s].pos - s[1].pos).Magnitude / span end end
-				if avg and avg >= job.speed * 0.45 then
-					SAV.Steer = { part = p, root = job.root, name = job.name, t0 = now, speed = avg, minSpeed = job.speed * SAV_CFG.MIN_SPEED_RATIO, slow = 0 }
-					SAV.SteerText = "Homing: aktif -> " .. tostring(job.name)
-				end
-			end
-			return
-		end
-		local pos = p.Position
-		local last = job.samples[#job.samples]
-		if (pos - last.pos).Magnitude > 0.001 then table.insert(job.samples, { t = now - job.firstT, pos = pos }) end
-		if now - job.firstT >= SAV_CFG.STEER_DELAY then SAV.Job = nil end
+	local best, bestSpeed = nil, 0
+	for p, c in pairs(job.cands) do
+		if not p.Parent then job.cands[p] = nil
+		else local age = now - c.t; if age >= 0.1 then local sp = (p.Position - c.pos).Magnitude / age; if sp > bestSpeed then bestSpeed = sp; best = p end end end
 	end
-	local function SAV_RefreshTargets(now)
-		for i = #SAV.List, 1, -1 do SAV.List[i] = nil end
-		local cam = workspace.CurrentCamera
-		if not cam then SAV.Target = nil; return end
-		local cp = cam.CFrame.Position
-		local look = cam.CFrame.LookVector
-		local best, bestAngle = nil, math.huge
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p ~= Players.LocalPlayer then
-				local char = p.Character
-				if char then
-					local root = char:FindFirstChild("HumanoidRootPart")
-					local hum = char:FindFirstChildOfClass("Humanoid")
-					if root and hum and hum.Health > 0 and not SAV_IsKiller(char, now) then
-						if not p:GetAttribute("IsDead") and not char:GetAttribute("IsCarried") and not char:GetAttribute("IsHooked") then
-							local v = root.Position - cp
-							local dist = v.Magnitude
-							if dist > 0.5 and dist <= SAV_CFG.MAX_DIST then
-								local dot = look:Dot(v / dist)
-								local angle = math.deg(math.acos(math.clamp(dot, -1, 1)))
-								local vel = SAV_TrackVel(root, now)
-								local tr = SAV.Tracker[root]
-								local stable = (tr and tr.stable) or 1
-								local hv = Vector3.new(vel.X, 0, vel.Z)
-								if tr and tr.pred then hv = tr.pred:Lerp(hv, stable) end
-								if not SAV_CFG.PREDICT then hv = Vector3.new()
-								elseif hv.Magnitude > SAV_CFG.MAX_PREDICT_SPEED then hv = hv.Unit * SAV_CFG.MAX_PREDICT_SPEED end
-								local entry = { root = root, name = p.Name, dist = dist, angle = angle, hv = hv, stable = stable }
-								table.insert(SAV.List, entry)
-								if angle <= SAV.Fov and angle < bestAngle then bestAngle = angle; best = entry end
-							end
+	if best and bestSpeed >= math.max(10, job.speed * CONFIG.PICK_MIN_RATIO) then return best end
+	return nil
+end
+local function SAV_StepJob(now)
+	for i = #recent, 1, -1 do if now - recent[i].t > 4 then table.remove(recent, i) end end
+	local job = aim.job
+	if not job then return end
+	if not job.part then
+		if now - job.t0 > CONFIG.JOB_TIMEOUT then aim.job = nil; return end
+		local p = SAV_PickPart(job, now); if not p then return end
+		job.part = p; job.firstT = now; usedParts[p] = true; table.insert(job.samples, { t = 0, pos = p.Position }); return
+	end
+	local p = job.part
+	if not p.Parent then aim.job = nil; SAV_FinishJob(job, now); return end
+	local pos = p.Position; local last = job.samples[#job.samples]
+	if (pos - last.pos).Magnitude > 0.001 then table.insert(job.samples, { t = now - job.firstT, pos = pos }) end
+	if now - job.firstT >= CONFIG.STEER_DELAY then aim.job = nil; SAV_FinishJob(job, now) end
+end
+local function SAV_StepSteer(now, dt)
+	local st = aim.steer; if not st then return end
+	local p, root = st.part, st.root
+	if not (p and p.Parent and root and root.Parent) then aim.steer = nil; return end
+	if now - st.t0 > st.maxTime then aim.steer = nil; return end
+	if not state.silent then aim.steer = nil; return end
+	local pos = p.Position; local dist = (root.Position - pos).Magnitude
+	if dist <= CONFIG.STEER_STOP_DIST then aim.steer = nil; return end
+	local hv = Vector3.new(); local stable = 1
+	local tr = tracker[root]
+	if CONFIG.PREDICT_MOVEMENT and tr then
+		hv = Vector3.new(tr.vel.X, 0, tr.vel.Z); stable = tr.stable or 1
+		if tr.pred then hv = tr.pred:Lerp(hv, stable) end
+		if hv.Magnitude < 1.0 and stable > 0.6 then local ok, av = pcall(function() return root.AssemblyLinearVelocity end); if ok and typeof(av) == "Vector3" then hv = Vector3.new(av.X, 0, av.Z):Lerp(hv, 0.3) end end
+		if hv.Magnitude > CONFIG.MAX_PREDICT_SPEED then hv = hv.Unit * CONFIG.MAX_PREDICT_SPEED end
+	end
+	local anchored = p.Anchored; local cur, sp = nil, st.speed
+	if not anchored then
+		cur = p.AssemblyLinearVelocity; local mag = cur.Magnitude
+		if mag < st.minSpeed then st.slow = st.slow + dt; if st.slow > 0.25 then aim.steer = nil end; return end
+		st.slow = 0; sp = math.max(mag, st.speed * 0.9)
+	end
+	local lead = (ping * CONFIG.LEAD_PING_MULT + CONFIG.EXTRA_LEAD) * (CONFIG.ZIGZAG_LEAD_MIN + (1 - CONFIG.ZIGZAG_LEAD_MIN) * stable)
+	local flight = math.min(dist / math.max(sp, 1), CONFIG.PREDICT_MAX_TIME)
+	local aimPos = root.Position + Vector3.new(0, CONFIG.AIM_OFFSET_Y, 0) + hv * (flight + lead)
+	local want = aimPos - pos
+	if want.Magnitude < 0.001 then return end
+	want = want.Unit
+	local newDir = want
+	if cur then
+		local cd = cur.Unit; local ang = math.acos(math.clamp(cd:Dot(want), -1, 1)); local maxTurn = CONFIG.STEER_TURN_RATE * dt
+		if dist > CONFIG.STEER_NEAR_DIST and ang > maxTurn and ang > 0 then local mix = cd:Lerp(want, maxTurn / ang); if mix.Magnitude > 0.001 then newDir = mix.Unit end end
+	end
+	if anchored then local step = math.min(sp * dt, dist); local np = pos + newDir * step; p.CFrame = CFrame.new(np, np + newDir)
+	else p.AssemblyLinearVelocity = newDir * sp end
+end
+local function SAV_RefreshTargets(now)
+	for i = #aim.list, 1, -1 do aim.list[i] = nil end
+	local cam = workspace.CurrentCamera; if not cam then aim.target = nil; return end
+	local cp = cam.CFrame.Position; local look = cam.CFrame.LookVector
+	local best, bestAngle = nil, math.huge
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= Players.LocalPlayer then
+			local char = p.Character
+			if char then
+				local root = char:FindFirstChild("HumanoidRootPart")
+				local hum = char:FindFirstChildOfClass("Humanoid")
+				if root and hum and hum.Health > 0 and not SAV_IsKillerChar(char, now) then
+					if not p:GetAttribute("IsDead") and not char:GetAttribute("IsCarried") and not char:GetAttribute("IsHooked") then
+						local v = root.Position - cp; local dist = v.Magnitude
+						if dist > 0.5 and dist <= CONFIG.MAX_TARGET_DISTANCE then
+							local dot = look:Dot(v / dist)
+							local angle = math.deg(math.acos(math.clamp(dot, -1, 1)))
+							local vel = SAV_TrackVelocity(root, now)
+							local tr = tracker[root]; local stable = (tr and tr.stable) or 1
+							local hv = Vector3.new(vel.X, 0, vel.Z)
+							if tr and tr.pred then hv = tr.pred:Lerp(hv, stable) end
+							if not CONFIG.PREDICT_MOVEMENT then hv = Vector3.new()
+							elseif hv.Magnitude > CONFIG.MAX_PREDICT_SPEED then hv = hv.Unit * CONFIG.MAX_PREDICT_SPEED end
+							local entry = { root = root, name = p.Name, dist = dist, angle = angle, hv = hv, stable = stable }
+							table.insert(aim.list, entry)
+							if angle <= state.fov and angle < bestAngle then bestAngle = angle; best = entry end
 						end
 					end
 				end
 			end
 		end
-		if best and SAV.PrevRoot and best.root ~= SAV.PrevRoot then
-			for i = 1, #SAV.List do
-				local e = SAV.List[i]
-				if e.root == SAV.PrevRoot and e.angle <= SAV.Fov and (e.angle - bestAngle) < SAV_CFG.HYSTERESIS then best = e; break end
+	end
+	if best and aim.prevRoot and best.root ~= aim.prevRoot then
+		for i = 1, #aim.list do local e = aim.list[i]; if e.root == aim.prevRoot and e.angle <= state.fov and (e.angle - bestAngle) < CONFIG.TARGET_HYSTERESIS then best = e; break end end
+	end
+	if best then aim.target = best; aim.prevRoot = best.root; aim.updatedAt = now else aim.target = nil end
+end
+local function SAV_BuildLabel()
+	if SAV_TargetLabel then return end
+	local sg = make("ScreenGui", { Name = "SAV_Label", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, nil)
+	pcall(function() if syn and syn.protect_gui then syn.protect_gui(sg) end end)
+	sg.Parent = getParent()
+	SAV_TargetLabel = make("TextLabel", {
+		Name = "TargetLabel", AnchorPoint = Vector2.new(0.5, 1),
+		Size = UDim2.fromOffset(200, CONFIG.TARGET_TEXT_SIZE + 4),
+		BackgroundTransparency = 1, BorderSizePixel = 0,
+		Text = CONFIG.TARGET_TEXT, TextColor3 = CONFIG.TARGET_TEXT_COLOR,
+		TextSize = CONFIG.TARGET_TEXT_SIZE, Font = Enum.Font.GothamBold,
+		TextStrokeTransparency = CONFIG.TARGET_TEXT_STROKE and 0.4 or 1,
+		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextYAlignment = Enum.TextYAlignment.Bottom,
+		Visible = false, ZIndex = 2,
+	}, sg)
+end
+local function SAV_UpdateLabel()
+	if not SAV_TargetLabel then return end
+	local t = aim.target
+	local cam = workspace.CurrentCamera
+	local show = state.visual and state.silent and t and t.root and t.root.Parent and cam and t.dist <= CONFIG.MAX_SNAP_DISTANCE
+	if show then
+		local wp = t.root.Position + Vector3.new(0, CONFIG.TARGET_TEXT_OFFSET_Y, 0)
+		local pos = cam:WorldToViewportPoint(wp)
+		if pos.Z > 0 then SAV_TargetLabel.Position = UDim2.fromOffset(pos.X, pos.Y); SAV_TargetLabel.Visible = true; return end
+	end
+	SAV_TargetLabel.Visible = false
+end
+local function SAV_InstallHook()
+	if not spearRemote then SAV_FindRemotes() end
+	if spearRemote then
+		RegisterHookHandler(spearRemote, function(args, self)
+			if not state.silent then return args end
+			aim.thrownRoot = nil; aim.thrownName = nil
+			local okP, info = pcall(SAV_ParseThrow, args)
+			if okP and info then
+				info.charge = SAV_CurrentCharge(os.clock())
+				if not info.speed then info.speed = SAV_SpeedFor(info.charge) end
+				local ok, newDir = pcall(SAV_ComputeDir, info)
+				if ok and newDir then pcall(SAV_ApplyDirection, args, info, newDir); info.dir = newDir end
+				pcall(SAV_BeginJob, info)
 			end
-		end
-		if best then SAV.Target = best; SAV.PrevRoot = best.root; SAV.UpdatedAt = now else SAV.Target = nil end
+			return args
+		end)
 	end
-	local SAV_SnapLine, SAV_SnapDot = nil, nil
-	local function SAV_UpdateSnap()
-		if not SAV_SnapLine or not SAV_SnapDot then return end
-		local t = SAV.Target
-		local cam = workspace.CurrentCamera
-		if SAV.Visual and SAV.Enabled and t and t.root and t.root.Parent and cam then
-			local pos = cam:WorldToViewportPoint(t.root.Position)
-			if pos.Z > 0 then
-				local vs = cam.ViewportSize
-				local x1, y1 = vs.X / 2, vs.Y
-				if SAV_CFG.SNAP_ORIGIN == "Center" then y1 = vs.Y / 2 end
-				local x2, y2 = pos.X, pos.Y
-				local dx, dy = x2 - x1, y2 - y1
-				local len = math.sqrt(dx * dx + dy * dy)
-				if len > 1 then
-					SAV_SnapLine.Size = UDim2.fromOffset(len, SAV_CFG.SNAP_THICK)
-					SAV_SnapLine.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
-					SAV_SnapLine.Rotation = math.deg(math.atan2(dy, dx))
-					SAV_SnapLine.Visible = true
-					SAV_SnapDot.Position = UDim2.fromOffset(x2, y2)
-					SAV_SnapDot.Visible = true
-					return
-				end
+	if vfxRemote then
+		RegisterHookHandler(vfxRemote, function(args, self)
+			if not state.silent then return args end
+			local a3 = args[3]
+			if type(a3) == "boolean" then
+				local nowc = os.clock()
+				if a3 and not aim.holding then aim.holdStart = nowc
+				elseif (not a3) and aim.holding and aim.holdStart then aim.lastHold = nowc - aim.holdStart; aim.lastHoldEnd = nowc end
+				aim.holding = a3; aim.armedUntil = nowc + 3
 			end
-		end
-		SAV_SnapLine.Visible = false; SAV_SnapDot.Visible = false
+			return args
+		end)
 	end
-	local function SAV_BuildSnap()
-		if SAV_SnapLine then return end
-		local sg = make("ScreenGui", { Name = "SAV_Snap", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, nil)
-		pcall(function() if syn and syn.protect_gui then syn.protect_gui(sg) end end)
-		sg.Parent = getParent()
-		SAV_SnapLine = make("Frame", { Name = "SnapLine", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(0, SAV_CFG.SNAP_THICK), Position = UDim2.fromOffset(0, 0), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BackgroundTransparency = SAV_CFG.SNAP_TRANS, BorderSizePixel = 0, Visible = false, ZIndex = 1 }, sg)
-		SAV_SnapDot = make("Frame", { Name = "SnapDot", AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(0, 0), BackgroundColor3 = Color3.fromRGB(255, 255, 255), BorderSizePixel = 0, Visible = false, ZIndex = 1 }, sg)
-		corner(SAV_SnapDot, 99)
+	EnsureNamecallHook()
+end
+local SAV_Row = Add("Silent Aim Veil")
+local SAV_Toggle = SAV_Row:Toggle(false, function(enabled)
+	state.silent = enabled
+	if enabled then
+		SAV_FindRemotes(); SAV_InstallHook(); SAV_BuildLabel(); SAV_RefreshPing()
+		local lastPing, lastRemote = 0, 0
+		table.insert(SAV.Conns, RunService.Heartbeat:Connect(function(dt)
+			local now = os.clock()
+			if now - lastPing >= 0.5 then lastPing = now; SAV_RefreshPing() end
+			if now - lastRemote >= 1 then lastRemote = now; if not (spearRemote and spearRemote.Parent) or not (vfxRemote and vfxRemote.Parent) then SAV_FindRemotes() end end
+			if aim.holding then aim.armedUntil = now + 2 end
+			if state.silent then SAV_RefreshTargets(now) else aim.target = nil end
+			pcall(SAV_StepJob, now); pcall(SAV_StepSteer, now, dt); SAV_UpdateLabel()
+			if aim.pendingLog then local m = aim.pendingLog; aim.pendingLog = nil; warn("[SilentAim] " .. m) end
+		end))
+		table.insert(SAV.Conns, workspace.DescendantAdded:Connect(function(inst)
+			local now = os.clock()
+			if now > aim.armedUntil then return end
+			if inst:IsA("BasePart") then table.insert(recent, { part = inst, t = now }); if #recent > 200 then table.remove(recent, 1) end end
+		end))
+		table.insert(SAV.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+			aim.holding = false; aim.holdStart = nil; aim.lastHoldEnd = nil; aim.job = nil; aim.steer = nil
+		end))
+	else
+		for _, c in ipairs(SAV.Conns) do pcall(function() c:Disconnect() end) end
+		SAV.Conns = {}
+		aim.target = nil; aim.job = nil; aim.steer = nil
+		if SAV_TargetLabel then SAV_TargetLabel.Visible = false end
 	end
-	local function SAV_InstallHook()
-		if SAV.HookInstalled then return true end
-		if not SAV.SpearRemote then SAV_FindRemotes() end
-		if SAV.SpearRemote then
-			RegisterHookHandler(SAV.SpearRemote, function(args, self)
-				if not SAV.Enabled then return args end
-				SAV.ThrownRoot = nil; SAV.ThrownName = nil
-				local ok, newDir = pcall(SAV_ComputeDir, args)
-				if ok and newDir then args[1] = newDir end
-				pcall(SAV_BeginJob, args)
-				return args
-			end)
-		end
-		if SAV.VfxRemote then
-			RegisterHookHandler(SAV.VfxRemote, function(args, self)
-				if not SAV.Enabled then return args end
-				local a3 = args[3]
-				if type(a3) == "boolean" then SAV.Holding = a3; SAV.ArmedUntil = os.clock() + 3 end
-				return args
-			end)
-		end
-		EnsureNamecallHook()
-		SAV.HookInstalled = true
-		return true
-	end
-	local SAV_Row = Add("Silent Aim Veil")
-	local SAV_Toggle = SAV_Row:Toggle(false, function(state)
-		SAV.Enabled = state
-		if state then
-			SAV_FindRemotes(); SAV_InstallHook(); SAV_BuildSnap(); SAV_RefreshPing()
-			local lastPing, lastRemote = 0, 0
-			table.insert(SAV.Conns, RunService.Heartbeat:Connect(function(dt)
-				local now = os.clock()
-				if now - lastPing >= 0.5 then lastPing = now; SAV_RefreshPing() end
-				if now - lastRemote >= 1 then lastRemote = now; if not (SAV.SpearRemote and SAV.SpearRemote.Parent) or not (SAV.VfxRemote and SAV.VfxRemote.Parent) then SAV_FindRemotes() end end
-				if SAV.Holding then SAV.ArmedUntil = now + 2 end
-				if SAV.Enabled then SAV_RefreshTargets(now) end
-				pcall(SAV_StepJob, now); pcall(SAV_StepSteer, now, dt); SAV_UpdateSnap()
-				if SAV.PendingLog then local m = SAV.PendingLog; SAV.PendingLog = nil; warn("[SilentAim] " .. m) end
-			end))
-			table.insert(SAV.Conns, workspace.DescendantAdded:Connect(function(inst)
-				local now = os.clock()
-				if now > SAV.ArmedUntil then return end
-				if inst:IsA("BasePart") then table.insert(SAV.Recent, { part = inst, t = now }); if #SAV.Recent > 200 then table.remove(SAV.Recent, 1) end end
-			end))
-		else
-			for _, c in ipairs(SAV.Conns) do pcall(function() c:Disconnect() end) end
-			SAV.Conns = {}
-			SAV.Target = nil; SAV.Job = nil; SAV.Steer = nil
-			if SAV_SnapLine then SAV_SnapLine.Visible = false end
-			if SAV_SnapDot then SAV_SnapDot.Visible = false end
-		end
-	end)
-	SAV_Toggle.Extras = SAV_Toggle.Extras or {}
-	SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = 10, Max = 90, Step = 1, Default = 35 }, function(v) SAV.Fov = v end)
-	SAV_Toggle.Extras[2] = SAV_Row:Check("Snap Line", true, function(v) SAV.Visual = v; if not v then SAV_UpdateSnap() end end)
+end)
+SAV_Toggle.Extras = SAV_Toggle.Extras or {}
+SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = CONFIG.MIN_FOV, Max = CONFIG.MAX_FOV, Step = CONFIG.FOV_STEP, Default = CONFIG.DEFAULT_FOV }, function(v) state.fov = v end)
+SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.visual = v; if not v and SAV_TargetLabel then SAV_TargetLabel.Visible = false end end)
 
 	-- ============================================================
 	-- 2. NO COOLDOWN SKILL (logic asli)
@@ -4164,9 +4166,20 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		local oldTag = obj:FindFirstChild("GenESP_Tag"); if oldTag then oldTag:Destroy() end
 		local hl = Instance.new("Highlight"); hl.Name = "GenESP_Outline"; hl.FillColor = GE.Color; hl.FillTransparency = 0.7; hl.OutlineColor = GE_CFG.OUTLINE; hl.OutlineTransparency = 0; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = obj
 		local adornee = GE_Adornee(obj)
-		local bb = Instance.new("BillboardGui"); bb.Name = "GenESP_Tag"; bb.Size = UDim2.new(0, 100, 0, 10); bb.AlwaysOnTop = true; bb.ResetOnSpawn = false; bb.LightInfluence = 0; bb.DistanceLowerLimit = 0; bb.DistanceUpperLimit = math.huge; bb.MaxDistance = math.huge
-		if adornee then bb.Adornee = adornee; bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0) else bb.Adornee = obj; bb.StudsOffset = Vector3.new(0, 3, 0) end
-		bb.Parent = obj
+local bb = Instance.new("BillboardGui")
+bb.Name = "GenESP_Tag"
+bb.Size = UDim2.new(0, 40, 0, 10)
+bb.SizeOffset = Vector2.new(0, 0)
+bb.AlwaysOnTop = true
+bb.ResetOnSpawn = false
+bb.LightInfluence = 0
+bb.DistanceLowerLimit = 0
+bb.DistanceUpperLimit = 500
+bb.MaxDistance = 500
+bb.ClipsDescendants = false
+bb.Active = false
+if adornee then bb.Adornee = adornee; bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0) else bb.Adornee = obj; bb.StudsOffset = Vector3.new(0, 3, 0) end
+bb.Parent = obj
 		local bg = Instance.new("Frame"); bg.Name = "MainFrame"; bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = GE_CFG.BG; bg.BorderSizePixel = 1; bg.BorderColor3 = GE_CFG.BORDER; bg.Parent = bb
 		local barC = Instance.new("Frame"); barC.Name = "BarContainer"; barC.Size = UDim2.new(1, 0, 1, 0); barC.BackgroundTransparency = 1; barC.ClipsDescendants = true; barC.Parent = bg
 		local bar = Instance.new("Frame"); bar.Name = "ProgressBar"; bar.Size = UDim2.new(0, 0, 1, 0); bar.BorderSizePixel = 0; bar.BackgroundColor3 = GE_CFG.COL_START; bar.Parent = barC
@@ -4204,10 +4217,8 @@ RunTab("Visual", function(Add, Title, AddFeature)
 			end
 		end
 	end)
-	GE_Toggle.Color = GE_Row:Color(GE.Color, function(c)
-		GE.Color = c
-		for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("GenESP_Outline"); if h and h:IsA("Highlight") then h.FillColor = c end end
-	end)
+	GE_Toggle.Color = GE_Row:Color(GE.Color, function(c) GE.Color = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("GenESP_Outline"); if h and h:IsA("Highlight") then h.FillColor = c end end end)
+    GE_Toggle.OutlineColor = GE_Row:Color(GE_CFG.OUTLINE, function(c) GE_CFG.OUTLINE = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("GenESP_Outline"); if h and h:IsA("Highlight") then h.OutlineColor = c end end end)
 
 	-- ============================================================
 	-- 3. HIDE PROFILE
@@ -4328,7 +4339,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		local txt = Instance.new("TextLabel")
 		txt.Parent = bill; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1		txt.TextScaled = false; txt.TextSize = 14; txt.Font = Enum.Font.SourceSansSemibold
 		txt.TextStrokeTransparency = 0.4; txt.TextStrokeColor3 = Color3.new(0, 0, 0)
-		txt.TextColor3 = Color3.fromRGB(255, 100, 100); txt.Text = "Hook"
+		txt.TextColor3 = Color3.fromRGB(255, 100, 100); txt.Text = " "
 		HE.Labels[root] = txt; HE.Tracked[root] = true
 	end
 	local function HE_Cleanup(root)
@@ -4398,6 +4409,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		end
 	end)
 	KE_Toggle.Color = KE_Row:Color(KE.Color, function(c) KE.Color = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("KillerESP_Chams"); if h then h.FillColor = c end end end end)
+    KE_Toggle.OutlineColor = KE_Row:Color(KE_Outline, function(c) KE_Outline = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("KillerESP_Chams"); if h then h.OutlineColor = c end end end end)
 
 	-- ============================================================
 	-- 6. LOCK FOV
@@ -4530,6 +4542,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		end
 	end)
 	PE_Toggle.Color = PE_Row:Color(PE.Color, function(c) PE.Color = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("PalletESP_Outline"); if h and h:IsA("Highlight") then h.FillColor = c end end end)
+    PE_Toggle.OutlineColor = PE_Row:Color(PE_Outline, function(c) PE_Outline = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("PalletESP_Outline"); if h and h:IsA("Highlight") then h.OutlineColor = c end end end)
 
 	-- ============================================================
 	-- 9. PERKS KILLER PREDICTION
@@ -4716,6 +4729,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		end
 	end)
 	SE_Toggle.Color = SE_Row:Color(SE.Color, function(c) SE.Color = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("SurvivorESP_Chams"); if h then h.FillColor = c end end end end)
+    SE_Toggle.OutlineColor = SE_Row:Color(SE_Outline, function(c) SE_Outline = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("SurvivorESP_Chams"); if h then h.OutlineColor = c end end end end)
 
 	-- ============================================================
 	-- 12. WORLD SETTING
