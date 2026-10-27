@@ -1436,165 +1436,208 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	-- ============================================================
 	-- 5. INVISIBLE (logic asli + resolve icon fix)
 	-- ============================================================
-	local INV = {
-		Enabled = false, Module = nil, Busy = false, Loading = false,
-		URL = "https://leekguy.vercel.app/roblox/menghub/crack_obf_invisible_93978595733734.lua",
-		IconIds = { "rbxassetid://133149347590039", "rbxassetid://77869394766337" },
-		Resolved = nil, Resolving = false, CharConns = {}, RenderCon = nil,
-	}
-	local function INV_TestImage(imageId)
-		local probe = Instance.new("ImageLabel")
-		probe.Image = imageId
-		local success = false
-		pcall(function()
-			ContentProvider:PreloadAsync({probe}, function(_, status)
-				if status == Enum.AssetFetchStatus.Success then success = true end
-			end)
+	-- ============================================================
+-- 5. INVISIBLE (logic final dari file testing)
+-- ============================================================
+local INV = {
+	Enabled = false, Module = nil, Busy = false, Loading = false,
+	URL = "https://leekguy.vercel.app/roblox/menghub/crack_obf_invisible_93978595733734.lua",
+	IconIds = { "rbxassetid://133149347590039", "rbxassetid://77869394766337" },
+	Resolved = nil, Resolving = false,
+	Size = UDim2.new(3.5, 0, 3.5, 0),
+	Offset = Vector3.new(0, 1.5, 0),
+	Theme = {
+		FillColor = Color3.fromRGB(240, 240, 240),
+		FillTransparency = 0.75,
+		OutlineColor = Color3.fromRGB(0, 0, 0),
+		OutlineTransparency = 0,
+		DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+	},
+	CharConns = {}, RenderCon = nil,
+}
+
+local function INV_TestImage(imageId)
+	local probe = Instance.new("ImageLabel")
+	probe.Image = imageId
+	local success = false
+	pcall(function()
+		ContentProvider:PreloadAsync({probe}, function(_, status)
+			if status == Enum.AssetFetchStatus.Success then success = true end
 		end)
-		probe:Destroy()
-		return success
-	end
-	local function INV_PickIcon()
-		if INV.Resolved ~= nil then return INV.Resolved end
-		if INV.Resolving then return INV.IconIds[1] end
-		INV.Resolving = true
-		local result = nil
-		for _, id in ipairs(INV.IconIds) do
-			if INV_TestImage(id) then result = id; break end
-		end
-		INV.Resolved = result or "TEXT"
-		INV.Resolving = false
-		return INV.Resolved
-	end
-	task.spawn(function() INV_PickIcon() end)
-	local function INV_Load()
-		if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
-		if INV.Loading then return false end
-		INV.Loading = true
-		pcall(function()
-			local src = game:HttpGet(INV.URL)
-			local loader = loadstring(src)
-			assert(type(loader) == "function", "Loader tidak valid")
-			loader()
-		end)
-		INV.Loading = false
-		if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
-		return false
-	end
-	local function INV_Set(state)
-		if INV.Busy then return false end
-		if not INV.Module and not INV_Load() then return false end
-		INV.Busy = true
-		local ok = pcall(function()
-			if state then INV.Module.enable() else INV.Module.disable() end
-		end)
-		INV.Busy = false
-		if ok then INV.Enabled = state end
-		return ok
-	end
-	local function INV_ProcessHL(hl)
-		if hl:GetAttribute("NinjaPatched") then return end
-		hl:SetAttribute("NinjaPatched", true)
-		local function theme()
-			hl.FillColor = Color3.fromRGB(240, 240, 240)
-			hl.FillTransparency = 0.75
-			hl.OutlineColor = Color3.fromRGB(0, 0, 0)
-			hl.OutlineTransparency = 0
-			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		end
-		theme()
-		hl:GetPropertyChangedSignal("FillColor"):Connect(theme)
-		hl:GetPropertyChangedSignal("OutlineColor"):Connect(theme)
-	end
-	local function INV_CreateFallbackText(parent)
-		if parent:FindFirstChild("CustomInvisibleText") then return end
-		local txt = Instance.new("TextLabel")
-		txt.Name = "CustomInvisibleText"
-		txt.Size = UDim2.new(1, 0, 1, 0)
-		txt.BackgroundTransparency = 1
-		txt.Text = "[ INVISIBLE ]"
-		txt.TextColor3 = Color3.fromRGB(0, 0, 0)
-		txt.TextStrokeTransparency = 0
-		txt.Font = Enum.Font.GothamBold
-		txt.TextScaled = true
-		txt.Parent = parent
-	end
-	local function INV_ProcessIndicator(gui)
-		if gui:GetAttribute("NinjaPatched") then return end
-		gui:SetAttribute("NinjaPatched", true)
-		gui.Enabled = false
-		for _, ch in ipairs(gui:GetChildren()) do
-			if ch.Name ~= "CustomInvisibleIcon" and ch.Name ~= "CustomInvisibleText" then
-				if ch.Name == "EyeIcon" or ch:IsA("ImageLabel") then pcall(function() ch:Destroy() end) end
-			end
-		end
-		gui.ChildAdded:Connect(function(ch)
-			if ch.Name ~= "CustomInvisibleIcon" and ch.Name ~= "CustomInvisibleText" then
-				if ch.Name == "EyeIcon" or ch:IsA("ImageLabel") then pcall(function() ch:Destroy() end) end
-			end
-		end)
-		if not gui:FindFirstChild("CustomInvisibleIcon") and not gui:FindFirstChild("CustomInvisibleText") then
-			local id = INV.Resolved
-			if id == nil then id = INV.IconIds[1] end
-			if id == "TEXT" then
-				INV_CreateFallbackText(gui)
-			else
-				local ic = Instance.new("ImageLabel")
-				ic.Name = "CustomInvisibleIcon"
-				ic.Size = UDim2.new(1, 0, 1, 0)
-				ic.BackgroundTransparency = 1
-				ic.Image = id
-				ic.ScaleType = Enum.ScaleType.Fit
-				ic.Parent = gui
-				if INV.Resolved == nil then
-					task.spawn(function()
-						local finalId = INV_PickIcon()
-						if not ic.Parent then return end
-						if finalId == "TEXT" then ic:Destroy(); INV_CreateFallbackText(gui)
-						elseif finalId ~= ic.Image then ic.Image = finalId end
-					end)
-				end
-			end
-		end
-		gui.Size = UDim2.new(3.5, 0, 3.5, 0)
-		gui.StudsOffsetWorldSpace = Vector3.new(0, 1.5, 0)
-		gui.StudsOffset = Vector3.new(0, 1.5, 0)
-		gui.Enabled = true
-	end
-	local function INV_OnDesc(obj)
-		if not INV.Enabled then return end
-		if obj.Name == "MengHub_InvisibilityFX" and obj:IsA("Highlight") then INV_ProcessHL(obj)
-		elseif obj.Name == "MengHub_InvisibilityIndicator" and obj:IsA("BillboardGui") then INV_ProcessIndicator(obj) end
-	end
-	local function INV_SetupChar(char)
-		if not char then return end
-		table.insert(INV.CharConns, char.DescendantAdded:Connect(INV_OnDesc))
-		for _, o in ipairs(char:GetDescendants()) do INV_OnDesc(o) end
-	end
-	local INV_Row = Add("Invisible")
-	local INV_Toggle = INV_Row:Toggle(false, function(state)
-		local ok = INV_Set(state)
-		if state and not ok then INV_Toggle.Set(false, true) end
-		if state then
-			INV.RenderCon = RunService.RenderStepped:Connect(function()
-				if not INV.Enabled then return end
-				local c = Players.LocalPlayer.Character
-				if not c then return end
-				local fx = c:FindFirstChild("MengHub_InvisibilityFX")
-				if fx and not fx:GetAttribute("NinjaPatched") then INV_ProcessHL(fx) end
-				local head = c:FindFirstChild("Head")
-				local ind = head and head:FindFirstChild("MengHub_InvisibilityIndicator")
-				if ind and not ind:GetAttribute("NinjaPatched") then INV_ProcessIndicator(ind) end
-			end)
-			table.insert(INV.CharConns, Players.LocalPlayer.CharacterAdded:Connect(function(ch) task.wait(0.1); INV_SetupChar(ch) end))
-			if Players.LocalPlayer.Character then INV_SetupChar(Players.LocalPlayer.Character) end
-			task.spawn(INV_Load)
-		else
-			if INV.RenderCon then pcall(function() INV.RenderCon:Disconnect() end); INV.RenderCon = nil end
-			for _, c in ipairs(INV.CharConns) do pcall(function() c:Disconnect() end) end
-			INV.CharConns = {}
-		end
 	end)
+	probe:Destroy()
+	return success
+end
+
+local function INV_PickIcon()
+	if INV.Resolved ~= nil then return INV.Resolved end
+	if INV.Resolving then return INV.IconIds[1] end
+	INV.Resolving = true
+	local result = nil
+	for _, id in ipairs(INV.IconIds) do
+		if INV_TestImage(id) then result = id; break end
+	end
+	INV.Resolved = result or "TEXT"
+	INV.Resolving = false
+	return INV.Resolved
+end
+task.spawn(function() INV_PickIcon() end)
+
+local function INV_Load()
+	if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
+	if INV.Loading then return false end
+	INV.Loading = true
+	local ok, err = pcall(function()
+		local src = game:HttpGet(INV.URL)
+		local loader = loadstring(src)
+		assert(type(loader) == "function", "Loader tidak valid")
+		loader()
+	end)
+	INV.Loading = false
+	if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
+	if not ok then warn("[Invisible] Gagal memuat: " .. tostring(err)) end
+	return false
+end
+
+local function INV_Set(state)
+	if INV.Busy then return false end
+	if not INV.Module and not INV_Load() then return false end
+	INV.Busy = true
+	local ok, err = pcall(function()
+		if state then INV.Module.enable() else INV.Module.disable() end
+	end)
+	INV.Busy = false
+	if ok then INV.Enabled = state
+	else warn("[Invisible] Error saat toggle: " .. tostring(err)) end
+	return ok
+end
+
+local function INV_ProcessHL(hl)
+	if hl:GetAttribute("NinjaPatched") then return end
+	hl:SetAttribute("NinjaPatched", true)
+	local function applyTheme()
+		if hl.FillColor ~= INV.Theme.FillColor then hl.FillColor = INV.Theme.FillColor end
+		if hl.FillTransparency ~= INV.Theme.FillTransparency then hl.FillTransparency = INV.Theme.FillTransparency end
+		if hl.OutlineColor ~= INV.Theme.OutlineColor then hl.OutlineColor = INV.Theme.OutlineColor end
+		if hl.OutlineTransparency ~= INV.Theme.OutlineTransparency then hl.OutlineTransparency = INV.Theme.OutlineTransparency end
+		if hl.DepthMode ~= INV.Theme.DepthMode then hl.DepthMode = INV.Theme.DepthMode end
+	end
+	applyTheme()
+	hl:GetPropertyChangedSignal("FillColor"):Connect(applyTheme)
+	hl:GetPropertyChangedSignal("OutlineColor"):Connect(applyTheme)
+	hl:GetPropertyChangedSignal("FillTransparency"):Connect(applyTheme)
+	hl:GetPropertyChangedSignal("OutlineTransparency"):Connect(applyTheme)
+end
+
+local function INV_CreateFallbackText(parent)
+	if parent:FindFirstChild("CustomInvisibleText") then return end
+	local txt = Instance.new("TextLabel")
+	txt.Name = "CustomInvisibleText"
+	txt.Size = UDim2.new(1, 0, 1, 0)
+	txt.BackgroundTransparency = 1
+	txt.Text = "[ INVISIBLE ]"
+	txt.TextColor3 = Color3.fromRGB(0, 0, 0)
+	txt.TextStrokeTransparency = 0
+	txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	txt.Font = Enum.Font.GothamBold
+	txt.TextScaled = true
+	txt.Parent = parent
+end
+
+local function INV_ProcessIndicator(gui)
+	if gui:GetAttribute("NinjaPatched") then return end
+	gui:SetAttribute("NinjaPatched", true)
+	gui.Enabled = false
+	local function killEye(child)
+		if child.Name == "CustomInvisibleIcon" or child.Name == "CustomInvisibleText" then return end
+		if child.Name == "EyeIcon" or child:IsA("ImageLabel") then
+			if child:IsA("ImageLabel") or child:IsA("ImageButton") then
+				child.Visible = false
+				child.ImageTransparency = 1
+			end
+			child:Destroy()
+		end
+	end
+	for _, child in ipairs(gui:GetChildren()) do killEye(child) end
+	gui.ChildAdded:Connect(killEye)
+	if not gui:FindFirstChild("CustomInvisibleIcon") and not gui:FindFirstChild("CustomInvisibleText") then
+		local chosenId = INV.Resolved
+		if chosenId == nil then chosenId = INV.IconIds[1] end
+		if chosenId == "TEXT" then
+			INV_CreateFallbackText(gui)
+		else
+			local icon = Instance.new("ImageLabel")
+			icon.Name = "CustomInvisibleIcon"
+			icon.Size = UDim2.new(1, 0, 1, 0)
+			icon.BackgroundTransparency = 1
+			icon.Image = chosenId
+			icon.ScaleType = Enum.ScaleType.Fit
+			icon.Parent = gui
+			if INV.Resolved == nil then
+				task.spawn(function()
+					local finalId = INV_PickIcon()
+					if not icon.Parent then return end
+					if finalId == "TEXT" then
+						icon:Destroy()
+						INV_CreateFallbackText(gui)
+					elseif finalId ~= icon.Image then
+						icon.Image = finalId
+					end
+				end)
+			end
+		end
+	end
+	gui.Size = INV.Size
+	gui.StudsOffsetWorldSpace = INV.Offset
+	gui.StudsOffset = INV.Offset
+	gui.Enabled = true
+end
+
+local function INV_OnDesc(obj)
+	if not INV.Enabled then return end
+	if obj.Name == "MengHub_InvisibilityFX" and obj:IsA("Highlight") then
+		INV_ProcessHL(obj)
+	elseif obj.Name == "MengHub_InvisibilityIndicator" and obj:IsA("BillboardGui") then
+		INV_ProcessIndicator(obj)
+	end
+end
+
+local function INV_RenderGuard()
+	if not INV.Enabled or not Players.LocalPlayer.Character then return end
+	local char = Players.LocalPlayer.Character
+	local fx = char:FindFirstChild("MengHub_InvisibilityFX")
+	if fx and not fx:GetAttribute("NinjaPatched") then INV_ProcessHL(fx) end
+	local head = char:FindFirstChild("Head")
+	if head then
+		local ind = head:FindFirstChild("MengHub_InvisibilityIndicator")
+		if ind and not ind:GetAttribute("NinjaPatched") then INV_ProcessIndicator(ind) end
+	end
+end
+
+local function INV_SetupChar(char)
+	if not char then return end
+	table.insert(INV.CharConns, char.DescendantAdded:Connect(INV_OnDesc))
+	for _, obj in ipairs(char:GetDescendants()) do INV_OnDesc(obj) end
+end
+
+local INV_Row = Add("Invisible")
+local INV_Toggle = INV_Row:Toggle(false, function(state)
+	local ok = INV_Set(state)
+	if state and not ok then INV_Toggle.Set(false, true) end
+	if state then
+		INV.RenderCon = RunService.RenderStepped:Connect(INV_RenderGuard)
+		table.insert(INV.CharConns, Players.LocalPlayer.CharacterAdded:Connect(function(ch)
+			task.wait(0.1)
+			INV_SetupChar(ch)
+		end))
+		if Players.LocalPlayer.Character then INV_SetupChar(Players.LocalPlayer.Character) end
+		task.spawn(INV_Load)
+	else
+		if INV.RenderCon then pcall(function() INV.RenderCon:Disconnect() end); INV.RenderCon = nil end
+		for _, c in ipairs(INV.CharConns) do pcall(function() c:Disconnect() end) end
+		INV.CharConns = {}
+	end
+end)
 
 	-- ============================================================
 	-- 6. AUTO DODGE CROUCH (logic asli)
