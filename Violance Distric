@@ -999,7 +999,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Invisible", "Auto Parry", "Block Vault", "Infinite Lunge", "No Cooldown Skill", "Self Heal", "God Mode", "Butcher Silent Aim", "Speed Boost", "Auto Dodge Crouch" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Auto Skill Check Trap", "Invisible", "Auto Parry", "Block Vault", "Infinite Lunge", "No Cooldown Skill", "Self Heal", "God Mode", "Butcher Silent Aim", "Speed Boost", "Auto Dodge Crouch" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -2277,6 +2277,140 @@ end
 	AG_Row:Check("Normal", false, function(s) if s then AG.Mode = "NORMAL" end end)
 	AG_Row:Check("Instant", false, function(s) if s then AG.Mode = "INSTANT" end end)
 	AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
+
+-- ============================================================
+-- 11. AUTO SKILL CHECK TRAP
+-- ============================================================
+local TRAP = {
+	Enabled = false, Mode = "INSTANT", Alive = true,
+	Check = nil, Line = nil, TrapGoal = nil, TrapPerfect = nil, Action = nil,
+	LastRefresh = 0, LastPress = 0, PrevDiff = nil, Conns = {},
+	PERFECT_MIN = 102, PERFECT_MAX = 116, SNAP_ANGLE = 109,
+	INSTANT_GAP = 0.15, NORMAL_GAP = 0.05,
+	GUI_NAMES = { "SkillCheckPromptGui", "SkillCheckPromptGui-con" },
+}
+local function TRAP_Refresh()
+	TRAP.LastRefresh = os.clock()
+	pcall(function()
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		if not pg then return end
+		local found = nil
+		for _, name in ipairs(TRAP.GUI_NAMES) do
+			local gui = pg:FindFirstChild(name)
+			local c = gui and gui:FindFirstChild("Check")
+			if c then
+				if c:FindFirstChild("TrapGoal") then found = c; break end
+				if not found then found = c end
+			end
+		end
+		TRAP.Check = found
+		if found then
+			TRAP.Line = found:FindFirstChild("Line")
+			TRAP.TrapGoal = found:FindFirstChild("TrapGoal")
+			TRAP.TrapPerfect = found:FindFirstChild("TrapPerfect")
+		else
+			TRAP.Line = nil; TRAP.TrapGoal = nil; TRAP.TrapPerfect = nil
+		end
+		local survivor = pg:FindFirstChild("Survivor-mob")
+		local controls = survivor and survivor:FindFirstChild("Controls")
+		TRAP.Action = controls and controls:FindFirstChild("action") or nil
+	end)
+end
+local function TRAP_IsTrapped()
+	local r = false
+	pcall(function()
+		local char = Players.LocalPlayer.Character
+		r = char ~= nil and char:GetAttribute("Trapped") == true
+	end)
+	return r
+end
+local function TRAP_GetGoal()
+	if not TRAP.Check or not TRAP.Check.Parent or not TRAP.Line or not TRAP.Line.Parent then return nil end
+	local ok, rotation = pcall(function()
+		if TRAP.Check.Visible ~= true then return nil end
+		local sg = TRAP.Check:FindFirstAncestorOfClass("ScreenGui")
+		if sg and sg.Enabled == false then return nil end
+		if TRAP.TrapPerfect and TRAP.TrapPerfect.Visible == true then return TRAP.TrapPerfect.Rotation end
+		if TRAP.TrapGoal and TRAP.TrapGoal.Visible == true then return TRAP.TrapGoal.Rotation end
+		return nil
+	end)
+	if ok and type(rotation) == "number" then return rotation end
+	return nil
+end
+local function TRAP_Press()
+	if (not TRAP.Action or not TRAP.Action.Parent) and os.clock() - TRAP.LastRefresh > 0.25 then
+		TRAP_Refresh()
+	end
+	if not TRAP.Action then return false end
+	local fired = false
+	if typeof(firesignal) == "function" then
+		fired = pcall(function() firesignal(TRAP.Action.MouseButton1Down) end)
+	end
+	if not fired and typeof(getconnections) == "function" then
+		pcall(function()
+			for _, c in ipairs(getconnections(TRAP.Action.MouseButton1Down)) do
+				pcall(function() c:Fire() end)
+				fired = true
+			end
+		end)
+	end
+	return fired
+end
+local function TRAP_PressAt(goal, snap, now)
+	if snap and TRAP.Line and TRAP.Line.Parent then
+		pcall(function() TRAP.Line.Rotation = goal + TRAP.SNAP_ANGLE end)
+	end
+	if TRAP_Press() then TRAP.LastPress = now end
+end
+local function TRAP_Step()
+	local now = os.clock()
+	if (not TRAP.Check or not TRAP.Check.Parent or not TRAP.Line or not TRAP.Line.Parent) and now - TRAP.LastRefresh > 0.25 then
+		TRAP_Refresh()
+	end
+	local goal = nil
+	if TRAP_IsTrapped() then goal = TRAP_GetGoal() end
+	if not TRAP.Enabled or not goal then TRAP.PrevDiff = nil; return end
+	local lineRot = nil
+	pcall(function() lineRot = tonumber(TRAP.Line.Rotation) end)
+	if not lineRot then return end
+	local diff = lineRot - goal
+	if TRAP.Mode == "INSTANT" then
+		TRAP.PrevDiff = diff
+		if now - TRAP.LastPress >= TRAP.INSTANT_GAP then TRAP_PressAt(goal, true, now) end
+	else
+		local rate = 0
+		if TRAP.PrevDiff and diff >= TRAP.PrevDiff then rate = math.min(diff - TRAP.PrevDiff, 30) end
+		TRAP.PrevDiff = diff
+		if diff >= TRAP.PERFECT_MIN - rate and diff <= TRAP.PERFECT_MAX and now - TRAP.LastPress >= TRAP.NORMAL_GAP then
+			local snap = diff < TRAP.PERFECT_MIN + 2 or diff + rate > TRAP.PERFECT_MAX - 2
+			TRAP_PressAt(goal, snap, now)
+		end
+	end
+end
+TRAP_Refresh()
+task.spawn(function()
+	while gui.Parent do
+		if TRAP.Enabled then TRAP_Refresh() end
+		task.wait(0.5)
+	end
+end)
+table.insert(TRAP.Conns, RunService.RenderStepped:Connect(function()
+	if TRAP.Enabled then pcall(TRAP_Step) end
+end))
+table.insert(TRAP.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+	TRAP.PrevDiff = nil
+	task.wait(1)
+	TRAP_Refresh()
+end))
+local TRAP_Row = Add("Auto Skill Check Trap")
+local TRAP_Toggle = TRAP_Row:Toggle(false, function(state)
+	TRAP.Enabled = state
+	TRAP.PrevDiff = nil
+end)
+TRAP_Row:Dropdown({ "Instant", "Normal" }, "Instant", function(v)
+	TRAP.Mode = string.upper(v)
+	TRAP.PrevDiff = nil
+end)
 
 	-- ============================================================
 	-- 10. BOOST GENERATOR (logic asli, tanpa UI standalone)
@@ -4747,52 +4881,139 @@ bb.Parent = obj
 	end)
 	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.box then d.box.Color3 = c end; if d.hl then d.hl.FillColor = c; d.hl.OutlineColor = c end end end)
 
-	-- ============================================================
-	-- 11. SURVIVOR ESP
-	-- ============================================================
-	local SE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(240, 240, 240) }
-	local SE_Outline = Color3.fromRGB(255, 255, 255)
-	local function SE_IsKiller(p)
-		if p == Players.LocalPlayer then return false end
-		if p:GetAttribute("Role") == "Killer" or p:GetAttribute("IsKiller") == true then return true end
-		if p.Character and p.Character:FindFirstChildWhichIsA("Tool") then
-			local t = p.Character:FindFirstChildWhichIsA("Tool")
-			if t and (t:FindFirstChild("Hitbox") or t:FindFirstChild("Attack") or t:FindFirstChild("KnifeScript")) then return true end
-		end
-		if p.Team and string.find(string.lower(p.Team.Name), "killer") then return true end
-		return false
-	end
-	local function SE_Apply(p)
-		if p == Players.LocalPlayer then return end
-		local function setup(c)
-			task.wait(0.5)
-			if not c or not c.Parent then return end
-			if SE_IsKiller(p) then local h = c:FindFirstChild("SurvivorESP_Chams"); if h then h:Destroy() end; return end
-			local hl = c:FindFirstChild("SurvivorESP_Chams") or Instance.new("Highlight")
-			hl.Name = "SurvivorESP_Chams"; hl.FillColor = SE.Color; hl.FillTransparency = 0.75
-			hl.OutlineColor = SE_Outline; hl.OutlineTransparency = 0
-			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = c
-		end
-		table.insert(SE.Conns, p.CharacterAdded:Connect(setup))
-		if p.Character then setup(p.Character) end
-		table.insert(SE.Conns, p:GetAttributeChangedSignal("Role"):Connect(function() if p.Character then setup(p.Character) end end))
-		table.insert(SE.Conns, p:GetAttributeChangedSignal("IsKiller"):Connect(function() if p.Character then setup(p.Character) end end))
-	end
-	local SE_Row = Add("Survivor Esp")
-	local SE_Toggle = SE_Row:Toggle(false, function(state)
-		SE.Enabled = state
-		if state then
-			for _, p in ipairs(Players:GetPlayers()) do SE_Apply(p) end
-			table.insert(SE.Conns, Players.PlayerAdded:Connect(SE_Apply))
-		else
-			for _, c in ipairs(SE.Conns) do pcall(function() c:Disconnect() end) end
-			SE.Conns = {}
-			for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("SurvivorESP_Chams"); if h then h:Destroy() end end end
-		end
-	end)
-	SE_Toggle.Color = SE_Row:Color(SE.Color, function(c) SE.Color = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("SurvivorESP_Chams"); if h then h.FillColor = c end end end end)
-    SE_Toggle.OutlineColor = SE_Row:Color(SE_Outline, function(c) SE_Outline = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("SurvivorESP_Chams"); if h then h.OutlineColor = c end end end end)
+-- ============================================================
+-- 11. SURVIVOR ESP (upgraded)
+-- ============================================================
+local SE = {
+	Enabled = false,
+	Conns = {},
+	Color = Color3.fromRGB(240, 240, 240),
+	Outline = Color3.fromRGB(255, 255, 255),
+	Watchdog = nil,
+}
 
+local function SE_IsKiller(p)
+	if p == Players.LocalPlayer then return false end
+	if p:GetAttribute("Role") == "Killer" or p:GetAttribute("IsKiller") == true then return true end
+	if p.Character then
+		if p.Character:GetAttribute("IsKiller") == true or p.Character:GetAttribute("Role") == "Killer" then return true end
+		if p.Character:FindFirstChild("Lookscriptkiller", true) then return true end
+		local tool = p.Character:FindFirstChildWhichIsA("Tool")
+		if tool and (tool:FindFirstChild("Hitbox") or tool:FindFirstChild("Attack") or tool:FindFirstChild("KnifeScript")) then return true end
+	end
+	if p.Team then
+		local tn = string.lower(p.Team.Name)
+		if string.find(tn, "killer", 1, true) or string.find(tn, "murder", 1, true) then return true end
+	end
+	return false
+end
+
+local function SE_RefreshHighlight(p)
+	if p == Players.LocalPlayer then return end
+	local char = p.Character
+	if not char or not char.Parent then return end
+	local existing = char:FindFirstChild("SurvivorESP_Chams")
+	if SE_IsKiller(p) then
+		if existing then existing:Destroy() end
+		return
+	end
+	local hl = existing
+	if not hl then
+		hl = Instance.new("Highlight")
+		hl.Name = "SurvivorESP_Chams"
+		hl.Parent = char
+	end
+	hl.FillColor = SE.Color
+	hl.FillTransparency = 0.75
+	hl.OutlineColor = SE.Outline
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+end
+
+local function SE_Apply(p)
+	if p == Players.LocalPlayer then return end
+	if p:GetAttribute("_ESP_Hooked") then return end
+	p:SetAttribute("_ESP_Hooked", true)
+	table.insert(SE.Conns, p.CharacterAdded:Connect(function(char)
+		for i = 1, 6 do
+			task.wait(i == 1 and 0.1 or 0.4)
+			if not char.Parent then return end
+			SE_RefreshHighlight(p)
+		end
+	end))
+	if p.Character then
+		task.spawn(function()
+			for i = 1, 6 do
+				task.wait(i == 1 and 0.1 or 0.4)
+				if not p.Character or not p.Character.Parent then return end
+				SE_RefreshHighlight(p)
+			end
+		end)
+	end
+	table.insert(SE.Conns, p:GetAttributeChangedSignal("Role"):Connect(function() SE_RefreshHighlight(p) end))
+	table.insert(SE.Conns, p:GetAttributeChangedSignal("IsKiller"):Connect(function() SE_RefreshHighlight(p) end))
+	table.insert(SE.Conns, p.Changed:Connect(function(prop)
+		if prop == "Team" then SE_RefreshHighlight(p) end
+	end))
+	table.insert(SE.Conns, p.CharacterAdded:Connect(function(char)
+		char.ChildAdded:Connect(function(c)
+			if c:IsA("Tool") then task.wait(0.2); SE_RefreshHighlight(p) end
+		end)
+	end))
+end
+
+local SE_Row = Add("Survivor Esp")
+local SE_Toggle = SE_Row:Toggle(false, function(state)
+	SE.Enabled = state
+	if state then
+		for _, p in ipairs(Players:GetPlayers()) do SE_Apply(p) end
+		table.insert(SE.Conns, Players.PlayerAdded:Connect(SE_Apply))
+		SE.Watchdog = task.spawn(function()
+			while SE.Enabled do
+				task.wait(1)
+				for _, p in ipairs(Players:GetPlayers()) do
+					if p ~= Players.LocalPlayer and p.Character and p.Character.Parent then
+						local has = p.Character:FindFirstChild("SurvivorESP_Chams")
+						if not SE_IsKiller(p) and not has then
+							SE_RefreshHighlight(p)
+						elseif SE_IsKiller(p) and has then
+							has:Destroy()
+						end
+					end
+				end
+			end
+		end)
+	else
+		if SE.Watchdog then pcall(function() task.cancel(SE.Watchdog) end); SE.Watchdog = nil end
+		for _, c in ipairs(SE.Conns) do pcall(function() c:Disconnect() end) end
+		SE.Conns = {}
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Character then
+				local h = p.Character:FindFirstChild("SurvivorESP_Chams")
+				if h then h:Destroy() end
+			end
+			p:SetAttribute("_ESP_Hooked", nil)
+		end
+	end
+end)
+SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
+	SE.Color = c
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character then
+			local h = p.Character:FindFirstChild("SurvivorESP_Chams")
+			if h then h.FillColor = c end
+		end
+	end
+end)
+SE_Toggle.OutlineColor = SE_Row:Color(SE.Outline, function(c)
+	SE.Outline = c
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character then
+			local h = p.Character:FindFirstChild("SurvivorESP_Chams")
+			if h then h.OutlineColor = c end
+		end
+	end
+end)
 	-- ============================================================
 	-- 12. WORLD SETTING
 	-- ============================================================
