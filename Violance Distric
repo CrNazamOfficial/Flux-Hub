@@ -3979,7 +3979,7 @@ end
 		if state then AB_Loop()
 		else if AB.Thread then pcall(function() task.cancel(AB.Thread) end); AB.Thread = nil end end
 	end)
-end)  ← TAMBAH INI
+end)
 
 RunTab("Visual", function(Add, Title, AddFeature)
 
