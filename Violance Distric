@@ -3450,14 +3450,14 @@ SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = CONFIG.MIN_FOV, Max = CONFIG.MAX_
 SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.visual = v; if not v and SAV_TargetLabel then SAV_TargetLabel.Visible = false end end)
 
 -- ============================================================
--- 1b. SILENT AIM BUTCHER (logic asli, UI via Flux Hub)
+-- 1b. SILENT AIM BUTCHER (logic baru, hook nyatu Flux Hub)
 -- ============================================================
 local BS = {
 	Enabled = false, Dead = false, Conns = {}, Cands = {}, Target = nil, Snap = nil,
 	HookOk = false, Casting = false, CastUntil = 0, Pending = nil, Bypass = false,
 	MaxAngle = 180, Lead = 0.03, PingSec = 0, CdA = nil, CdB = nil, CamPos = nil,
-	Status = "-", FaceActive = false, SavedAuto = true, Fired = 0, Changed = 0,
-	LastSent = nil, LastSentT = 0,
+	Proven = false, FaceActive = false, SavedAuto = true, Fired = 0, Changed = 0,
+	LastSent = nil, LastSentT = 0, GenvKey = "__FluxButcher",
 }
 local BS_CFG = {
 	IncludeBots = true, ProjectileSpeed = 140, MaxRange = 220, ExtraLead = 0.03,
@@ -3469,17 +3469,26 @@ local BS_CFG = {
 local BS_ZERO = Vector3.new(0, 0, 0)
 local BS_History = {}
 local BS_Humanoids = {}
-local BS_oldNamecall = nil
+local BS_ChainRemote = nil
 
-pcall(function()
-	for _, d in ipairs(Workspace:GetDescendants()) do
-		if d.ClassName == "Humanoid" then BS_Humanoids[d] = true end
-	end
-end)
-table.insert(BS.Conns, Workspace.DescendantAdded:Connect(function(d)
+local BS_genv = (getgenv and getgenv()) or _G
+if BS_genv[BS.GenvKey] then pcall(function() BS_genv[BS.GenvKey].Destroy() end) end
+BS_genv[BS.GenvKey] = BS
+
+local function BS_scanHumanoids()
+	local fresh = {}
+	pcall(function()
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d.ClassName == "Humanoid" then fresh[d] = true end
+		end
+	end)
+	return fresh
+end
+BS_Humanoids = BS_scanHumanoids()
+table.insert(BS.Conns, workspace.DescendantAdded:Connect(function(d)
 	if d.ClassName == "Humanoid" then BS_Humanoids[d] = true end
 end))
-table.insert(BS.Conns, Workspace.DescendantRemoving:Connect(function(d)
+table.insert(BS.Conns, workspace.DescendantRemoving:Connect(function(d)
 	if d.ClassName == "Humanoid" then BS_Humanoids[d] = nil end
 end))
 
@@ -3584,7 +3593,7 @@ local function BS_makeParams(ignore)
 	return p
 end
 local function BS_chooseTarget()
-	local cam = Workspace.CurrentCamera
+	local cam = workspace.CurrentCamera
 	local myChar = Players.LocalPlayer.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	local from = myHrp and (myHrp.Position + Vector3.new(0, 1.5, 0)) or (cam and cam.CFrame.Position)
@@ -3598,7 +3607,7 @@ local function BS_chooseTarget()
 				local ignore = {c.key}
 				if myChar then ignore[#ignore + 1] = myChar end
 				if cam then ignore[#ignore + 1] = cam end
-				return Workspace:Raycast(from, c.hrp.Position - from, BS_makeParams(ignore))
+				return workspace:Raycast(from, c.hrp.Position - from, BS_makeParams(ignore))
 			end)
 			if ok and res == nil then visible = true end
 			if visible then
@@ -3681,60 +3690,102 @@ local function BS_onFire(remote, args)
 	BS.Pending = {t = now, remote = remote, orig = args, dev = dev, a = BS.CdA, b = BS.CdB}
 	return out
 end
-local function BS_handler(self, ...)
-	local method = getnamecallmethod and getnamecallmethod() or ""
-	if method == "FireServer" and not BS.Bypass and typeof(self) == "Instance"
-		and self.Name == BS_CFG.RemoteName and not (checkcaller and checkcaller()) then
-		local args = table.pack(...)
-		local ok, newArgs = pcall(BS_onFire, self, args)
-		if setnamecallmethod then pcall(setnamecallmethod, "FireServer") end
-		if ok and newArgs then
-			return BS_oldNamecall(self, table.unpack(newArgs, 1, newArgs.n))
-		end
+local function BS_HandlerFn(args, self)
+	if not BS.Enabled or BS.Dead then return args end
+	if BS.Bypass then return args end
+	if typeof(self) ~= "Instance" or self.Name ~= BS_CFG.RemoteName then return args end
+	local ok, newArgs = pcall(BS_onFire, self, args)
+	if ok and newArgs then
+		return newArgs
 	end
-	return BS_oldNamecall(self, ...)
+	return args
 end
+local function BS_FindChainRemote()
+	pcall(function()
+		local r = ReplicatedStorage:FindFirstChild("Remotes")
+		if not r then return end
+		for _, d in ipairs(r:GetDescendants()) do
+			if d.Name == BS_CFG.RemoteName and (d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent")) then
+				BS_ChainRemote = d; return
+			end
+		end
+	end)
+end
+local BS_FallbackHooked = false
+local BS_FallbackFS = nil
 local function BS_InstallHook()
-	if BS.HookOk then return true end
-	local wrapped = BS_handler
-	if newcclosure then
-		local ok, w = pcall(newcclosure, BS_handler)
-		if ok and w then wrapped = w end
+	BS_FindChainRemote()
+	if BS_ChainRemote then
+		RegisterHookHandler(BS_ChainRemote, BS_HandlerFn)
+		EnsureNamecallHook()
+		BS.HookOk = true
+		return true
 	end
-	if hookmetamethod then
-		local ok, res = pcall(function() return hookmetamethod(game, "__namecall", wrapped) end)
-		if ok and res then BS_oldNamecall = res; BS.HookOk = true end
-	end
-	if not BS.HookOk and getrawmetatable then
+	if BS_FallbackHooked then return true end
+	if not hookfunction then return false end
+	pcall(function()
+		local tmp = Instance.new("RemoteEvent")
+		local fs = tmp.FireServer
+		pcall(function() tmp:Destroy() end)
+		local function fsh(self, ...)
+			if BS.Enabled and not BS.Bypass and typeof(self) == "Instance" and self.Name == BS_CFG.RemoteName
+				and not (checkcaller and checkcaller()) then
+				local args = table.pack(...)
+				local ok, newArgs = pcall(BS_onFire, self, args)
+				if ok and newArgs then
+					return BS_FallbackFS(self, table.unpack(newArgs, 1, newArgs.n))
+				end
+			end
+			return BS_FallbackFS(self, ...)
+		end
+		BS_FallbackFS = hookfunction(fs, newcclosure and newcclosure(fsh) or fsh)
+		BS_FallbackHooked = true
+		BS.HookOk = true
+	end)
+	return BS.HookOk
+end
+local function BS_releaseFace()
+	if BS.FaceActive then
+		BS.FaceActive = false
 		pcall(function()
-			local mt = getrawmetatable(game)
-			local orig = mt.__namecall
-			local ro = isreadonly and isreadonly(mt)
-			if setreadonly then setreadonly(mt, false)
-			elseif make_writeable then make_writeable(mt) end
-			BS_oldNamecall = orig
-			mt.__namecall = wrapped
-			if setreadonly and ro then setreadonly(mt, true) end
-			BS.HookOk = true
+			local ch = Players.LocalPlayer.Character
+			local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+			if hum then hum.AutoRotate = (BS.SavedAuto ~= false) end
 		end)
 	end
-	return BS.HookOk
+end
+local function BS_resetTransient(full)
+	BS.Casting = false
+	BS.CastUntil = 0
+	BS.Pending = nil
+	BS.Snap = nil
+	BS.Target = nil
+	BS.LastSent = nil
+	BS.Bypass = false
+	BS.CdA = nil
+	BS.CdB = nil
+	BS_releaseFace()
+	if full then
+		BS.MaxAngle = BS_CFG.MaxAngleStart
+		for k in pairs(BS_History) do BS_History[k] = nil end
+	end
 end
 local function BS_checkPending()
 	local p = BS.Pending
 	if not p then return end
+	if not BS.Enabled then BS.Pending = nil; return end
 	local waitTime = math.max(BS_CFG.AckWait, BS.PingSec + 0.3)
 	if os.clock() - p.t < waitTime then return end
 	BS.Pending = nil
 	local known = p.a ~= nil or p.b ~= nil or BS.CdA ~= nil or BS.CdB ~= nil
-	if not known then BS.Status = "?"; return end
+	if not known then return end
 	local accepted = (BS.CdA ~= p.a) or (BS.CdB ~= p.b)
 	if accepted then
-		BS.Status = "OK"
+		BS.Proven = true
 		if p.dev >= BS.MaxAngle - 0.5 then BS.MaxAngle = math.min(180, BS.MaxAngle * 1.3 + 1) end
 		return
 	end
-	BS.Status = "DITOLAK"
+	if BS.Proven then return end
 	BS.MaxAngle = math.max(BS_CFG.MinAngle, p.dev * 0.5)
 	local fb = BS_copyArgs(p.orig)
 	local info = fb[3]
@@ -3742,7 +3793,7 @@ local function BS_checkPending()
 		local ni = {}
 		for k, v in pairs(info) do ni[k] = v end
 		if type(ni.Time) == "number" then
-			local ok, sn = pcall(function() return Workspace:GetServerTimeNow() end)
+			local ok, sn = pcall(function() return workspace:GetServerTimeNow() end)
 			if ok and type(sn) == "number" and math.abs(ni.Time - (sn - (os.clock() - p.t))) < 3 then ni.Time = sn end
 		end
 		fb[3] = ni
@@ -3750,7 +3801,6 @@ local function BS_checkPending()
 	BS.Bypass = true
 	pcall(function() p.remote:FireServer(table.unpack(fb, 1, fb.n)) end)
 	BS.Bypass = false
-	BS.Status = "DITOLAK, kirim normal"
 end
 local function BS_faceStep()
 	if BS.Dead then return end
@@ -3773,16 +3823,22 @@ local function BS_faceStep()
 		if hum then hum.AutoRotate = (BS.SavedAuto ~= false) end
 	end
 end
+
 local BS_Heartbeat = nil
 local BS_Row = Add("Silent Aim Butcher")
 local BS_Toggle = BS_Row:Toggle(false, function(state)
 	BS.Enabled = state
+	BS_resetTransient(state)
 	if state then
-		if not BS_InstallHook() then warn("[Butcher] Hook gagal"); BS_Toggle.Set(false, true); return end
+		if not BS_InstallHook() then
+			warn("[Butcher] Hook gagal")
+			BS_Toggle.Set(false, true)
+			return
+		end
 		BS.Dead = false
 		local acc, accSlow = 0, 0
 		BS_Heartbeat = RunService.Heartbeat:Connect(function(dt)
-			if BS.Dead then return end
+			if BS.Dead or not BS.Enabled then return end
 			local now = os.clock()
 			local cands = BS_buildCandidates()
 			BS.Cands = cands
@@ -3792,7 +3848,7 @@ local BS_Toggle = BS_Row:Toggle(false, function(state)
 				BS_pushHistory(c.key, c.hrp.Position, now)
 			end
 			for k in pairs(BS_History) do if not seen[k] then BS_History[k] = nil end end
-			local cam = Workspace.CurrentCamera
+			local cam = workspace.CurrentCamera
 			if cam then BS.CamPos = cam.CFrame.Position end
 			pcall(function()
 				local ch = Players.LocalPlayer.Character
@@ -3824,18 +3880,20 @@ local BS_Toggle = BS_Row:Toggle(false, function(state)
 	else
 		if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end); BS_Heartbeat = nil end
 		pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
-		pcall(function()
-			if BS.FaceActive then
-				local ch = Players.LocalPlayer.Character
-				local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-				if hum then hum.AutoRotate = (BS.SavedAuto ~= false) end
-				BS.FaceActive = false
-			end
-		end)
 		BS.Target = nil; BS.Snap = nil; BS.Pending = nil
 	end
 end)
 
+BS.Destroy = function()
+	BS.Dead = true
+	if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end); BS_Heartbeat = nil end
+	pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
+	BS_releaseFace()
+	for _, c in ipairs(BS.Conns) do pcall(function() c:Disconnect() end) end
+	BS.Conns = {}
+	if BS_ChainRemote then UnregisterHookHandler(BS_ChainRemote); BS_ChainRemote = nil end
+	if BS_genv[BS.GenvKey] == BS then BS_genv[BS.GenvKey] = nil end
+end)
 	-- ============================================================
 	-- 2. NO COOLDOWN SKILL (logic asli)
 	-- ============================================================
