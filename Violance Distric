@@ -999,7 +999,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Silent Aim Butcher", "Auto Parry", "Block Vault", "Infinite Lunge", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Silent Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
