@@ -3708,8 +3708,7 @@ SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.vis
 local ButcherRow = Add("Butcher Silent Aim")
 local ButcherToggle = ButcherRow:Toggle(false, function(state)
 	if state then
-		if not _G.__ButcherSilentLoaded then
-			_G.__ButcherSilentLoaded = true
+		if not _G.__ButcherSilent then
 			local ok, err = pcall(function()
 				local Players = game:GetService("Players")
 				local RunService = game:GetService("RunService")
@@ -3717,7 +3716,7 @@ local ButcherToggle = ButcherRow:Toggle(false, function(state)
 				local Workspace = game:GetService("Workspace")
 				local Stats = game:GetService("Stats")
 				local CONFIG = {
-					StartEnabled = true, IncludeBots = true, ProjectileSpeed = 140, MaxRange = 220,
+					StartEnabled = false, IncludeBots = true, ProjectileSpeed = 140, MaxRange = 220,
 					ExtraLead = 0.03, MaxPredictTime = 0.6, MaxTargetSpeed = 40, HistoryWindow = 0.35,
 					ReversalFactor = 0.3, AimHeightOffset = 0, RemoteName = "ChainThrow",
 					CooldownAttribute = "ChainMove1CD", FaceTarget = true, CastTimeout = 2.5,
