@@ -999,7 +999,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", " Silent Aim Butcher", "Invisible", "Auto Parry", "Block Vault", "Infinite Lunge", "No Cooldown Skill", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch" }
+local PANEL_FEATURES = { "Silent Aim Veil", " Silent Aim Butcher", "Invisible", "Auto Parry", "Block Vault", "Infinite Lunge", "No Cooldown Skill", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -1638,6 +1638,139 @@ local INV_Toggle = INV_Row:Toggle(false, function(state)
 		INV.CharConns = {}
 	end
 end)
+-- ============================================================
+-- 11. AUTO SKILL CHECK TRAP (logic asli)
+-- ============================================================
+local AST = {
+	Enabled = false, Mode = "INSTANT", Alive = true,
+	Check = nil, Line = nil, TrapGoal = nil, TrapPerfect = nil, Action = nil,
+	LastRefresh = 0, LastPress = 0, PrevDiff = nil, Conns = {},
+}
+local AST_CFG = {
+	GUI_NAMES = { "SkillCheckPromptGui", "SkillCheckPromptGui-con" },
+	PERFECT_MIN = 102, PERFECT_MAX = 116, SNAP_ANGLE = 109,
+	INSTANT_GAP = 0.15, NORMAL_GAP = 0.05,
+}
+local function AST_Track(c) table.insert(AST.Conns, c); return c end
+local function AST_Refresh()
+	AST.LastRefresh = os.clock()
+	pcall(function()
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		local foundCheck = nil
+		for _, name in ipairs(AST_CFG.GUI_NAMES) do
+			local gui = pg and pg:FindFirstChild(name)
+			local c = gui and gui:FindFirstChild("Check")
+			if c then
+				if c:FindFirstChild("TrapGoal") then foundCheck = c; break end
+				if not foundCheck then foundCheck = c end
+			end
+		end
+		AST.Check = foundCheck
+		if AST.Check then
+			AST.Line = AST.Check:FindFirstChild("Line")
+			AST.TrapGoal = AST.Check:FindFirstChild("TrapGoal")
+			AST.TrapPerfect = AST.Check:FindFirstChild("TrapPerfect")
+		else
+			AST.Line = nil; AST.TrapGoal = nil; AST.TrapPerfect = nil
+		end
+		local survivor = pg and pg:FindFirstChild("Survivor-mob")
+		local controls = survivor and survivor:FindFirstChild("Controls")
+		AST.Action = controls and controls:FindFirstChild("action") or nil
+	end)
+end
+local function AST_IsTrapped()
+	local r = false
+	pcall(function()
+		local char = Players.LocalPlayer.Character
+		r = char ~= nil and char:GetAttribute("Trapped") == true
+	end)
+	return r
+end
+local function AST_GetGoal()
+	if not AST.Check or not AST.Check.Parent or not AST.Line or not AST.Line.Parent then return nil end
+	local ok, rotation = pcall(function()
+		if AST.Check.Visible ~= true then return nil end
+		local sg = AST.Check:FindFirstAncestorOfClass("ScreenGui")
+		if sg and sg.Enabled == false then return nil end
+		if AST.TrapPerfect and AST.TrapPerfect.Visible == true then return AST.TrapPerfect.Rotation end
+		if AST.TrapGoal and AST.TrapGoal.Visible == true then return AST.TrapGoal.Rotation end
+		return nil
+	end)
+	if ok and type(rotation) == "number" then return rotation end
+	return nil
+end
+local function AST_Press()
+	if (not AST.Action or not AST.Action.Parent) and os.clock() - AST.LastRefresh > 0.25 then AST_Refresh() end
+	if not AST.Action then return false end
+	local fired = false
+	if typeof(firesignal) == "function" then
+		fired = pcall(function() firesignal(AST.Action.MouseButton1Down) end)
+	end
+	if not fired and typeof(getconnections) == "function" then
+		pcall(function()
+			for _, c in ipairs(getconnections(AST.Action.MouseButton1Down)) do
+				pcall(function() c:Fire() end)
+				fired = true
+			end
+		end)
+	end
+	return fired
+end
+local function AST_PressAt(goal, snap, now)
+	if snap and AST.Line and AST.Line.Parent then
+		pcall(function() AST.Line.Rotation = goal + AST_CFG.SNAP_ANGLE end)
+	end
+	if AST_Press() then AST.LastPress = now end
+end
+local function AST_Step()
+	local now = os.clock()
+	if (not AST.Check or not AST.Check.Parent or not AST.Line or not AST.Line.Parent) and now - AST.LastRefresh > 0.25 then AST_Refresh() end
+	local goal = nil
+	if AST_IsTrapped() then goal = AST_GetGoal() end
+	if not AST.Enabled or not goal then AST.PrevDiff = nil; return end
+	local lineRot = nil
+	pcall(function() lineRot = tonumber(AST.Line.Rotation) end)
+	if not lineRot then return end
+	local diff = lineRot - goal
+	if AST.Mode == "INSTANT" then
+		AST.PrevDiff = diff
+		if now - AST.LastPress >= AST_CFG.INSTANT_GAP then AST_PressAt(goal, true, now) end
+	else
+		local rate = 0
+		if AST.PrevDiff and diff >= AST.PrevDiff then rate = math.min(diff - AST.PrevDiff, 30) end
+		AST.PrevDiff = diff
+		if diff >= AST_CFG.PERFECT_MIN - rate and diff <= AST_CFG.PERFECT_MAX and now - AST.LastPress >= AST_CFG.NORMAL_GAP then
+			local snap = diff < AST_CFG.PERFECT_MIN + 2 or diff + rate > AST_CFG.PERFECT_MAX - 2
+			AST_PressAt(goal, snap, now)
+		end
+	end
+end
+AST_Refresh()
+local AST_RefRow = Add("Auto Skill Check Trap")
+local AST_Toggle = AST_RefRow:Toggle(false, function(state)
+	AST.Enabled = state
+	AST.PrevDiff = nil
+	if state then
+		AST_Refresh()
+		AST_Track(RunService.RenderStepped:Connect(function()
+			if not AST.Alive or not AST.Enabled then return end
+			pcall(AST_Step)
+		end))
+		AST_Track(Players.LocalPlayer.CharacterAdded:Connect(function()
+			AST.PrevDiff = nil
+			task.wait(1)
+			if AST.Enabled then AST_Refresh() end
+		end))
+		AST_RefRow._ASTRefreshThread = task.spawn(function()
+			while AST.Enabled and AST.Alive do AST_Refresh(); task.wait(0.5) end
+		end)
+	else
+		for _, c in ipairs(AST.Conns) do pcall(function() c:Disconnect() end) end
+		AST.Conns = {}
+		if AST_RefRow._ASTRefreshThread then pcall(function() task.cancel(AST_RefRow._ASTRefreshThread) end); AST_RefRow._ASTRefreshThread = nil end
+	end
+end)
+AST_RefRow:Dropdown({ "NORMAL", "INSTANT" }, "INSTANT", function(v) AST.Mode = v end)
 
 	-- ============================================================
 	-- 6. AUTO DODGE CROUCH (logic asli)
@@ -2273,10 +2406,8 @@ end
 			AG.PreviousVisible = false
 		end
 	end)
-	AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
-	AG_Row:Check("Normal", false, function(s) if s then AG.Mode = "NORMAL" end end)
-	AG_Row:Check("Instant", false, function(s) if s then AG.Mode = "INSTANT" end end)
-	AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
+AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
+AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
 
 	-- ============================================================
 	-- 10. BOOST GENERATOR (logic asli, tanpa UI standalone)
