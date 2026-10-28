@@ -2416,7 +2416,7 @@ local function BG2_IsRepairing()
 	end
 	return false
 end
-local function BG2_MarkInjected(p) if p then BG2.Injected[p] = os.clock() end
+local function BG2_MarkInjected(p) if p then BG2.Injected[p] = os.clock() end end
 local function BG2_ClearInjected() for k in pairs(BG2.Injected) do BG2.Injected[k] = nil end end
 local function BG2_CountInjected() local n = 0; for _ in pairs(BG2.Injected) do n = n + 1 end; return n end
 local function BG2_PruneInjected()
@@ -2981,7 +2981,6 @@ local BG2_Toggle = BG2_Row:Toggle(false, function(state)
 end)
 local BG2_LockBtn = BG2_Row:Button({ "Lock", "Unlock" }, function(label, num)
 	BG2.ButtonLocked = (num == 1)
-end)
 end)
 end)
 
