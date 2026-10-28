@@ -999,7 +999,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Silent Aim Butcher", "Invisible", "Auto Parry", "Block Vault", "Infinite Lunge", "No Cooldown Skill", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Auto Skill Check Trap" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Silent Aim Butcher", "Auto Parry", "Block Vault", "Infinite Lunge", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -1433,211 +1433,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	local NF_Row = Add("Anti Fall Damage")
 	NF_Row:Toggle(false, function(state) NF_Enabled = state end)
 
-	-- ============================================================
-	-- 5. INVISIBLE (logic asli + resolve icon fix)
-	-- ============================================================
-	-- ============================================================
--- 5. INVISIBLE (logic final dari file testing)
--- ============================================================
-local INV = {
-	Enabled = false, Module = nil, Busy = false, Loading = false,
-	URL = "https://leekguy.vercel.app/roblox/menghub/crack_obf_invisible_93978595733734.lua",
-	IconIds = { "rbxassetid://133149347590039", "rbxassetid://77869394766337" },
-	Resolved = nil, Resolving = false,
-	Size = UDim2.new(3.5, 0, 3.5, 0),
-	Offset = Vector3.new(0, 1.5, 0),
-	Theme = {
-		FillColor = Color3.fromRGB(240, 240, 240),
-		FillTransparency = 0.75,
-		OutlineColor = Color3.fromRGB(0, 0, 0),
-		OutlineTransparency = 0,
-		DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
-	},
-	CharConns = {}, RenderCon = nil,
-}
-
-local function INV_TestImage(imageId)
-	local probe = Instance.new("ImageLabel")
-	probe.Image = imageId
-	local success = false
-	pcall(function()
-		ContentProvider:PreloadAsync({probe}, function(_, status)
-			if status == Enum.AssetFetchStatus.Success then success = true end
-		end)
-	end)
-	probe:Destroy()
-	return success
-end
-
-local function INV_PickIcon()
-	if INV.Resolved ~= nil then return INV.Resolved end
-	if INV.Resolving then return INV.IconIds[1] end
-	INV.Resolving = true
-	local result = nil
-	for _, id in ipairs(INV.IconIds) do
-		if INV_TestImage(id) then result = id; break end
-	end
-	INV.Resolved = result or "TEXT"
-	INV.Resolving = false
-	return INV.Resolved
-end
-task.spawn(function() INV_PickIcon() end)
-
-local function INV_Load()
-	if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
-	if INV.Loading then return false end
-	INV.Loading = true
-	local ok, err = pcall(function()
-		local src = game:HttpGet(INV.URL)
-		local loader = loadstring(src)
-		assert(type(loader) == "function", "Loader tidak valid")
-		loader()
-	end)
-	INV.Loading = false
-	if _G.MengHub and _G.MengHub.Invisible then INV.Module = _G.MengHub.Invisible; return true end
-	if not ok then warn("[Invisible] Gagal memuat: " .. tostring(err)) end
-	return false
-end
-
-local function INV_Set(state)
-	if INV.Busy then return false end
-	if not INV.Module and not INV_Load() then return false end
-	INV.Busy = true
-	local ok, err = pcall(function()
-		if state then INV.Module.enable() else INV.Module.disable() end
-	end)
-	INV.Busy = false
-	if ok then INV.Enabled = state
-	else warn("[Invisible] Error saat toggle: " .. tostring(err)) end
-	return ok
-end
-
-local function INV_ProcessHL(hl)
-	if hl:GetAttribute("NinjaPatched") then return end
-	hl:SetAttribute("NinjaPatched", true)
-	local function applyTheme()
-		if hl.FillColor ~= INV.Theme.FillColor then hl.FillColor = INV.Theme.FillColor end
-		if hl.FillTransparency ~= INV.Theme.FillTransparency then hl.FillTransparency = INV.Theme.FillTransparency end
-		if hl.OutlineColor ~= INV.Theme.OutlineColor then hl.OutlineColor = INV.Theme.OutlineColor end
-		if hl.OutlineTransparency ~= INV.Theme.OutlineTransparency then hl.OutlineTransparency = INV.Theme.OutlineTransparency end
-		if hl.DepthMode ~= INV.Theme.DepthMode then hl.DepthMode = INV.Theme.DepthMode end
-	end
-	applyTheme()
-	hl:GetPropertyChangedSignal("FillColor"):Connect(applyTheme)
-	hl:GetPropertyChangedSignal("OutlineColor"):Connect(applyTheme)
-	hl:GetPropertyChangedSignal("FillTransparency"):Connect(applyTheme)
-	hl:GetPropertyChangedSignal("OutlineTransparency"):Connect(applyTheme)
-end
-
-local function INV_CreateFallbackText(parent)
-	if parent:FindFirstChild("CustomInvisibleText") then return end
-	local txt = Instance.new("TextLabel")
-	txt.Name = "CustomInvisibleText"
-	txt.Size = UDim2.new(1, 0, 1, 0)
-	txt.BackgroundTransparency = 1
-	txt.Text = "[ INVISIBLE ]"
-	txt.TextColor3 = Color3.fromRGB(0, 0, 0)
-	txt.TextStrokeTransparency = 0
-	txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	txt.Font = Enum.Font.GothamBold
-	txt.TextScaled = true
-	txt.Parent = parent
-end
-
-local function INV_ProcessIndicator(gui)
-	if gui:GetAttribute("NinjaPatched") then return end
-	gui:SetAttribute("NinjaPatched", true)
-	gui.Enabled = false
-	local function killEye(child)
-		if child.Name == "CustomInvisibleIcon" or child.Name == "CustomInvisibleText" then return end
-		if child.Name == "EyeIcon" or child:IsA("ImageLabel") then
-			if child:IsA("ImageLabel") or child:IsA("ImageButton") then
-				child.Visible = false
-				child.ImageTransparency = 1
-			end
-			child:Destroy()
-		end
-	end
-	for _, child in ipairs(gui:GetChildren()) do killEye(child) end
-	gui.ChildAdded:Connect(killEye)
-	if not gui:FindFirstChild("CustomInvisibleIcon") and not gui:FindFirstChild("CustomInvisibleText") then
-		local chosenId = INV.Resolved
-		if chosenId == nil then chosenId = INV.IconIds[1] end
-		if chosenId == "TEXT" then
-			INV_CreateFallbackText(gui)
-		else
-			local icon = Instance.new("ImageLabel")
-			icon.Name = "CustomInvisibleIcon"
-			icon.Size = UDim2.new(1, 0, 1, 0)
-			icon.BackgroundTransparency = 1
-			icon.Image = chosenId
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.Parent = gui
-			if INV.Resolved == nil then
-				task.spawn(function()
-					local finalId = INV_PickIcon()
-					if not icon.Parent then return end
-					if finalId == "TEXT" then
-						icon:Destroy()
-						INV_CreateFallbackText(gui)
-					elseif finalId ~= icon.Image then
-						icon.Image = finalId
-					end
-				end)
-			end
-		end
-	end
-	gui.Size = INV.Size
-	gui.StudsOffsetWorldSpace = INV.Offset
-	gui.StudsOffset = INV.Offset
-	gui.Enabled = true
-end
-
-local function INV_OnDesc(obj)
-	if not INV.Enabled then return end
-	if obj.Name == "MengHub_InvisibilityFX" and obj:IsA("Highlight") then
-		INV_ProcessHL(obj)
-	elseif obj.Name == "MengHub_InvisibilityIndicator" and obj:IsA("BillboardGui") then
-		INV_ProcessIndicator(obj)
-	end
-end
-
-local function INV_RenderGuard()
-	if not INV.Enabled or not Players.LocalPlayer.Character then return end
-	local char = Players.LocalPlayer.Character
-	local fx = char:FindFirstChild("MengHub_InvisibilityFX")
-	if fx and not fx:GetAttribute("NinjaPatched") then INV_ProcessHL(fx) end
-	local head = char:FindFirstChild("Head")
-	if head then
-		local ind = head:FindFirstChild("MengHub_InvisibilityIndicator")
-		if ind and not ind:GetAttribute("NinjaPatched") then INV_ProcessIndicator(ind) end
-	end
-end
-
-local function INV_SetupChar(char)
-	if not char then return end
-	table.insert(INV.CharConns, char.DescendantAdded:Connect(INV_OnDesc))
-	for _, obj in ipairs(char:GetDescendants()) do INV_OnDesc(obj) end
-end
-
-local INV_Row = Add("Invisible")
-local INV_Toggle = INV_Row:Toggle(false, function(state)
-	local ok = INV_Set(state)
-	if state and not ok then INV_Toggle.Set(false, true) end
-	if state then
-		INV.RenderCon = RunService.RenderStepped:Connect(INV_RenderGuard)
-		table.insert(INV.CharConns, Players.LocalPlayer.CharacterAdded:Connect(function(ch)
-			task.wait(0.1)
-			INV_SetupChar(ch)
-		end))
-		if Players.LocalPlayer.Character then INV_SetupChar(Players.LocalPlayer.Character) end
-		task.spawn(INV_Load)
-	else
-		if INV.RenderCon then pcall(function() INV.RenderCon:Disconnect() end); INV.RenderCon = nil end
-		for _, c in ipairs(INV.CharConns) do pcall(function() c:Disconnect() end) end
-		INV.CharConns = {}
-	end
-end)
 -- ============================================================
 -- 11. AUTO SKILL CHECK TRAP (logic asli)
 -- ============================================================
@@ -2409,630 +2204,731 @@ end
 AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
 AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
 
-	-- ============================================================
-	-- 10. BOOST GENERATOR (logic asli, tanpa UI standalone)
-	-- ============================================================
-	local BG = {
-		Enabled = false, Active = false, Sending = false, Drop = false, Remote = nil,
-		IsRunning = false, StartTime = 0, AutoRepair = false, AutoThread = nil,
-		AutoPoint = nil, AutoGen = nil, LastFire = 0, Processed = {},
-		ButtonGui = nil, Button = nil, ButtonConns = {},
-		Injected = {}, Sent = 0, Received = 0, Valid = 0, Fallback = 0,
-		EventRemote = nil, EventConn = nil, ResultRemote = nil, ValidRemote = nil, ValidConn = nil,
-		ScourgeRemote = nil, ScourgeConn = nil, HitRemote = nil,
-		ScourgeActive = false, ScourgeToken = 0, LastScourge = 0, ScourgeSent = 0,
-		Connections = {}, UserMovedDuringBypass = false,
-	}
-	local BG_CONFIG = {
-		BUTTON_SIZE = 49, BUTTON_POSITION = UDim2.new(1, -69, 0.5, -25),
-		TP_DELAY = 0.12, SMOOTH = 0.18, SETTLE = 0.05, CONFIRM = 1.2, POLL = 0.05, RETRY = 0.8,
-		AUTO_FIRE = 0.5, AUTO_RADIUS = 5, GUARD = 0.15, GUARD_GRACE = 1,
-		MAX_TITIK = 4, MIN_TITIK = 1, STANDUP = 1.5, AUTO_REPAIR = true, RESULT = 1,
-		INJECT_GRACE = 4, LINK = 1, PRUNE = 0.5, FALLBACK_WIN = 0.5, WATCHDOG = 1, WATCHDOG_MAX = 8,
-		RELEASE_SETTLE = 0.3,
-		SCOURGE_PRE = 0.028, SCOURGE_GAP = 0.042, SCOURGE_GAP_RND = 7, SCOURGE_RETRIGGER = 0.3,
-		REPAIR_ANIM_ID = "rbxassetid://92960319113695",
-	}
-	local BG_GenCache, BG_GenCacheTimer = {}, 0
-	local BG_RepairAnimTrack = nil
-	local BG_Saved = {}
-	local BG_PrevVisible, BG_PrevGoal = false, nil
-	local BG_LastEvent = 0
-	local function BG_GetAll()
-		local now = tick()
-		if now - BG_GenCacheTimer < 5 then return BG_GenCache end
-		BG_GenCache = {}; BG_GenCacheTimer = now
-		local map = workspace:FindFirstChild("Map")
-		if not map then return BG_GenCache end
-		pcall(function()
-			for _, v in pairs(map:GetDescendants()) do
-				if v:IsA("Model") and v.Name == "Generator" then
-					if v:GetAttribute("RepairProgress") ~= nil or v:GetAttribute("kickcount") ~= nil or v:GetAttribute("ProgressRepair") ~= nil then
-						table.insert(BG_GenCache, v)
-					end
+-- ============================================================
+-- 10. BOOST GENERATOR (logic baru — hook via Flux Hub)
+-- ============================================================
+local BG2 = {
+	Enabled = false, Alive = true, Conns = {}, ButtonConns = {},
+	IsBypassRunning = false, BypassStartTime = 0, UserMovedDuringBypass = false,
+	AutoRepairEnabled = false, AutoRepairThread = nil,
+	AutoCurrentPoint = nil, AutoCurrentGenModel = nil, LastFireTime = 0,
+	ProcessedGens = {}, GenCache = {}, GenCacheTimer = 0,
+	RepairAnimTrack = nil, BypassButton = nil, GenButtonUpdater = nil, VisualUpdater = nil,
+	Injected = {},
+	EventRemote = nil, EventConn = nil, ResultRemote = nil, ValidRemote = nil, ValidConn = nil,
+	ScourgeRemote = nil, ScourgeConn = nil, HitRemote = nil,
+	ScourgeActive = false, ScourgeToken = 0, LastScourgeTime = 0, ScourgeSent = 0,
+	Received = 0, Sent = 0, Valid = 0, Fallback = 0,
+	Saved = {}, LastEventTime = 0, PrevVisible = false, PrevGoal = nil,
+	ButtonLocked = false, Shared = { Active = false, Sending = false, Drop = false, Installed = false },
+	HookHandlerFn = nil, HookRemote = nil,
+}
+local BG2_CFG = {
+	BUTTON_IMAGE_ID = "85572190067914",
+	BUTTON_SIZE = 49, BUTTON_POSITION = UDim2.new(1, -69, 0.5, -25),
+	TP_DELAY = 0.12, SMOOTH_MOVE_DURATION = 0.18, SMOOTH_SETTLE_DELAY = 0.05,
+	CONFIRM_TIMEOUT = 1.2, CONFIRM_POLL = 0.05, RETRY_TIMEOUT = 0.8,
+	AUTO_FIRE_INTERVAL = 0.5, AUTO_SEARCH_RADIUS = 5,
+	GUARD_INTERVAL = 0.15, GUARD_GRACE = 1.0, INPUT_CHECK_INTERVAL = 0.1,
+	WATCHDOG_INTERVAL = 1.0, WATCHDOG_MAX_DURATION = 8.0,
+	MAX_TITIK = 4, MIN_TITIK_REPAIR = 1, STAND_UP_DELAY = 1.5,
+	AUTO_REPAIR_AFTER_BYPASS = true, RESULT_VALUE = 1, SEND_DELAY = 0,
+	INJECT_GRACE = 4.0, LINK_INTERVAL = 1, PRUNE_INTERVAL = 0.5, FALLBACK_WINDOW = 0.5,
+	RELEASE_SETTLE_DELAY = 0.3,
+	SCOURGE_PRE_DELAY = 0.028, SCOURGE_GAP = 0.042, SCOURGE_GAP_RANDOM = 7, SCOURGE_RETRIGGER = 0.3,
+	REPAIR_ANIM_ID = "rbxassetid://92960319113695",
+}
+local BG2_SKILL_GUI = { "SkillCheckPromptGui", "SkillCheckPromptGui-con" }
+
+local function BG2_getRepairEvent()
+	local r = ReplicatedStorage:FindFirstChild("Remotes")
+	local g = r and r:FindFirstChild("Generator")
+	return g and g:FindFirstChild("RepairEvent")
+end
+local function BG2_FindRemote(folder, name)
+	local result = nil
+	pcall(function()
+		local rem = ReplicatedStorage:FindFirstChild("Remotes")
+		local f = rem and rem:FindFirstChild(folder)
+		if f then result = f:FindFirstChild(name) end
+	end)
+	return result
+end
+local function BG2_FindDeep(...)
+	local path = {...}
+	local node = ReplicatedStorage:FindFirstChild("Remotes")
+	for _, n in ipairs(path) do if not node then return nil end; node = node:FindFirstChild(n) end
+	if node and node:IsA("RemoteEvent") then return node end
+	return nil
+end
+local function BG2_IsAutoActive() return BG2.IsBypassRunning or BG2.AutoRepairEnabled end
+local function BG2_GetRoot()
+	local c = Players.LocalPlayer.Character
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+local function BG2_IsPointName(n) return string.sub(n, 1, 14) == "GeneratorPoint" end
+
+local function BG2_GetAllGens()
+	local now = tick()
+	if now - BG2.GenCacheTimer < 5 then return BG2.GenCache end
+	BG2.GenCache = {}; BG2.GenCacheTimer = now
+	local map = workspace:FindFirstChild("Map")
+	if not map then return BG2.GenCache end
+	pcall(function()
+		for _, v in pairs(map:GetDescendants()) do
+			if v:IsA("Model") and v.Name == "Generator" then
+				if v:GetAttribute("RepairProgress") ~= nil or v:GetAttribute("kickcount") ~= nil or v:GetAttribute("ProgressRepair") ~= nil then
+					table.insert(BG2.GenCache, v)
 				end
 			end
-		end)
-		return BG_GenCache
-	end
-	local function BG_Points(gen)
-		local pts = {}
-		pcall(function()
-			for _, o in pairs(gen:GetChildren()) do
-				if o.Name:find("GeneratorPoint") and o:IsA("BasePart") then table.insert(pts, o) end
-			end
-		end)
-		return pts
-	end
-	local function BG_PointsDeep(gen)
-		local pts = {}
-		pcall(function()
-			for _, o in ipairs(gen:GetDescendants()) do
-				if o:IsA("BasePart") and string.sub(o.Name, 1, 14) == "GeneratorPoint" then table.insert(pts, o) end
-			end
-		end)
-		return pts
-	end
-	local function BG_CollectPoints()
-		local list = {}
-		local seen = {}
-		pcall(function()
-			local cs = game:GetService("CollectionService")
-			for _, obj in ipairs(cs:GetTagged("GeneratorPoint")) do
-				if obj:IsA("BasePart") and obj:IsDescendantOf(workspace) and not seen[obj] then seen[obj] = true; table.insert(list, obj) end
-			end
-		end)
-		if #list == 0 then
-			pcall(function()
-				local map = workspace:FindFirstChild("Map")
-				local folder = map and map:FindFirstChild("Generators")
-				if folder then
-					for _, obj in ipairs(folder:GetDescendants()) do
-						if obj:IsA("BasePart") and string.sub(obj.Name, 1, 14) == "GeneratorPoint" and not seen[obj] then
-							seen[obj] = true; table.insert(list, obj)
-						end
-					end
-				end
-			end)
-		end
-		return list
-	end
-	local function BG_NearestOf(list)
-		if #list == 0 then return nil end
-		local root = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not root then return list[1] end
-		local best, bd = nil, math.huge
-		for _, p in ipairs(list) do
-			if p.Parent then local d = (p.Position - root.Position).Magnitude; if d < bd then bd = d; best = p end end
-		end
-		return best
-	end
-	local function BG_RepairEvent()
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		local g = r and r:FindFirstChild("Generator")
-		return g and g:FindFirstChild("RepairEvent")
-	end
-	local function BG_FindRemote(folder, name)
-		local r = nil
-		pcall(function()
-			local rem = ReplicatedStorage:FindFirstChild("Remotes")
-			local f = rem and rem:FindFirstChild(folder)
-			if f then r = f:FindFirstChild(name) end
-		end)
-		return r
-	end
-	local function BG_FindDeep(...)
-		local path = { ... }
-		local node = ReplicatedStorage:FindFirstChild("Remotes")
-		for _, n in ipairs(path) do if not node then return nil end; node = node:FindFirstChild(n) end
-		if node and node:IsA("RemoteEvent") then return node end
-		return nil
-	end
-	local function BG_HideSkillCheck()
-		pcall(function()
-			for _, name in ipairs({ "SkillCheckPromptGui", "SkillCheckPromptGui-con" }) do
-				local g = Players.LocalPlayer:FindFirstChild("PlayerGui"):FindFirstChild(name)
-				if g then
-					for _, obj in ipairs(g:GetDescendants()) do
-						if obj:IsA("GuiObject") then
-							local saved = BG_Saved[obj] or {}
-							if obj:IsA("GuiObject") then saved.Bg = saved.Bg or obj.BackgroundTransparency; obj.BackgroundTransparency = 1 end
-							if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then saved.Img = saved.Img or obj.ImageTransparency; obj.ImageTransparency = 1 end
-							if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then saved.Txt = saved.Txt or obj.TextTransparency; obj.TextTransparency = 1; saved.Stk = saved.Stk or obj.TextStrokeTransparency; obj.TextStrokeTransparency = 1 end
-							if obj:IsA("UIStroke") then saved.Str = saved.Str or obj.Transparency; obj.Transparency = 1 end
-							BG_Saved[obj] = saved
-						end
-					end
-				end
-			end
-		end)
-	end
-	local function BG_Restore()
-		for obj, saved in pairs(BG_Saved) do
-			pcall(function()
-				if obj.Parent then
-					if saved.Bg then obj.BackgroundTransparency = saved.Bg end
-					if saved.Img then obj.ImageTransparency = saved.Img end
-					if saved.Txt then obj.TextTransparency = saved.Txt end
-					if saved.Stk then obj.TextStrokeTransparency = saved.Stk end
-					if saved.Str then obj.Transparency = saved.Str end
-				end
-			end)
-		end
-		BG_Saved = {}
-	end
-	local function BG_IsHealing()
-		local c = Players.LocalPlayer.Character
-		local i = c and c:FindFirstChild("CheckInterractable")
-		return i ~= nil and i:GetAttribute("isHealing") == true
-	end
-	local function BG_IsRepairing()
-		local c = Players.LocalPlayer.Character
-		if not c then return false end
-		local i = c:FindFirstChild("CheckInterractable")
-		if i and i:GetAttribute("isRepairing") == true then return true end
-		local hrp = c:FindFirstChild("HumanoidRootPart")
-		if not hrp then return false end
-		for _, g in pairs(BG_GetAll()) do
-			for _, p in pairs(BG_Points(g)) do
-				if p:GetAttribute("IsRepairing") == true and (hrp.Position - p.Position).Magnitude <= 6 then return true end
-			end
-		end
-		return false
-	end
-	local function BG_PlayAnim()
-		local c = Players.LocalPlayer.Character
-		local h = c and c:FindFirstChildOfClass("Humanoid")
-		local a = h and h:FindFirstChildOfClass("Animator")
-		if not a then return end
-		if BG_RepairAnimTrack and BG_RepairAnimTrack.IsPlaying then return end
-		pcall(function()
-			local an = Instance.new("Animation")
-			an.AnimationId = BG_CONFIG.REPAIR_ANIM_ID
-			BG_RepairAnimTrack = a:LoadAnimation(an)
-			BG_RepairAnimTrack.Priority = Enum.AnimationPriority.Action
-			BG_RepairAnimTrack:Play()
-		end)
-	end
-	local function BG_StopAnim()
-		if BG_RepairAnimTrack and BG_RepairAnimTrack.IsPlaying then pcall(function() BG_RepairAnimTrack:Stop() end) end
-		BG_RepairAnimTrack = nil
-	end
-	local function BG_ForceRelease()
-		local c = Players.LocalPlayer.Character
-		if not c then return end
-		local hrp = c:FindFirstChild("HumanoidRootPart")
-		local h = c:FindFirstChildOfClass("Humanoid")
-		local i = c:FindFirstChild("CheckInterractable")
-		local re = BG_RepairEvent()
-		if re then
-			for _ = 1, 2 do
-				for _, g in pairs(BG_GetAll()) do
-					for _, p in pairs(BG_Points(g)) do
-						if p and p.Parent and p:GetAttribute("IsRepairing") == true then pcall(function() re:FireServer(p, false) end) end
-					end
-				end
-				if BG.AutoPoint and BG.AutoPoint.Parent then pcall(function() re:FireServer(BG.AutoPoint, false) end) end
-				task.wait(0.05)
-			end
-		end
-		if hrp and hrp.Parent then
-			for _ = 1, 3 do
-				pcall(function() hrp.Anchored = false end)
-				pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
-				pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
-				task.wait(0.03)
-			end
-		end
-		if h and h.Parent then
-			pcall(function() h.AutoRotate = true end)
-			if h.WalkSpeed < 10 then pcall(function() h.WalkSpeed = 16 end) end
-			if h.PlatformStand then pcall(function() h.PlatformStand = false end) end
-			if h.Sit then pcall(function() h.Sit = false end) end
-			pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-		end
-		if i then
-			for _ = 1, 2 do
-				for _, a in ipairs({ "isRepairing", "isHealing", "isVaulting", "isSliding", "isUnhooking", "isExiting", "isDroppingPallet", "isCarrying", "isDowned" }) do
-					pcall(function() i:SetAttribute(a, false) end)
-				end
-				task.wait(0.05)
-			end
-		end
-		BG.Injected = {}
-		BG.AutoRepair = false
-		if BG.AutoThread then pcall(function() task.cancel(BG.AutoThread) end); BG.AutoThread = nil end
-		BG.AutoPoint = nil; BG.AutoGen = nil; BG.Processed = {}
-		BG.IsRunning = false
-	end
-	local function BG_Smooth(targetCF, dur)
-		local c = Players.LocalPlayer.Character
-		local hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if not hrp or not hrp.Parent then return end
-		local startCF = hrp.CFrame
-		local elapsed = 0
-		local conn
-		conn = RunService.Heartbeat:Connect(function(dt)
-			if not hrp or not hrp.Parent then if conn then conn:Disconnect() end; return end
-			elapsed = elapsed + dt
-			local a = math.min(elapsed / dur, 1)
-			hrp.CFrame = startCF:Lerp(targetCF, a)
-			pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
-			if a >= 1 then if conn then conn:Disconnect() end end
-		end)
-		while elapsed < dur do task.wait() end
-		if conn then conn:Disconnect() end
-	end
-	local function BG_WaitRepair(point, timeout)
-		local t0 = tick()
-		while tick() - t0 < (timeout or 1) do
-			if not point or not point.Parent then return false end
-			if point:GetAttribute("IsRepairing") == true then return true end
-			task.wait(BG_CONFIG.POLL)
-		end
-		return false
-	end
-	local function BG_WaitGen(gen, timeout)
-		local t0 = tick()
-		while tick() - t0 < (timeout or 30) do
-			if not gen or not gen.Parent then return false end
-			local c = Players.LocalPlayer.Character
-			local hrp = c and c:FindFirstChild("HumanoidRootPart")
-			if not hrp or not hrp.Parent then return false end
-			local prog = gen:GetAttribute("RepairProgress")
-			if prog ~= nil and type(prog) == "number" and (prog >= 99.5 or prog >= 0.995) then return true end
-			if gen:GetAttribute("Completed") == true or gen:GetAttribute("IsRepaired") == true then return true end
-			task.wait(0.1)
-		end
-		return false
-	end
-	local function BG_DoMulti(targetPoint)
-		if BG.IsRunning or not BG.Enabled or not targetPoint or not targetPoint.Parent then return end
-		local gen = targetPoint.Parent
-		if not gen or BG.Processed[gen] then return end
-		BG.Injected[targetPoint] = nil
-		BG.IsRunning = true
-		BG.StartTime = tick()
-		pcall(function()
-			local re = BG_RepairEvent()
-			if not re then return end
-			BG.Processed[gen] = true
-			local pts = BG_Points(gen)
-			if #pts < BG_CONFIG.MIN_TITIK then BG.Processed[gen] = nil; return end
-			local c = Players.LocalPlayer.Character
-			local hrp = c and c:FindFirstChild("HumanoidRootPart")
-			if not hrp then BG.Processed[gen] = nil; return end
-			local origPos = hrp.Position
-			local origRot = hrp.CFrame - hrp.CFrame.Position
-			hrp.Anchored = false
-			task.wait(0.03)
-			local body = gen:FindFirstChild("GeneratorBody") or gen.PrimaryPart
-			local count = 0
-			for _, p in pairs(pts) do
-				if not BG.Enabled then break end
-				if not hrp.Parent then break end
-				count = count + 1
-				if count > BG_CONFIG.MAX_TITIK then break end
-				if not p or not p.Parent then continue end
-				local look = body and body.Position or p.Position
-				local tcf
-				if (look - p.Position).Magnitude > 0.5 then tcf = CFrame.lookAt(p.Position, look) else tcf = CFrame.new(p.Position) * origRot end
-				BG_Smooth(tcf, BG_CONFIG.SMOOTH)
-				task.wait(BG_CONFIG.SETTLE)
-				BG.Injected[p] = os.clock()
-				pcall(function() re:FireServer(p, true) end)
-				if not BG_WaitRepair(p, BG_CONFIG.CONFIRM) then
-					pcall(function() re:FireServer(p, false) end)
-					task.wait(BG_CONFIG.TP_DELAY)
-					if hrp.Parent and p.Parent then BG_Smooth(tcf, BG_CONFIG.SMOOTH); task.wait(BG_CONFIG.SETTLE) end
-					BG.Injected[p] = os.clock()
-					pcall(function() re:FireServer(p, true) end)
-					BG_WaitRepair(p, BG_CONFIG.RETRY)
-				end
-			end
-			if hrp.Parent then hrp.Anchored = false; BG_Smooth(CFrame.new(origPos) * origRot, BG_CONFIG.SMOOTH) end
-			BG_WaitGen(gen, 10)
-			pcall(function() re:FireServer(targetPoint, false) end)
-			local c2 = Players.LocalPlayer.Character
-			local h2 = c2 and c2:FindFirstChildOfClass("Humanoid")
-			if h2 then pcall(function() h2.AutoRotate = true; if h2.WalkSpeed < 10 then h2.WalkSpeed = 16 end; h2.PlatformStand = false; h2.Sit = false end) end
-			task.wait(BG_CONFIG.STANDUP)
-			if BG_CONFIG.AUTO_REPAIR and BG.Enabled then BG.AutoRepair = true; BG_StartAuto(gen) end
-		end)
-		local c = Players.LocalPlayer.Character
-		local hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp.Parent then pcall(function() hrp.Anchored = false end) end
-		BG.IsRunning = false
-	end
-	function BG_StartAuto(gen)
-		BG.AutoGen = gen
-		if BG.AutoThread then pcall(function() task.cancel(BG.AutoThread) end); BG.AutoThread = nil end
-		if BG.AutoPoint and BG.AutoPoint.Parent then local re = BG_RepairEvent(); if re then pcall(function() re:FireServer(BG.AutoPoint, false) end) end; BG.AutoPoint = nil end
-		BG.AutoThread = task.spawn(function()
-			while BG.Enabled and BG.AutoRepair do
-				local c = Players.LocalPlayer.Character
-				local hrp = c and c:FindFirstChild("HumanoidRootPart")
-				if not hrp then task.wait(0.1); continue end
-				local found = nil
-				for _, g in pairs(BG_GetAll()) do
-					for _, p in pairs(BG_Points(g)) do
-						if p and p.Parent and (hrp.Position - p.Position).Magnitude <= BG_CONFIG.AUTO_RADIUS then found = p; break end
-					end
-					if found then break end
-				end
-				if found then
-					BG.AutoPoint = found
-					if tick() - BG.LastFire >= BG_CONFIG.AUTO_FIRE then
-						local re = BG_RepairEvent()
-						if re then BG_PlayAnim(); BG.LastFire = tick(); pcall(function() re:FireServer(found, true) end) end
-					end
-				else
-					if BG.AutoPoint then BG.AutoPoint = nil; BG.AutoRepair = false; break end
-				end
-				task.wait(0.1)
-			end
-			BG_StopAnim()
-			if BG.AutoPoint and BG.AutoPoint.Parent then local re = BG_RepairEvent(); if re then pcall(function() re:FireServer(BG.AutoPoint, false) end) end end
-		end)
-	end
-	local function BG_SendSuccess(gen, point)
-		local re = BG.ResultRemote
-		if not re or not re.Parent then return false end
-		BG.Sending = true
-		local ok = pcall(function() re:FireServer("success", BG_CONFIG.RESULT, gen, point) end)
-		BG.Sending = false
-		if ok then BG.Sent = BG.Sent + 1 end
-		return ok
-	end
-	local function BG_Link()
-		local newE = BG_FindRemote("Generator", "SkillCheckEvent")
-		local newR = BG_FindRemote("Generator", "SkillCheckResultEvent")
-		local newV = BG_FindRemote("Generator", "Skillcheckvalidated")
-		local newS = BG_FindDeep("KillerPerks", "kingscourge", "KingScourgeStart")
-		local newH = BG_FindDeep("KillerPerks", "kingscourge", "KingScourgeHit")
-		if newR and not newR:IsA("RemoteEvent") then newR = nil end
-		BG.ResultRemote = newR; BG.Remote = newR
-		if newE ~= BG.EventRemote then
-			if BG.EventConn then pcall(function() BG.EventConn:Disconnect() end); BG.EventConn = nil end
-			BG.EventRemote = newE
-			if newE and newE:IsA("RemoteEvent") then
-				BG.EventConn = newE.OnClientEvent:Connect(function(...)
-					if not BG.Enabled or (not BG.IsRunning and not BG.AutoRepair) then return end
-					BG.LastEvent = os.clock()
-					BG.Received = BG.Received + 1
-					local args = { ... }
-					local gen, point = nil, nil
-					for _, v in ipairs(args) do
-						if typeof(v) == "Instance" then
-							if string.sub(v.Name, 1, 14) == "GeneratorPoint" then point = point or v
-							elseif not gen then gen = v end
-						end
-					end
-					if point and not gen then gen = point.Parent end
-					if gen and not point then point = BG_NearestOf(BG_PointsDeep(gen)) end
-					if gen and point then BG_SendSuccess(gen, point) end
-				end)
-			end
-		end
-		if newV ~= BG.ValidRemote then
-			if BG.ValidConn then pcall(function() BG.ValidConn:Disconnect() end); BG.ValidConn = nil end
-			BG.ValidRemote = newV
-			if newV and newV:IsA("RemoteEvent") then BG.ValidConn = newV.OnClientEvent:Connect(function() if BG.Enabled then BG.Valid = BG.Valid + 1 end end) end
-		end
-		if newS ~= BG.ScourgeRemote then
-			if BG.ScourgeConn then pcall(function() BG.ScourgeConn:Disconnect() end); BG.ScourgeConn = nil end
-			BG.ScourgeRemote = newS
-			if newS and newS:IsA("RemoteEvent") then
-				BG.ScourgeConn = newS.OnClientEvent:Connect(function(p1, p2, p3)
-					if not BG.Enabled then return end
-					local now = os.clock()
-					if now - BG.LastScourge < BG_CONFIG.SCOURGE_RETRIGGER then return end
-					BG.LastScourge = now
-					BG.ScourgeToken = BG.ScourgeToken + 1
-					local token = BG.ScourgeToken
-					local session = p2
-					local total = tonumber(p3) or 1
-					if total < 1 then total = 1 end
-					BG.ScourgeActive = true
-					task.spawn(function()
-						for _ = 1, total do
-							if not BG.Enabled or token ~= BG.ScourgeToken then break end
-							task.wait(BG_CONFIG.SCOURGE_PRE)
-							if not BG.Enabled or token ~= BG.ScourgeToken then break end
-							local h = BG.HitRemote
-							if h and h.Parent then
-								BG.Sending = true
-								pcall(function() h:FireServer(session, "success") end)
-								BG.Sending = false
-								BG.ScourgeSent = BG.ScourgeSent + 1
-							end
-							task.wait(BG_CONFIG.SCOURGE_GAP + math.random(1, BG_CONFIG.SCOURGE_GAP_RND) / 100)
-						end
-						task.wait(0.2)
-						if token == BG.ScourgeToken then BG.ScourgeActive = false end
-					end)
-				end)
-			end
-		end
-		BG.HitRemote = newH
-		BG.Drop = BG.Enabled and BG.EventConn ~= nil and BG.ResultRemote ~= nil
-	end
-	local function BG_DestroyButton()
-		for _, c in ipairs(BG.ButtonConns) do pcall(function() c:Disconnect() end) end
-		BG.ButtonConns = {}
-		if BG.ButtonGui then pcall(function() BG.ButtonGui:Destroy() end); BG.ButtonGui = nil end
-		BG.Button = nil
-	end
-	local function BG_CreateButton()
-		if BG.Button and BG.Button.Parent then return end
-		BG_DestroyButton()
-		local sg = Instance.new("ScreenGui")
-		sg.Name = "BG_GenUI"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-		local parent = nil
-		if type(gethui) == "function" then local ok, h = pcall(gethui); if ok and h then parent = h end end
-		if not parent then parent = CoreGui end
-		sg.Parent = parent
-		local btn = Instance.new("TextButton")
-		btn.Name = "GenButton"; btn.Size = UDim2.fromOffset(BG_CONFIG.BUTTON_SIZE, BG_CONFIG.BUTTON_SIZE); btn.Position = BG_CONFIG.BUTTON_POSITION
-		btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30); btn.BorderSizePixel = 0; btn.Text = "GEN"; btn.TextColor3 = Color3.fromRGB(255, 255, 255); btn.Font = Enum.Font.GothamBold; btn.TextSize = 14; btn.AutoButtonColor = false; btn.Parent = sg
-		local cn = Instance.new("UICorner"); cn.CornerRadius = UDim.new(0, 8); cn.Parent = btn
-		local st = Instance.new("UIStroke"); st.Color = Color3.fromRGB(80, 80, 80); st.Thickness = 1.5; st.Parent = btn
-		local pressStart, pressInput, startAbs, moved, dragging = nil, nil, nil, false, false
-		local function screenSize() local cam = workspace.CurrentCamera; return cam and cam.ViewportSize or Vector2.new(1280, 720) end
-		table.insert(BG.ButtonConns, btn.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-				pressStart = input.Position; pressInput = input; startAbs = btn.AbsolutePosition; moved = false; dragging = false
-			end
-		end))
-		table.insert(BG.ButtonConns, UserInputService.InputChanged:Connect(function(input)
-			if not pressStart or not pressInput or not startAbs then return end
-			local valid = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseMovement)
-			if not valid then return end
-			local dx, dy = input.Position.X - pressStart.X, input.Position.Y - pressStart.Y
-			if not dragging and math.sqrt(dx*dx+dy*dy) > 8 then dragging = true; moved = true; pressStart = input.Position; startAbs = btn.AbsolutePosition; dx, dy = 0, 0 end
-			if dragging and btn and btn.Parent then
-				local sw, sh = screenSize()
-				local nx = math.clamp(startAbs.X + dx, 0, math.max(0, sw - BG_CONFIG.BUTTON_SIZE))
-				local ny = math.clamp(startAbs.Y + dy, 0, math.max(0, sh - BG_CONFIG.BUTTON_SIZE))
-				btn.Position = UDim2.fromOffset(nx, ny)
-			end
-		end))
-		table.insert(BG.ButtonConns, UserInputService.InputEnded:Connect(function(input)
-			if not pressInput then return end
-			local ended = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseButton1)
-			if ended then pressStart = nil; pressInput = nil; startAbs = nil; dragging = false end
-		end))
-		table.insert(BG.ButtonConns, btn.MouseButton1Click:Connect(function()
-			if moved then moved = false; return end
-			if BG.IsRunning and (tick() - BG.StartTime > 3) then BG.IsRunning = false end
-			if BG.IsRunning or not BG.Enabled then return end
-			local c = Players.LocalPlayer.Character
-			local hrp = c and c:FindFirstChild("HumanoidRootPart")
-			if not hrp then return end
-			local best, bd = nil, math.huge
-			for _, g in pairs(BG_GetAll()) do
-				for _, p in pairs(BG_Points(g)) do
-					if p and p.Parent then local d = (hrp.Position - p.Position).Magnitude; if d < bd then bd = d; best = p end end
-				end
-			end
-			if best and bd <= 8 then
-				local gen = best.Parent
-				if gen and BG.Processed[gen] then BG.Processed[gen] = nil end
-				task.spawn(function() BG_DoMulti(best) end)
-			end
-		end))
-		BG.ButtonGui = sg
-		BG.Button = btn
-	end
-	local BG_Row = Add("Boost Generator")
-	local BG_Toggle = BG_Row:Toggle(false, function(state)
-		BG.Enabled = state
-		if state then
-			BG.Received = 0; BG.Sent = 0; BG.Valid = 0; BG.Fallback = 0; BG.ScourgeSent = 0; BG.ScourgeActive = false; BG.ScourgeToken = BG.ScourgeToken + 1
-			BG.PrevVisible = false; BG.PrevGoal = nil
-			pcall(BG_Link)
-			BG.Drop = BG.EventConn ~= nil and BG.ResultRemote ~= nil
-			BG_CreateButton()
-			table.insert(BG.Connections, RunService.RenderStepped:Connect(function()
-				if BG.Enabled and (BG.IsRunning or BG.AutoRepair) and not BG_IsHealing() then BG_HideSkillCheck()
-				elseif next(BG_Saved) ~= nil then BG_Restore() end
-			end))
-			table.insert(BG.Connections, Players.LocalPlayer.CharacterAdded:Connect(function()
-				BG.IsRunning = false; BG.PrevVisible = false
-				task.wait(1); pcall(BG_Link)
-			end))
-			BG._LinkThread = task.spawn(function() while BG.Enabled do pcall(BG_Link); task.wait(BG_CONFIG.LINK) end end)
-			BG._GuardThread = task.spawn(function()
-				while BG.Enabled do
-					task.wait(BG_CONFIG.GUARD)
-					if not BG.AutoRepair or BG.IsRunning then continue end
-					if tick() - BG.LastFire < BG_CONFIG.GUARD_GRACE then continue end
-					if not BG_IsRepairing() then
-						BG.AutoRepair = false
-						if BG.AutoThread then pcall(function() task.cancel(BG.AutoThread) end); BG.AutoThread = nil end
-						if BG.AutoPoint and BG.AutoPoint.Parent then local re = BG_RepairEvent(); if re then pcall(function() re:FireServer(BG.AutoPoint, false) end) end end
-						BG.AutoPoint = nil; BG_StopAnim()
-					end
-				end
-			end)
-			BG._Watchdog = task.spawn(function() while BG.Enabled do task.wait(BG_CONFIG.WATCHDOG); if BG.IsRunning and BG.StartTime > 0 and tick() - BG.StartTime > BG_CONFIG.WATCHDOG_MAX then BG.IsRunning = false end end end)
-			BG._Fallback = task.spawn(function()
-				while BG.Enabled do
-					task.wait(0.05)
-					if not BG.Enabled or not (BG.IsRunning or BG.AutoRepair) then BG.PrevVisible = false; BG.PrevGoal = nil; continue end
-					local check, goal = nil, nil
-					for _, name in ipairs({ "SkillCheckPromptGui", "SkillCheckPromptGui-con" }) do
-						local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-						local g = pg and pg:FindFirstChild(name)
-						local c = g and g:FindFirstChild("Check")
-						if c then check = c; goal = c:FindFirstChild("Goal"); break end
-					end
-					local vis = check and check.Visible == true
-					local gr = goal and tonumber(goal.Rotation)
-					local isNew = false
-					if vis then
-						if not BG.PrevVisible then isNew = true
-						elseif gr and BG_PrevGoal and math.abs(gr - BG_PrevGoal) > 0.5 then isNew = true end
-					end
-					BG.PrevVisible = vis; BG_PrevGoal = gr
-					if isNew and (os.clock() - BG_LastEvent) >= BG_CONFIG.FALLBACK_WIN and not BG_IsHealing() then
-						local all = BG_CollectPoints()
-						local p = BG_NearestOf(all)
-						if p and p.Parent then if BG_SendSuccess(p.Parent, p) then BG.Fallback = BG.Fallback + 1 end end
-					end
-				end
-			end)
-			BG._InputDetection = task.spawn(function()
-				while BG.Enabled do
-					task.wait(0.1)
-					local c = Players.LocalPlayer.Character
-					local hum = c and c:FindFirstChildOfClass("Humanoid")
-					if not hum then continue end
-					local moving = hum.MoveDirection.Magnitude > 0.5
-					if BG.IsRunning then if moving then BG.UserMovedDuringBypass = true end; continue end
-					if BG.AutoRepair and moving then
-						BG.AutoRepair = false
-						if BG.AutoThread then pcall(function() task.cancel(BG.AutoThread) end); BG.AutoThread = nil end
-						task.wait(0.05); pcall(BG_ForceRelease); task.wait(BG_CONFIG.RELEASE_SETTLE)
-					end
-				end
-			end)
-			BG._JumpKiller = task.spawn(function()
-				while BG.Enabled do
-					task.wait(0.1)
-					local c = Players.LocalPlayer.Character
-					local hum = c and c:FindFirstChildOfClass("Humanoid")
-					if not BG.IsRunning then
-						if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true); hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, true) end) end
-						continue
-					end
-					if hum then pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, false); hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false) end) end
-					local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-					local tg = pg and pg:FindFirstChild("TouchGui")
-					local fr = tg and tg:FindFirstChild("TouchControlFrame")
-					local jb = fr and fr:FindFirstChild("JumpButton")
-					if jb and jb.Visible then jb.Visible = false end
-				end
-			end)
-		else
-			for _, c in ipairs(BG.Connections) do pcall(function() c:Disconnect() end) end
-			BG.Connections = {}
-			for _, k in ipairs({ "_LinkThread", "_GuardThread", "_Watchdog", "_Fallback", "_InputDetection", "_JumpKiller" }) do
-				if BG[k] then pcall(function() task.cancel(BG[k]) end); BG[k] = nil end
-			end
-			BG.AutoRepair = false
-			if BG.AutoThread then pcall(function() task.cancel(BG.AutoThread) end); BG.AutoThread = nil end
-			BG_DestroyButton()
-			pcall(BG_ForceRelease)
-			BG_Restore()
-			BG.ScourgeToken = BG.ScourgeToken + 1
-			BG.ScourgeActive = false
-			if BG.EventConn then pcall(function() BG.EventConn:Disconnect() end); BG.EventConn = nil end
-			if BG.ValidConn then pcall(function() BG.ValidConn:Disconnect() end); BG.ValidConn = nil end
-			if BG.ScourgeConn then pcall(function() BG.ScourgeConn:Disconnect() end); BG.ScourgeConn = nil end
-			BG.Drop = false
 		end
 	end)
+	return BG2.GenCache
+end
+local function BG2_GetPoints(gen)
+	local pts = {}
+	pcall(function()
+		for _, o in pairs(gen:GetChildren()) do
+			if o.Name:find("GeneratorPoint") and o:IsA("BasePart") then table.insert(pts, o) end
+		end
+	end)
+	return pts
+end
+local function BG2_GetPointsDeep(gen)
+	local list = {}
+	pcall(function()
+		for _, o in ipairs(gen:GetDescendants()) do
+			if o:IsA("BasePart") and BG2_IsPointName(o.Name) then table.insert(list, o) end
+		end
+	end)
+	return list
+end
+local function BG2_CollectPoints()
+	local list, seen = {}, {}
+	pcall(function()
+		local cs = game:GetService("CollectionService")
+		for _, o in ipairs(cs:GetTagged("GeneratorPoint")) do
+			if o:IsA("BasePart") and o:IsDescendantOf(workspace) and not seen[o] then seen[o] = true; table.insert(list, o) end
+		end
+	end)
+	if #list == 0 then
+		pcall(function()
+			local map = workspace:FindFirstChild("Map")
+			local f = map and map:FindFirstChild("Generators")
+			if f then for _, o in ipairs(f:GetDescendants()) do if o:IsA("BasePart") and BG2_IsPointName(o.Name) and not seen[o] then seen[o] = true; table.insert(list, o) end end end
+		end)
+	end
+	return list
+end
+local function BG2_Nearest(list)
+	if #list == 0 then return nil end
+	local root = BG2_GetRoot()
+	if not root then return list[1] end
+	local best, bd = nil, math.huge
+	for _, p in ipairs(list) do if p.Parent then local d = (p.Position - root.Position).Magnitude; if d < bd then bd = d; best = p end end end
+	return best
+end
+local function BG2_Extract(...)
+	local count = select("#", ...); local args = {...}
+	local a, b = args[1], args[2]
+	if typeof(a) == "Instance" and typeof(b) == "Instance" then return a, b end
+	local gen, point = nil, nil
+	for i = 1, count do
+		local v = args[i]
+		if typeof(v) == "Instance" then
+			if BG2_IsPointName(v.Name) then if not point then point = v end
+			elseif not gen then gen = v end
+		end
+	end
+	if point and (not gen or gen == point) then gen = point.Parent end
+	if gen and not point then point = BG2_Nearest(BG2_GetPointsDeep(gen)) end
+	if gen and point then return gen, point end
+	return nil, nil
+end
+local function BG2_IsHealing()
+	local c = Players.LocalPlayer.Character
+	local i = c and c:FindFirstChild("CheckInterractable")
+	return i ~= nil and i:GetAttribute("isHealing") == true
+end
+local function BG2_IsRepairing()
+	local c = Players.LocalPlayer.Character
+	if not c then return false end
+	local i = c:FindFirstChild("CheckInterractable")
+	if i and i:GetAttribute("isRepairing") == true then return true end
+	local hrp = c:FindFirstChild("HumanoidRootPart")
+	if not hrp then return false end
+	for _, g in pairs(BG2_GetAllGens()) do
+		for _, p in pairs(BG2_GetPoints(g)) do
+			if p:GetAttribute("IsRepairing") == true and (hrp.Position - p.Position).Magnitude <= 6 then return true end
+		end
+	end
+	return false
+end
+local function BG2_MarkInjected(p) if p then BG2.Injected[p] = os.clock() end
+local function BG2_ClearInjected() for k in pairs(BG2.Injected) do BG2.Injected[k] = nil end end
+local function BG2_CountInjected() local n = 0; for _ in pairs(BG2.Injected) do n = n + 1 end; return n end
+local function BG2_PruneInjected()
+	if BG2.IsBypassRunning then return end
+	local now = os.clock()
+	for p, t in pairs(BG2.Injected) do
+		local rm = false
+		if not p.Parent then rm = true
+		else
+			local rp = false
+			pcall(function() rp = p:GetAttribute("IsRepairing") == true end)
+			if rp then BG2.Injected[p] = now elseif now - t > BG2_CFG.INJECT_GRACE then rm = true end
+		end
+		if rm then BG2.Injected[p] = nil end
+	end
+end
+
+local function BG2_ApplyHide(obj)
+	pcall(function()
+		local s = BG2.Saved[obj]
+		if not s then s = {}; BG2.Saved[obj] = s end
+		if obj:IsA("GuiObject") then if s.Bg == nil then s.Bg = obj.BackgroundTransparency end; obj.BackgroundTransparency = 1 end
+		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then if s.Img == nil then s.Img = obj.ImageTransparency end; obj.ImageTransparency = 1 end
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+			if s.Txt == nil then s.Txt = obj.TextTransparency end; obj.TextTransparency = 1
+			if s.Stk == nil then s.Stk = obj.TextStrokeTransparency end; obj.TextStrokeTransparency = 1
+		end
+		if obj:IsA("UIStroke") then if s.Str == nil then s.Str = obj.Transparency end; obj.Transparency = 1 end
+	end)
+end
+local function BG2_HideAll()
+	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not pg then return end
+	for _, name in ipairs(BG2_SKILL_GUI) do
+		local g = pg:FindFirstChild(name)
+		if g then BG2_ApplyHide(g); for _, o in ipairs(g:GetDescendants()) do BG2_ApplyHide(o) end end
+	end
+end
+local function BG2_RestoreAll()
+	for obj, s in pairs(BG2.Saved) do
+		pcall(function()
+			if obj.Parent then
+				if s.Bg ~= nil then obj.BackgroundTransparency = s.Bg end
+				if s.Img ~= nil then obj.ImageTransparency = s.Img end
+				if s.Txt ~= nil then obj.TextTransparency = s.Txt end
+				if s.Stk ~= nil then obj.TextStrokeTransparency = s.Stk end
+				if s.Str ~= nil then obj.Transparency = s.Str end
+			end
+		end)
+	end
+	BG2.Saved = {}
+end
+
+local function BG2_SendSuccess(gen, point)
+	local re = BG2.ResultRemote
+	if not re or not re.Parent then return false end
+	BG2.Shared.Sending = true
+	local ok = pcall(function() re:FireServer("success", BG2_CFG.RESULT_VALUE, gen, point) end)
+	BG2.Shared.Sending = false
+	if ok then BG2.Sent = BG2.Sent + 1 end
+	return ok
+end
+local function BG2_OnSkillCheck(...)
+	if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() then return end
+	BG2.LastEventTime = os.clock()
+	BG2.Received = BG2.Received + 1
+	local gen, point = BG2_Extract(...)
+	if not gen or not point then return end
+	if BG2_CFG.SEND_DELAY > 0 then
+		task.delay(BG2_CFG.SEND_DELAY, function() if BG2.Alive and BG2.Enabled and BG2_IsAutoActive() then BG2_SendSuccess(gen, point) end end)
+	else BG2_SendSuccess(gen, point) end
+end
+local function BG2_OnValidated()
+	if BG2.Alive and BG2.Enabled and BG2_IsAutoActive() then BG2.Valid = BG2.Valid + 1 end
+end
+local function BG2_GetCheckParts()
+	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not pg then return nil, nil end
+	for _, name in ipairs(BG2_SKILL_GUI) do
+		local g = pg:FindFirstChild(name)
+		local c = g and g:FindFirstChild("Check")
+		if c then return c, c:FindFirstChild("Goal") end
+	end
+	return nil, nil
+end
+local function BG2_FallbackStep()
+	if not BG2.Enabled or not BG2_IsAutoActive() then BG2.PrevVisible = false; BG2.PrevGoal = nil; return end
+	local check, goal = BG2_GetCheckParts()
+	local vis, gr = false, nil
+	if check then local ok, v = pcall(function() return check.Visible end); vis = ok and v == true end
+	if goal then local ok, r = pcall(function() return goal.Rotation end); if ok then gr = r end end
+	local isNew = false
+	if vis then
+		if not BG2.PrevVisible then isNew = true
+		elseif gr and BG2.PrevGoal and math.abs(gr - BG2.PrevGoal) > 0.5 then isNew = true end
+	end
+	BG2.PrevVisible = vis; BG2.PrevGoal = gr
+	if not isNew then return end
+	if os.clock() - BG2.LastEventTime < BG2_CFG.FALLBACK_WINDOW then return end
+	if BG2_IsHealing() then return end
+	local p = BG2_Nearest(BG2_CollectPoints())
+	if p and p.Parent then if BG2_SendSuccess(p.Parent, p) then BG2.Fallback = BG2.Fallback + 1 end end
+end
+
+local function BG2_SendScourge(session)
+	local h = BG2.HitRemote
+	if not h or not h.Parent then return false end
+	BG2.Shared.Sending = true
+	local ok = pcall(function() h:FireServer(session, "success") end)
+	BG2.Shared.Sending = false
+	if ok then BG2.ScourgeSent = BG2.ScourgeSent + 1 end
+	return ok
+end
+local function BG2_OnScourge(p1, p2, p3)
+	if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() then return end
+	local now = os.clock()
+	if now - BG2.LastScourgeTime < BG2_CFG.SCOURGE_RETRIGGER then return end
+	BG2.LastScourgeTime = now
+	BG2.ScourgeToken = BG2.ScourgeToken + 1
+	local token = BG2.ScourgeToken
+	local session = p2
+	local total = tonumber(p3) or 1; if total < 1 then total = 1 end
+	BG2.ScourgeActive = true
+	task.spawn(function()
+		for _ = 1, total do
+			if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() or token ~= BG2.ScourgeToken then break end
+			task.wait(BG2_CFG.SCOURGE_PRE_DELAY)
+			if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() or token ~= BG2.ScourgeToken then break end
+			BG2_SendScourge(session)
+			task.wait(BG2_CFG.SCOURGE_GAP + math.random(1, BG2_CFG.SCOURGE_GAP_RANDOM) / 100)
+		end
+		task.wait(0.2)
+		if token == BG2.ScourgeToken then BG2.ScourgeActive = false end
+	end)
+end
+
+local function BG2_Link()
+	local nE = BG2_FindRemote("Generator", "SkillCheckEvent")
+	local nR = BG2_FindRemote("Generator", "SkillCheckResultEvent")
+	local nV = BG2_FindRemote("Generator", "Skillcheckvalidated")
+	local nS = BG2_FindDeep("KillerPerks", "kingscourge", "KingScourgeStart")
+	local nH = BG2_FindDeep("KillerPerks", "kingscourge", "KingScourgeHit")
+	if nR and not nR:IsA("RemoteEvent") then nR = nil end
+	BG2.ResultRemote = nR
+	if nE ~= BG2.EventRemote then
+		if BG2.EventConn then pcall(function() BG2.EventConn:Disconnect() end); BG2.EventConn = nil end
+		BG2.EventRemote = nE
+		if nE and nE:IsA("RemoteEvent") then BG2.EventConn = nE.OnClientEvent:Connect(BG2_OnSkillCheck) end
+	end
+	if nV ~= BG2.ValidRemote then
+		if BG2.ValidConn then pcall(function() BG2.ValidConn:Disconnect() end); BG2.ValidConn = nil end
+		BG2.ValidRemote = nV
+		if nV and nV:IsA("RemoteEvent") then BG2.ValidConn = nV.OnClientEvent:Connect(BG2_OnValidated) end
+	end
+	if nS ~= BG2.ScourgeRemote then
+		if BG2.ScourgeConn then pcall(function() BG2.ScourgeConn:Disconnect() end); BG2.ScourgeConn = nil end
+		BG2.ScourgeRemote = nS
+		if nS and nS:IsA("RemoteEvent") then BG2.ScourgeConn = nS.OnClientEvent:Connect(BG2_OnScourge) end
+	end
+	BG2.HitRemote = nH
+end
+local function BG2_InstallHook()
+	if BG2.HookHandlerFn then
+		if BG2.HookRemote then UnregisterHookHandler(BG2.HookRemote) end
+		BG2.HookRemote = BG2.ResultRemote
+		if BG2.HookRemote then RegisterHookHandler(BG2.HookRemote, BG2.HookHandlerFn); EnsureNamecallHook() end
+		return true
+	end
+	BG2.HookHandlerFn = function(args, self)
+		if BG2.Shared.Active and BG2.Shared.Drop and not BG2.Shared.Sending and self == BG2.ResultRemote and BG2_IsAutoActive() then
+			return false
+		end
+		return args
+	end
+	BG2.HookRemote = BG2.ResultRemote
+	if BG2.HookRemote then RegisterHookHandler(BG2.HookRemote, BG2.HookHandlerFn); EnsureNamecallHook() end
+	return true
+end
+
+local function BG2_PlayAnim()
+	local c = Players.LocalPlayer.Character
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	local a = h and h:FindFirstChildOfClass("Animator")
+	if not a then return end
+	if BG2.RepairAnimTrack and BG2.RepairAnimTrack.IsPlaying then return end
+	pcall(function()
+		local an = Instance.new("Animation"); an.AnimationId = BG2_CFG.REPAIR_ANIM_ID
+		BG2.RepairAnimTrack = a:LoadAnimation(an)
+		BG2.RepairAnimTrack.Priority = Enum.AnimationPriority.Action
+		BG2.RepairAnimTrack:Play()
+	end)
+end
+local function BG2_StopAnim()
+	if BG2.RepairAnimTrack and BG2.RepairAnimTrack.IsPlaying then pcall(function() BG2.RepairAnimTrack:Stop() end) end
+	BG2.RepairAnimTrack = nil
+end
+local function BG2_StandUp()
+	local c = Players.LocalPlayer.Character; if not c then return end
+	local i = c:FindFirstChild("CheckInterractable")
+	local waitT = 0
+	while not i and waitT < 0.5 do task.wait(0.05); waitT = waitT + 0.05; i = c:FindFirstChild("CheckInterractable") end
+	local h = c:FindFirstChildOfClass("Humanoid")
+	local hrp = c:FindFirstChild("HumanoidRootPart")
+	if h and h.Parent then
+		local a = h:FindFirstChildOfClass("Animator")
+		if a then for _, tr in ipairs(a:GetPlayingAnimationTracks()) do local n = (tr.Name or ""):lower(); local id = tr.Animation and tr.Animation.AnimationId or ""; if id == BG2_CFG.REPAIR_ANIM_ID or n:find("repair") or n:find("fix") or n:find("work") or n:find("interact") then pcall(function() tr:Stop(0) end) end end end
+		pcall(function() h.AutoRotate = true end)
+		if h.WalkSpeed < 10 then pcall(function() h.WalkSpeed = 16 end) end
+		if h.PlatformStand then pcall(function() h.PlatformStand = false end) end
+		if h.Sit then pcall(function() h.Sit = false end) end
+		pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
+	end
+	if i then
+		for _ = 1, 2 do
+			for _, a in ipairs({"isRepairing","isHealing","isVaulting","isSliding","isUnhooking","isExiting","isDroppingPallet","isCarrying","isDowned"}) do pcall(function() i:SetAttribute(a, false) end) end
+			task.wait(0.05)
+		end
+	end
+	if hrp and hrp.Parent then
+		for _ = 1, 3 do pcall(function() hrp.Anchored = false end); pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end); pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end); task.wait(0.03) end
+	end
+	BG2_StopAnim()
+end
+local function BG2_WaitRepair(point, timeout)
+	local t0 = tick()
+	while tick() - t0 < (timeout or 1) do
+		if not point or not point.Parent then return false end
+		if point:GetAttribute("IsRepairing") == true then return true end
+		task.wait(BG2_CFG.CONFIRM_POLL)
+	end
+	return false
+end
+local function BG2_Smooth(targetCF, dur)
+	local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp.Parent then return end
+	local startCF = hrp.CFrame; local elapsed = 0; local conn
+	conn = RunService.Heartbeat:Connect(function(dt)
+		if not hrp or not hrp.Parent then if conn then conn:Disconnect() end; return end
+		elapsed = elapsed + dt
+		local a = math.min(elapsed / dur, 1)
+		hrp.CFrame = startCF:Lerp(targetCF, a)
+		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
+		if a >= 1 then if conn then conn:Disconnect() end end
+	end)
+	while elapsed < dur do task.wait() end
+	if conn then conn:Disconnect() end
+end
+local function BG2_ForceRelease()
+	local c = Players.LocalPlayer.Character; if not c then return end
+	local hrp = c:FindFirstChild("HumanoidRootPart")
+	local h = c:FindFirstChildOfClass("Humanoid")
+	local i = c:FindFirstChild("CheckInterractable")
+	local re = BG2_getRepairEvent()
+	if re then
+		for _ = 1, 2 do
+			for _, g in pairs(BG2_GetAllGens()) do for _, p in pairs(BG2_GetPoints(g)) do if p and p.Parent and p:GetAttribute("IsRepairing") == true then pcall(function() re:FireServer(p, false) end) end end end
+			if BG2.AutoCurrentPoint and BG2.AutoCurrentPoint.Parent then pcall(function() re:FireServer(BG2.AutoCurrentPoint, false) end) end
+			task.wait(0.05)
+		end
+	end
+	if hrp and hrp.Parent then for _ = 1, 3 do pcall(function() hrp.Anchored = false end); pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end); pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end); task.wait(0.03) end end
+	if h and h.Parent then
+		pcall(function() h.AutoRotate = true end)
+		if h.WalkSpeed < 10 then pcall(function() h.WalkSpeed = 16 end) end
+		if h.PlatformStand then pcall(function() h.PlatformStand = false end) end
+		if h.Sit then pcall(function() h.Sit = false end) end
+		pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
+	end
+	if i then for _ = 1, 2 do for _, a in ipairs({"isRepairing","isHealing","isVaulting","isSliding","isUnhooking","isExiting","isDroppingPallet","isCarrying","isDowned"}) do pcall(function() i:SetAttribute(a, false) end) end; task.wait(0.05) end end
+	BG2_ClearInjected()
+	BG2.AutoRepairEnabled = false
+	if BG2.AutoRepairThread then pcall(function() task.cancel(BG2.AutoRepairThread) end); BG2.AutoRepairThread = nil end
+	BG2.AutoCurrentPoint = nil; BG2.AutoCurrentGenModel = nil; BG2.ProcessedGens = {}
+	if BG2.IsBypassRunning then BG2.IsBypassRunning = false end
+end
+local function BG2_StopAutoRepair()
+	BG2_StopAnim()
+	local p = BG2.AutoCurrentPoint; BG2.AutoCurrentPoint = nil
+	if p and p.Parent then local re = BG2_getRepairEvent(); if re then pcall(function() re:FireServer(p, false) end) end end
+end
+local function BG2_StopAutoOnly()
+	BG2.AutoRepairEnabled = false
+	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
+	BG2_StopAutoRepair(); BG2.AutoCurrentGenModel = nil
+end
+local BG2_StartAuto
+BG2_StartAuto = function(gen)
+	BG2.AutoCurrentGenModel = gen
+	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
+	BG2_StopAutoRepair()
+	BG2.AutoRepairThread = task.spawn(function()
+		while BG2.Alive and BG2.AutoRepairEnabled and BG2.Enabled do
+			local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+			if not hrp then task.wait(0.1); continue end
+			local found = nil
+			for _, g in pairs(BG2_GetAllGens()) do
+				for _, p in pairs(BG2_GetPoints(g)) do
+					if p and p.Parent and (hrp.Position - p.Position).Magnitude <= BG2_CFG.AUTO_SEARCH_RADIUS then found = p; break end
+				end
+				if found then break end
+			end
+			if found then
+				BG2.AutoCurrentPoint = found
+				local now = tick()
+				if now - BG2.LastFireTime >= BG2_CFG.AUTO_FIRE_INTERVAL then
+					local re = BG2_getRepairEvent()
+					if re then BG2_PlayAnim(); BG2.LastFireTime = tick(); pcall(function() re:FireServer(found, true) end) end
+				end
+			else
+				if BG2.AutoCurrentPoint then BG2_StopAutoRepair(); BG2.AutoRepairEnabled = false; if BG2.AutoCurrentGenModel then BG2.ProcessedGens[BG2.AutoCurrentGenModel] = nil; BG2.AutoCurrentGenModel = nil end; break end
+			end
+			task.wait(0.1)
+		end
+		BG2_StopAutoRepair()
+	end)
+end
+local function BG2_ClearProcessed(gen, point)
+	if not point or not point.Parent then BG2.ProcessedGens[gen] = nil; return end
+	local c1, c2
+	c1 = point:GetAttributeChangedSignal("IsRepairing"):Connect(function()
+		if not point or not point.Parent then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end; return end
+		if point:GetAttribute("IsRepairing") == false then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end end
+	end)
+	c2 = point.AncestryChanged:Connect(function()
+		if not point.Parent then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end end
+	end)
+end
+local function BG2_WaitGen(gen, timeout)
+	local t0 = tick()
+	while tick() - t0 < (timeout or 30) do
+		if not gen or not gen.Parent then return false end
+		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+		if not hrp or not hrp.Parent then return false end
+		local prog = gen:GetAttribute("RepairProgress")
+		if prog ~= nil and type(prog) == "number" and (prog >= 99.5 or prog >= 0.995) then return true end
+		if gen:GetAttribute("Completed") == true or gen:GetAttribute("IsRepaired") == true then return true end
+		task.wait(0.1)
+	end
+	return false
+end
+local function BG2_DoMulti(targetPoint)
+	if BG2.IsBypassRunning or not BG2.Enabled or not targetPoint or not targetPoint.Parent then return end
+	local gen = targetPoint.Parent
+	if not gen or BG2.ProcessedGens[gen] then return end
+	BG2.Injected[targetPoint] = nil
+	BG2.IsBypassRunning = true; BG2.BypassStartTime = tick(); BG2.UserMovedDuringBypass = false
+	pcall(function()
+		local re = BG2_getRepairEvent(); if not re then return end
+		BG2.ProcessedGens[gen] = true; BG2_ClearProcessed(gen, targetPoint)
+		local pts = BG2_GetPoints(gen)
+		if #pts < BG2_CFG.MIN_TITIK_REPAIR then BG2.ProcessedGens[gen] = nil; return end
+		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+		if not hrp then BG2.ProcessedGens[gen] = nil; return end
+		local origP = hrp.Position; local origR = hrp.CFrame - hrp.CFrame.Position
+		hrp.Anchored = false; task.wait(0.03)
+		local body = gen:FindFirstChild("GeneratorBody") or gen.PrimaryPart
+		local count = 0
+		for _, p in pairs(pts) do
+			if not BG2.Enabled or not hrp.Parent then break end
+			if not p or not p.Parent then count = count + 1; continue end
+			count = count + 1
+			if count > BG2_CFG.MAX_TITIK then break end
+			local look = body and body.Position or p.Position
+			local tcf
+			if (look - p.Position).Magnitude > 0.5 then tcf = CFrame.lookAt(p.Position, look) else tcf = CFrame.new(p.Position) * origR end
+			BG2_Smooth(tcf, BG2_CFG.SMOOTH_MOVE_DURATION); task.wait(BG2_CFG.SMOOTH_SETTLE_DELAY)
+			BG2_MarkInjected(p)
+			pcall(function() re:FireServer(p, true) end)
+			if not BG2_WaitRepair(p, BG2_CFG.CONFIRM_TIMEOUT) then
+				pcall(function() re:FireServer(p, false) end)
+				task.wait(BG2_CFG.TP_DELAY)
+				if hrp.Parent and p.Parent then BG2_Smooth(tcf, BG2_CFG.SMOOTH_MOVE_DURATION); task.wait(BG2_CFG.SMOOTH_SETTLE_DELAY) end
+				BG2_MarkInjected(p)
+				pcall(function() re:FireServer(p, true) end)
+				BG2_WaitRepair(p, BG2_CFG.RETRY_TIMEOUT)
+			end
+		end
+		if hrp.Parent then hrp.Anchored = false; BG2_Smooth(CFrame.new(origP) * origR, BG2_CFG.SMOOTH_MOVE_DURATION) end
+		BG2_WaitGen(gen, 10)
+		pcall(function() re:FireServer(targetPoint, false) end)
+		BG2_StandUp()
+		if hrp.Parent then pcall(function() hrp.Anchored = false end) end
+		task.wait(BG2_CFG.STAND_UP_DELAY)
+		if BG2_CFG.AUTO_REPAIR_AFTER_BYPASS and BG2.Enabled and not BG2.UserMovedDuringBypass then
+			BG2.AutoRepairEnabled = true; BG2_StartAuto(gen)
+		end
+	end)
+	local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp.Parent then pcall(function() hrp.Anchored = false end) end
+	BG2.IsBypassRunning = false
+end
+
+local function BG2_DestroyBtn()
+	for _, c in ipairs(BG2.ButtonConns) do pcall(function() c:Disconnect() end) end
+	BG2.ButtonConns = {}
+	if BG2.BypassButton then pcall(function() BG2.BypassButton:Destroy() end); BG2.BypassButton = nil end
+	BG2.GenButtonUpdater = nil
+end
+local function BG2_CreateBtn()
+	if BG2.BypassButton and BG2.BypassButton.Parent then return end
+	BG2_DestroyBtn()
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "FluxBG_GenUI"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	local parent = getParent()
+	local okM = pcall(function() sg.Parent = parent end)
+	if not okM or not sg.Parent then sg.Parent = Players.LocalPlayer:FindFirstChild("PlayerGui") end
+	local btn = Instance.new("ImageButton")
+	btn.Name = "GenButton"; btn.Size = UDim2.fromOffset(BG2_CFG.BUTTON_SIZE, BG2_CFG.BUTTON_SIZE)
+	btn.Position = BG2_CFG.BUTTON_POSITION
+	btn.BackgroundTransparency = 1; btn.BorderSizePixel = 0
+	btn.Image = "rbxassetid://" .. tostring(BG2_CFG.BUTTON_IMAGE_ID)
+	btn.ImageColor3 = Color3.fromRGB(255, 255, 255); btn.ImageTransparency = 0.45
+	btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = false; btn.Active = true
+	btn.Parent = sg
+	local fallback = Instance.new("TextLabel")
+	fallback.Size = UDim2.new(1, 0, 1, 0); fallback.BackgroundTransparency = 1
+	fallback.Text = "GEN"; fallback.TextColor3 = Color3.fromRGB(255, 255, 255)
+	fallback.TextStrokeTransparency = 0.4; fallback.Font = Enum.Font.GothamBold
+	fallback.TextSize = 14; fallback.Visible = false; fallback.Active = false; fallback.Parent = btn
+	local pressStart, pressInput, startAbs, dragMoved, dragging = nil, nil, nil, false, false
+	local created = os.clock()
+	local function screenSize()
+		local w, h = 0, 0
+		pcall(function() local cam = workspace.CurrentCamera; if cam then w = cam.ViewportSize.X; h = cam.ViewportSize.Y end end)
+		if w <= 0 or h <= 0 then pcall(function() w = sg.AbsoluteSize.X; h = sg.AbsoluteSize.Y end) end
+		if w <= 0 or h <= 0 then w, h = 1280, 720 end
+		return w, h
+	end
+	table.insert(BG2.ButtonConns, btn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			pressStart = input.Position; pressInput = input; startAbs = btn.AbsolutePosition; dragMoved = false; dragging = false
+		end
+	end))
+	table.insert(BG2.ButtonConns, UserInputService.InputChanged:Connect(function(input)
+		if not pressStart or not pressInput or not startAbs then return end
+		if BG2.ButtonLocked then return end
+		local valid = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseMovement)
+		if not valid then return end
+		local dx, dy = input.Position.X - pressStart.X, input.Position.Y - pressStart.Y
+		if not dragging and math.sqrt(dx*dx+dy*dy) > 8 then
+			dragging = true; dragMoved = true; pressStart = input.Position; startAbs = btn.AbsolutePosition; dx, dy = 0, 0
+		end
+		if dragging and btn and btn.Parent then
+			local sw, sh = screenSize()
+			local nx = math.clamp(startAbs.X + dx, 0, math.max(0, sw - BG2_CFG.BUTTON_SIZE))
+			local ny = math.clamp(startAbs.Y + dy, 0, math.max(0, sh - BG2_CFG.BUTTON_SIZE))
+			btn.Position = UDim2.fromOffset(nx, ny)
+		end
+	end))
+	table.insert(BG2.ButtonConns, UserInputService.InputEnded:Connect(function(input)
+		if not pressInput then return end
+		local ended = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseButton1)
+		if ended then pressStart = nil; pressInput = nil; startAbs = nil; dragging = false end
+	end))
+	local function upd()
+		if not btn or not btn.Parent then return end
+		local loaded = false
+		pcall(function() loaded = btn.IsLoaded == true end)
+		fallback.Visible = (not loaded) and (os.clock() - created > 3)
+		btn.ImageTransparency = BG2.IsBypassRunning and 0 or (BG2_IsRepairing() and 0 or 0)
+	end
+	BG2.BypassButton = sg; BG2.GenButtonUpdater = upd
+	table.insert(BG2.ButtonConns, btn.MouseButton1Click:Connect(function()
+		if dragMoved then dragMoved = false; return end
+		if BG2.IsBypassRunning and (tick() - BG2.BypassStartTime > 3) then BG2.IsBypassRunning = false end
+		if BG2.IsBypassRunning or not BG2.Enabled then return end
+		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+		local best, bd = nil, math.huge
+		for _, g in pairs(BG2_GetAllGens()) do
+			for _, p in pairs(BG2_GetPoints(g)) do
+				if p and p.Parent then local d = (hrp.Position - p.Position).Magnitude; if d < bd then bd = d; best = p end end
+			end
+		end
+		if best and bd <= 8 then
+			local g = best.Parent
+			if g and BG2.ProcessedGens[g] then BG2.ProcessedGens[g] = nil end
+			task.spawn(function() BG2_DoMulti(best) end)
+		end
+	end))
+	upd()
+end
+
+local function BG2_Cleanup()
+	BG2.Enabled = false; BG2.IsBypassRunning = false; BG2.AutoRepairEnabled = false; BG2.UserMovedDuringBypass = false
+	BG2.ProcessedGens = {}
+	BG2.Shared.Drop = false; BG2.ScourgeToken = BG2.ScourgeToken + 1; BG2.ScourgeActive = false
+	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
+	BG2_StopAutoRepair(); BG2.AutoCurrentGenModel = nil
+	BG2_DestroyBtn()
+	pcall(BG2_ForceRelease); BG2_ClearInjected(); BG2_RestoreAll()
+end
+
+local BG2_HideRender = "FluxBG_Hide"
+track(RunService:BindToRenderStep(BG2_HideRender, Enum.RenderPriority.Last.Value, function()
+	if not BG2.Alive then return end
+	if BG2.Enabled and BG2_IsAutoActive() and not BG2_IsHealing() then BG2_HideAll()
+	elseif next(BG2.Saved) ~= nil then BG2_RestoreAll() end
+end))
+
+local BG2_Threads = {}
+local function BG2_StartLoop(name, fn)
+	BG2_Threads[name] = task.spawn(function()
+		while BG2.Alive do pcall(fn); task.wait(0.1) end
+	end)
+end
+BG2_StartLoop("Guard", function()
+	task.wait(BG2_CFG.GUARD_INTERVAL)
+	if not BG2.Enabled or not BG2.AutoRepairEnabled or BG2.IsBypassRunning then return end
+	if tick() - BG2.LastFireTime < BG2_CFG.GUARD_GRACE then return end
+	if not BG2_IsRepairing() then BG2_StopAutoOnly() end
+end)
+BG2_StartLoop("Input", function()
+	task.wait(BG2_CFG.INPUT_CHECK_INTERVAL)
+	if not BG2.Enabled then return end
+	local c = Players.LocalPlayer.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
+	if not h then return end
+	local moving = h.MoveDirection.Magnitude > 0.5
+	if BG2.IsBypassRunning then if moving then BG2.UserMovedDuringBypass = true end; return end
+	if BG2.AutoRepairEnabled and moving then
+		BG2_StopAutoOnly(); task.wait(0.05); pcall(BG2_ForceRelease); task.wait(BG2_CFG.RELEASE_SETTLE_DELAY)
+	end
+end)
+BG2_StartLoop("Watchdog", function()
+	task.wait(BG2_CFG.WATCHDOG_INTERVAL)
+	if BG2.IsBypassRunning and BG2.BypassStartTime > 0 and tick() - BG2.BypassStartTime > BG2_CFG.WATCHDOG_MAX_DURATION then BG2.IsBypassRunning = false end
+end)
+BG2_StartLoop("Link", function() task.wait(BG2_CFG.LINK_INTERVAL); pcall(BG2_Link); BG2.Shared.Drop = BG2.Enabled and (BG2.EventConn ~= nil) and (BG2.ResultRemote ~= nil) end)
+BG2_StartLoop("Prune", function() task.wait(BG2_CFG.PRUNE_INTERVAL); pcall(BG2_PruneInjected) end)
+BG2_StartLoop("Fallback", function() task.wait(0.05); if BG2.Enabled and BG2_IsAutoActive() then pcall(BG2_FallbackStep) else BG2.PrevVisible = false; BG2.PrevGoal = nil end end)
+BG2_StartLoop("Btn", function() task.wait(0.15); if BG2.GenButtonUpdater then pcall(BG2.GenButtonUpdater) end end)
+BG2_StartLoop("Jump", function()
+	task.wait(0.1)
+	local c = Players.LocalPlayer.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
+	if not BG2.IsBypassRunning then
+		if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true); h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true) end) end
+		return
+	end
+	if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false); h:SetStateEnabled(Enum.HumanoidStateType.Freefall, false) end) end
+	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui"); local tg = pg and pg:FindFirstChild("TouchGui"); local fr = tg and tg:FindFirstChild("TouchControlFrame"); local jb = fr and fr:FindFirstChild("JumpButton")
+	if jb and jb.Visible then jb.Visible = false end
+end)
+
+pcall(BG2_Link)
+
+local BG2_Row = Add("Boost Generator")
+local BG2_Toggle = BG2_Row:Toggle(false, function(state)
+	BG2.Enabled = state
+	if state then
+		BG2.Received = 0; BG2.Sent = 0; BG2.Valid = 0; BG2.Fallback = 0; BG2.ScourgeSent = 0
+		BG2.ScourgeActive = false; BG2.ScourgeToken = BG2.ScourgeToken + 1
+		BG2.PrevVisible = false; BG2.PrevGoal = nil
+		pcall(BG2_Link)
+		BG2.Shared.Active = true
+		BG2.Shared.Drop = (BG2.EventConn ~= nil) and (BG2.ResultRemote ~= nil)
+		BG2_InstallHook()
+		BG2_CreateBtn()
+	else
+		BG2.Shared.Active = false
+		BG2_Cleanup()
+	end
+end)
+local BG2_LockBtn = BG2_Row:Button({ "Lock", "Unlock" }, function(label, num)
+	BG2.ButtonLocked = (num == 1)
 end)
 
 -- ===== END BAGIAN 2/3 =====
@@ -3894,113 +3790,6 @@ BS.Destroy = function()
 	if BS_ChainRemote then UnregisterHookHandler(BS_ChainRemote); BS_ChainRemote = nil end
 	if BS_genv[BS.GenvKey] == BS then BS_genv[BS.GenvKey] = nil end
 end
-	-- ============================================================
-	-- 2. NO COOLDOWN SKILL (logic asli)
-	-- ============================================================
-	local NC = { Enabled = false, HiddenThread = nil, AbyssConn = nil, SlashConn = nil, CorruptFunc = nil, SlashFunc = nil, CancelFunc = nil, Conns = {} }
-	local NC_ABYSS_ID = "80411309607666"
-	local function NC_StartLeap()
-		NC.HiddenThread = task.spawn(function()
-			local leap, m2
-			for _, v in pairs(getgc(true)) do
-				if type(v) == "function" and islclosure(v) then
-					local info = debug.getinfo(v)
-					if info.name == "tryActivate" then leap = v end
-					if info.name == "playM2Animation" then m2 = v end
-					if leap and m2 then break end
-				end
-			end
-			if not leap and not m2 then return end
-			while task.wait(0.1) do
-				if not NC.Enabled then break end
-				for _, fn in pairs({ leap, m2 }) do
-					if fn then
-						for i, val in pairs(debug.getupvalues(fn)) do
-							if type(val) == "boolean" and val == true then debug.setupvalue(fn, i, false) end
-						end
-					end
-				end
-			end
-		end)
-	end
-	local function NC_StopLeap() NC.HiddenThread = nil end
-	local function NC_StartAbyss()
-		if not NC.CorruptFunc then
-			for _, v in pairs(getgc(true)) do
-				if type(v) == "function" and islclosure(v) then
-					local consts = debug.getconstants(v)
-					if table.find(consts, "corrupt") and table.find(consts, "Immobile") then NC.CorruptFunc = v; break end
-				end
-			end
-		end
-		if not NC.CorruptFunc then return end
-		if NC.AbyssConn then NC.AbyssConn:Disconnect(); NC.AbyssConn = nil end
-		NC.AbyssConn = RunService.Heartbeat:Connect(function()
-			if not NC.Enabled then return end
-			if NC.CorruptFunc then
-				for i, val in pairs(debug.getupvalues(NC.CorruptFunc)) do
-					if type(val) == "boolean" and val == false then debug.setupvalue(NC.CorruptFunc, i, true) end
-				end
-			end
-		end)
-	end
-	local function NC_StopAbyss() if NC.AbyssConn then NC.AbyssConn:Disconnect(); NC.AbyssConn = nil end end
-	local function NC_IsSlash()
-		local c = Players.LocalPlayer.Character
-		if not c then return false end
-		local h = c:FindFirstChildOfClass("Humanoid")
-		local a = h and h:FindFirstChildOfClass("Animator")
-		if not a then return false end
-		for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
-			if tr.IsPlaying and tr.Animation and string.find(tr.Animation.AnimationId, NC_ABYSS_ID) then return true end
-		end
-		return false
-	end
-	local function NC_FindSlash()
-		for _, v in pairs(getgc(true)) do
-			if type(v) == "function" and islclosure(v) then
-				local info = debug.getinfo(v)
-				if info.name == "slashAttackHandler" then NC.SlashFunc = v end
-				if info.name == "cancelAttackHold" then NC.CancelFunc = v end
-				if NC.SlashFunc then break end
-			end
-		end
-	end
-	local function NC_StartSlash()
-		if not NC.SlashFunc then NC_FindSlash() end
-		if not NC.SlashFunc then return false end
-		if NC.SlashConn then NC.SlashConn:Disconnect() end
-		NC.SlashConn = RunService.Heartbeat:Connect(function()
-			if not NC.Enabled or not NC.SlashFunc then return end
-			if not NC_IsSlash() then
-				for i, val in pairs(debug.getupvalues(NC.SlashFunc)) do
-					if type(val) == "boolean" and val == false then debug.setupvalue(NC.SlashFunc, i, true) end
-				end
-				if NC.CancelFunc then
-					for i, val in pairs(debug.getupvalues(NC.CancelFunc)) do
-						if type(val) == "boolean" and val == true then debug.setupvalue(NC.CancelFunc, i, false) end
-					end
-				end
-			end
-		end)
-		return true
-	end
-	local function NC_StopSlash() if NC.SlashConn then NC.SlashConn:Disconnect(); NC.SlashConn = nil end end
-	local NC_Row = Add("No Cooldown Skill")
-	NC_Row:Toggle(false, function(state)
-		NC.Enabled = state
-		if state then
-			NC_StartLeap(); NC_StartAbyss(); NC_StartSlash()
-			table.insert(NC.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
-				task.wait(0.5)
-				if NC.Enabled then NC_StartLeap(); NC_StartAbyss(); NC_StartSlash() end
-			end))
-		else
-			NC_StopLeap(); NC_StopAbyss(); NC_StopSlash()
-			for _, c in ipairs(NC.Conns) do pcall(function() c:Disconnect() end) end
-			NC.Conns = {}
-		end
-	end)
 
 	-- ============================================================
 	-- 3. MASKED [ BETA ] (logic asli)
@@ -4168,50 +3957,6 @@ end
 		else if AB.Thread then pcall(function() task.cancel(AB.Thread) end); AB.Thread = nil end end
 	end)
 
-	-- ============================================================
-	-- 6. BLOCK VAULT (logic asli)
-	-- ============================================================
-	local BV = { Enabled = false, Busy = false }
-	local function BV_GetRemotes()
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		local w = r and r:FindFirstChild("Window")
-		return w and w:FindFirstChild("VaultEvent"), w and w:FindFirstChild("VaultCompleteEvent")
-	end
-	local function BV_BlockAll()
-		local be = BV_GetRemotes()
-		if not be then return false, "Remote VaultEvent tidak ditemukan." end
-		local map = workspace:FindFirstChild("Map")
-		if not map then return false, "Map tidak ditemukan." end
-		local count = 0
-		for _, trg in ipairs(map:GetDescendants()) do
-			if trg.Name == "VaultTrigger" then pcall(function() be:FireServer(trg, true); count = count + 1 end) end
-		end
-		return true, count
-	end
-	local function BV_UnblockAll()
-		local _, ue = BV_GetRemotes()
-		if not ue then return false, "Remote VaultCompleteEvent tidak ditemukan." end
-		local map = workspace:FindFirstChild("Map")
-		if not map then return false, "Map tidak ditemukan." end
-		local count = 0
-		for _, trg in ipairs(map:GetDescendants()) do
-			if trg.Name == "VaultPointInUse" then
-				local vp = trg.Parent
-				if vp then pcall(function() ue:FireServer(vp, false); count = count + 1 end) end
-			end
-		end
-		return true, count
-	end
-	local BV_Row = Add("Block Vault")
-	BV_Row:Toggle(false, function(state)
-		if BV.Busy then return end
-		BV.Busy = true
-		BV.Enabled = state
-		if state then BV_BlockAll() else BV_UnblockAll() end
-		BV.Busy = false
-	end)
-end)
-
 RunTab("Visual", function(Add, Title, AddFeature)
 	Title("Features")
 
@@ -4364,90 +4109,153 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		for _, o in pairs(FK.FovObjs) do for _, b in ipairs(o.boxes) do pcall(function() b.Color3 = c end) end end
 	end)
 
-	-- ============================================================
-	-- 2. GENERATOR ESP + PROGRESS
-	-- ============================================================
-	local GE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
-	local GE_CFG = { OUTLINE = Color3.fromRGB(139, 69, 19), BG = Color3.fromRGB(15, 15, 15), BORDER = Color3.fromRGB(60, 60, 60), TEXT = Color3.fromRGB(255, 255, 255), COL_START = Color3.fromRGB(235, 94, 40), COL_MID = Color3.fromRGB(247, 197, 65), COL_END = Color3.fromRGB(38, 194, 129) }
-	local function GE_Color(p) if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end; return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2) end
-	local function GE_Progress(gen)
-		local v = gen:FindFirstChild("Progress", true) or gen:FindFirstChild("Repair", true) or gen:FindFirstChild("Charge", true)
-		if v and (v:IsA("NumberValue") or v:IsA("IntValue")) then return math.clamp(v.Value, 0, 100) end
-		local prompt = gen:FindFirstChildWhichIsA("ProximityPrompt", true)
-		if prompt and prompt.HoldDuration > 0 then local cur = prompt:GetAttribute("CurrentTime"); if cur then return math.floor((cur / prompt.HoldDuration) * 100) end end
-		local attr = gen:GetAttribute("Progress") or gen:GetAttribute("Repair") or gen:GetAttribute("RepairProgress")
-		if attr then return math.clamp(math.floor(attr), 0, 100) end
-		return nil
-	end
-	local function GE_Adornee(model)
-		local cands = {}
-		for _, p in ipairs(model:GetDescendants()) do
-			if p:IsA("BasePart") and p.Transparency < 0.9 then local vol = p.Size.X * p.Size.Y * p.Size.Z; if vol < 5000 then table.insert(cands, p) end end
+-- ============================================================
+-- 2. GENERATOR ESP + PROGRESS
+-- ============================================================
+local GE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
+local GE_CFG = { OUTLINE = Color3.fromRGB(139, 69, 19), BG = Color3.fromRGB(15, 15, 15), BORDER = Color3.fromRGB(60, 60, 60), TEXT = Color3.fromRGB(255, 255, 255), COL_START = Color3.fromRGB(235, 94, 40), COL_MID = Color3.fromRGB(247, 197, 65), COL_END = Color3.fromRGB(38, 194, 129) }
+local function GE_Color(p) if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end; return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2) end
+local function GE_Progress(gen)
+	local v = gen:FindFirstChild("Progress", true) or gen:FindFirstChild("Repair", true) or gen:FindFirstChild("Charge", true)
+	if v and (v:IsA("NumberValue") or v:IsA("IntValue")) then return math.clamp(v.Value, 0, 100) end
+	local prompt = gen:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if prompt and prompt.HoldDuration > 0 then local cur = prompt:GetAttribute("CurrentTime"); if cur then return math.floor((cur / prompt.HoldDuration) * 100) end end
+	local attr = gen:GetAttribute("Progress") or gen:GetAttribute("Repair") or gen:GetAttribute("RepairProgress")
+	if attr then return math.clamp(math.floor(attr), 0, 100) end
+	return nil
+end
+local function GE_IsGeneratorModel(obj)
+	if not obj:IsA("Model") then return false end
+	local nm = string.lower(obj.Name)
+	if nm ~= "generator" and string.sub(nm, 1, 9) ~= "generator" then return false end
+	local hasAttr = obj:GetAttribute("RepairProgress") ~= nil
+		or obj:GetAttribute("ProgressRepair") ~= nil
+		or obj:GetAttribute("kickcount") ~= nil
+		or obj:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+	if not hasAttr then return false end
+	return true
+end
+local function GE_Adornee(model)
+	local cands = {}
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") and p.Transparency < 0.9 then
+			local owner = p:FindFirstAncestorOfClass("Model")
+			if owner == model then
+				local vol = p.Size.X * p.Size.Y * p.Size.Z
+				if vol < 5000 then table.insert(cands, p) end
+			end
 		end
-		if #cands == 0 then return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart") end
-		local top, topY = nil, -math.huge
-		for _, p in ipairs(cands) do if p.Position.Y > topY then topY = p.Position.Y; top = p end end
-		return top
 	end
-	local function GE_Apply(obj)
-		if not (obj:IsA("Model") and (string.find(string.lower(obj.Name), "generator") or string.find(string.lower(obj.Name), "gen"))) then return end
-		local old = obj:FindFirstChild("GenESP_Outline"); if old then old:Destroy() end
-		local oldTag = obj:FindFirstChild("GenESP_Tag"); if oldTag then oldTag:Destroy() end
-		local hl = Instance.new("Highlight"); hl.Name = "GenESP_Outline"; hl.FillColor = GE.Color; hl.FillTransparency = 0.7; hl.OutlineColor = GE_CFG.OUTLINE; hl.OutlineTransparency = 0; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = obj
-		local adornee = GE_Adornee(obj)
-local bb = Instance.new("BillboardGui")
-bb.Name = "GenESP_Tag"
-bb.Size = UDim2.new(0, 40, 0, 10)
-bb.SizeOffset = Vector2.new(0, 0)
-bb.AlwaysOnTop = true
-bb.ResetOnSpawn = false
-bb.LightInfluence = 0
-bb.DistanceLowerLimit = 0
-bb.DistanceUpperLimit = 500
-bb.MaxDistance = 500
-bb.ClipsDescendants = false
-bb.Active = false
-if adornee then bb.Adornee = adornee; bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0) else bb.Adornee = obj; bb.StudsOffset = Vector3.new(0, 3, 0) end
-bb.Parent = obj
-		local bg = Instance.new("Frame"); bg.Name = "MainFrame"; bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = GE_CFG.BG; bg.BorderSizePixel = 1; bg.BorderColor3 = GE_CFG.BORDER; bg.Parent = bb
-		local barC = Instance.new("Frame"); barC.Name = "BarContainer"; barC.Size = UDim2.new(1, 0, 1, 0); barC.BackgroundTransparency = 1; barC.ClipsDescendants = true; barC.Parent = bg
-		local bar = Instance.new("Frame"); bar.Name = "ProgressBar"; bar.Size = UDim2.new(0, 0, 1, 0); bar.BorderSizePixel = 0; bar.BackgroundColor3 = GE_CFG.COL_START; bar.Parent = barC
-		local txt = Instance.new("TextLabel"); txt.Name = "ProgressText"; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1; txt.ZIndex = 3; txt.Font = Enum.Font.GothamBold; txt.TextSize = 10; txt.TextColor3 = GE_CFG.TEXT; txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0); txt.TextStrokeTransparency = 0.3; txt.Parent = bg
-		task.spawn(function()
-			local ti = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
-			local done = false
-			while GE.Enabled and obj and obj.Parent and not done do
-				local p = GE_Progress(obj) or 0
-				local cp = math.clamp(p, 0, 100)
-				if cp >= 100 then
-					done = true; bar.BackgroundColor3 = GE_CFG.COL_END; txt.Text = "100%"
-					TweenService:Create(bar, ti, { Size = UDim2.new(1, 0, 1, 0) }):Play()
-					task.wait(0.3); bg.Visible = false; hl.Enabled = false
-				else
-					bg.Visible = true; hl.Enabled = true; txt.Text = string.format("%d%%", cp)
-					TweenService:Create(bar, ti, { Size = UDim2.new(cp / 100, 0, 1, 0), BackgroundColor3 = GE_Color(cp / 100) }):Play()
-				end
-				task.wait(0.15)
-			end
-		end)
+	if #cands == 0 then return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart") end
+	local top, topY = nil, -math.huge
+	for _, p in ipairs(cands) do if p.Position.Y > topY then topY = p.Position.Y; top = p end end
+	return top
+end
+local function GE_Cleanup(obj)
+	local old = obj:FindFirstChild("GenESP_Outline"); if old then old:Destroy() end
+	local oldTag = obj:FindFirstChild("GenESP_Tag"); if oldTag then oldTag:Destroy() end
+end
+local function GE_Apply(obj)
+	if not GE_IsGeneratorModel(obj) then return end
+	GE_Cleanup(obj)
+	local hl = Instance.new("Highlight")
+	hl.Name = "GenESP_Outline"
+	hl.FillColor = GE.Color
+	hl.FillTransparency = 0.7
+	hl.OutlineColor = GE_CFG.OUTLINE
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = obj
+	local adornee = GE_Adornee(obj)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "GenESP_Tag"
+	bb.Size = UDim2.new(0, 40, 0, 10)
+	bb.SizeOffset = Vector2.new(0, 0)
+	bb.AlwaysOnTop = true
+	bb.ResetOnSpawn = false
+	bb.LightInfluence = 0
+	bb.DistanceLowerLimit = 0
+	bb.DistanceUpperLimit = 500
+	bb.MaxDistance = 500
+	bb.ClipsDescendants = false
+	bb.Active = false
+	if adornee then
+		bb.Adornee = adornee
+		bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0)
+	else
+		bb.Adornee = obj
+		bb.StudsOffset = Vector3.new(0, 3, 0)
 	end
-	local GE_Row = Add("Generator Esp + Progress")
-	local GE_Toggle = GE_Row:Toggle(false, function(state)
-		GE.Enabled = state
-		if state then
-			for _, o in ipairs(workspace:GetDescendants()) do GE_Apply(o) end
-			table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d) task.wait(0.3); if GE.Enabled and d:IsA("Model") then GE_Apply(d) end end))
-		else
-			for _, c in ipairs(GE.Conns) do pcall(function() c:Disconnect() end) end
-			GE.Conns = {}
-			for _, o in ipairs(workspace:GetDescendants()) do
-				local h = o:FindFirstChild("GenESP_Outline"); if h then h:Destroy() end
-				local t = o:FindFirstChild("GenESP_Tag"); if t then t:Destroy() end
+	bb.Parent = obj
+	local bg = Instance.new("Frame"); bg.Name = "MainFrame"; bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = GE_CFG.BG; bg.BorderSizePixel = 1; bg.BorderColor3 = GE_CFG.BORDER; bg.Parent = bb
+	local barC = Instance.new("Frame"); barC.Name = "BarContainer"; barC.Size = UDim2.new(1, 0, 1, 0); barC.BackgroundTransparency = 1; barC.ClipsDescendants = true; barC.Parent = bg
+	local bar = Instance.new("Frame"); bar.Name = "ProgressBar"; bar.Size = UDim2.new(0, 0, 1, 0); bar.BorderSizePixel = 0; bar.BackgroundColor3 = GE_CFG.COL_START; bar.Parent = barC
+	local txt = Instance.new("TextLabel"); txt.Name = "ProgressText"; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1; txt.ZIndex = 3; txt.Font = Enum.Font.GothamBold; txt.TextSize = 10; txt.TextColor3 = GE_CFG.TEXT; txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0); txt.TextStrokeTransparency = 0.3; txt.Parent = bg
+	task.spawn(function()
+		local ti = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
+		local done = false
+		while GE.Enabled and obj and obj.Parent and not done do
+			if not GE_IsGeneratorModel(obj) then GE_Cleanup(obj); return end
+			local p = GE_Progress(obj) or 0
+			local cp = math.clamp(p, 0, 100)
+			if cp >= 100 then
+				done = true
+				bar.BackgroundColor3 = GE_CFG.COL_END
+				txt.Text = "100%"
+				TweenService:Create(bar, ti, { Size = UDim2.new(1, 0, 1, 0) }):Play()
+				task.wait(0.3)
+				bg.Visible = false
+				hl.Enabled = false
+			else
+				bg.Visible = true
+				hl.Enabled = true
+				txt.Text = string.format("%d%%", cp)
+				TweenService:Create(bar, ti, { Size = UDim2.new(cp / 100, 0, 1, 0), BackgroundColor3 = GE_Color(cp / 100) }):Play()
 			end
+			task.wait(0.15)
 		end
 	end)
-	GE_Toggle.Color = GE_Row:Color(GE.Color, function(c) GE.Color = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("GenESP_Outline"); if h and h:IsA("Highlight") then h.FillColor = c end end end)
-    GE_Toggle.OutlineColor = GE_Row:Color(GE_CFG.OUTLINE, function(c) GE_CFG.OUTLINE = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("GenESP_Outline"); if h and h:IsA("Highlight") then h.OutlineColor = c end end end)
+end
+local function GE_ScanAll()
+	for _, o in ipairs(workspace:GetDescendants()) do
+		if o:IsA("Model") then GE_Apply(o) end
+	end
+end
+local function GE_ClearAll()
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline"); if h then h:Destroy() end
+		local t = o:FindFirstChild("GenESP_Tag"); if t then t:Destroy() end
+	end
+end
+local GE_Row = Add("Generator Esp + Progress")
+local GE_Toggle = GE_Row:Toggle(false, function(state)
+	GE.Enabled = state
+	if state then
+		GE_ScanAll()
+		table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d)
+			task.wait(0.3)
+			if GE.Enabled and d:IsA("Model") then GE_Apply(d) end
+		end))
+	else
+		for _, c in ipairs(GE.Conns) do pcall(function() c:Disconnect() end) end
+		GE.Conns = {}
+		GE_ClearAll()
+	end
+end)
+GE_Toggle.Color = GE_Row:Color(GE.Color, function(c)
+	GE.Color = c
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline")
+		if h and h:IsA("Highlight") then h.FillColor = c end
+	end
+end)
+GE_Toggle.OutlineColor = GE_Row:Color(GE_CFG.OUTLINE, function(c)
+	GE_CFG.OUTLINE = c
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline")
+		if h and h:IsA("Highlight") then h.OutlineColor = c end
+	end
+end)
 
 	-- ============================================================
 	-- 3. HIDE PROFILE
@@ -4662,91 +4470,309 @@ bb.Parent = obj
 	end)
 	LF_Toggle.Extras = { LF_Row:Stepper({ Min = 40, Max = 140, Step = 1, Default = 70 }, function(v) LF.Value = v; if LF.Enabled then LF_Set(v) end end) }
 
-	-- ============================================================
-	-- 7. MAP PREDICTION
-	-- ============================================================
-	local MP = { Enabled = false, Gui = nil, Conns = {}, LastMap = nil, LastMapExists = false, KillerLine = nil, MapLine = nil }
-	local MP_CFG = { Accent = Color3.fromRGB(255, 255, 255), Text = Color3.fromRGB(255, 255, 255), Red = Color3.fromRGB(0, 0, 0), Black = Color3.fromRGB(0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 14, BoxWidth = 230, StartX = 0.5, StartY = 56, UpdateRate = 0.5 }
-	local function MP_Esc(s) s = tostring(s); s = string.gsub(s, "&", "&amp;"); s = string.gsub(s, "<", "&lt;"); s = string.gsub(s, ">", "&gt;"); return s end
-	local function MP_Hex(c) return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5)) end
-	local function MP_SetLine(line, label, value, col)
-		local txt = MP_Esc(label) .. " : <stroke color=\"#FFFFFF\" transparency=\"0.5\"><font color=\"" .. col .. "\">" .. MP_Esc(value) .. "</font></stroke>"
-		if line.Text ~= txt then line.Text = txt end
+-- ============================================================
+-- 13. PUMPKIN ESP
+-- ============================================================
+local PMK = {
+	Enabled = false, Keyword = "Pumpkin",
+	Color = Color3.fromRGB(255, 165, 0),
+	Tracked = {}, Conns = {}, Thread = nil,
+}
+local function PMK_AddESP(obj)
+	if not (obj:IsA("Model") or obj:IsA("BasePart")) then return end
+	for _, hl in ipairs(obj:GetChildren()) do
+		if hl:IsA("Highlight") and hl.Name == "Pumpkin_ESP" then return end
 	end
-	local function MP_IsSpec() local t = Players.LocalPlayer.Team; return t ~= nil and t.Name == "Spectator" end
-	local function MP_ReadKiller()
-		local pGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-		local spec = pGui and pGui:FindFirstChild("Spectator")
-		local info = spec and spec:FindFirstChild("Info")
-		local lbP = info and info:FindFirstChild("Leaderboard")
-		local lb = lbP and lbP:FindFirstChild("Leaderboard")
-		if not lb then return nil end
-		local hi, pred = -1, nil
-		for _, f in ipairs(lb:GetChildren()) do
-			if f:IsA("GuiObject") then
-				local kcF = f:FindFirstChild("kc")
-				local kc = kcF and kcF:FindFirstChild("kc")
-				if kc then local v = tonumber(kc.Text) or 0; if v > hi then hi = v; pred = f.Name end end
+	local hl = Instance.new("Highlight")
+	hl.Name = "Pumpkin_ESP"
+	hl.FillColor = PMK.Color
+	hl.FillTransparency = 0.7
+	hl.OutlineColor = PMK.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = obj
+	PMK.Tracked[obj] = hl
+end
+local function PMK_Remove(obj)
+	if PMK.Tracked[obj] then
+		pcall(function() PMK.Tracked[obj]:Destroy() end)
+		PMK.Tracked[obj] = nil
+	end
+end
+local function PMK_ClearAll()
+	for obj, hl in pairs(PMK.Tracked) do pcall(function() hl:Destroy() end) end
+	table.clear(PMK.Tracked)
+end
+local PMK_Row = Add("Pumpkin Esp")
+local PMK_Toggle = PMK_Row:Toggle(false, function(state)
+	PMK.Enabled = state
+	if state then
+		PMK.Thread = task.spawn(function()
+			while PMK.Enabled do
+				task.wait(1)
+				if not PMK.Enabled then break end
+				for _, obj in ipairs(workspace:GetDescendants()) do
+					if string.find(obj.Name, PMK.Keyword) then PMK_AddESP(obj) end
+				end
+				for obj, hl in pairs(PMK.Tracked) do
+					if not obj or not obj.Parent then PMK_Remove(obj) end
+				end
+			end
+		end)
+	else
+		if PMK.Thread then pcall(function() task.cancel(PMK.Thread) end); PMK.Thread = nil end
+		PMK_ClearAll()
+	end
+end)
+PMK_Toggle.Color = PMK_Row:Color(PMK.Color, function(c)
+	PMK.Color = c
+	for obj, hl in pairs(PMK.Tracked) do
+		pcall(function()
+			if hl and hl.Parent then
+				hl.FillColor = c
+				hl.OutlineColor = c
+			end
+		end)
+	end
+end)
+
+-- ============================================================
+-- 14. TRAP ESP
+-- ============================================================
+local TRP = {
+	Enabled = false, Keyword = "BearTrap",
+	Color = Color3.fromRGB(255, 255, 255),
+	Tracked = {}, Conns = {}, Thread = nil,
+}
+local function TRP_AddESP(obj)
+	if not (obj:IsA("Model") or obj:IsA("BasePart")) then return end
+	for _, hl in ipairs(obj:GetChildren()) do
+		if hl:IsA("Highlight") and hl.Name == "Trap_ESP" then return end
+	end
+	local hl = Instance.new("Highlight")
+	hl.Name = "Trap_ESP"
+	hl.FillColor = TRP.Color
+	hl.FillTransparency = 0.5
+	hl.OutlineColor = TRP.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = obj
+	TRP.Tracked[obj] = hl
+end
+local function TRP_Remove(obj)
+	if TRP.Tracked[obj] then
+		pcall(function() TRP.Tracked[obj]:Destroy() end)
+		TRP.Tracked[obj] = nil
+	end
+end
+local function TRP_ClearAll()
+	for obj, hl in pairs(TRP.Tracked) do pcall(function() hl:Destroy() end) end
+	table.clear(TRP.Tracked)
+end
+local TRP_Row = Add("Trap Esp")
+local TRP_Toggle = TRP_Row:Toggle(false, function(state)
+	TRP.Enabled = state
+	if state then
+		TRP.Thread = task.spawn(function()
+			while TRP.Enabled do
+				task.wait(1)
+				if not TRP.Enabled then break end
+				for _, obj in ipairs(workspace:GetDescendants()) do
+					if string.find(obj.Name, TRP.Keyword) then TRP_AddESP(obj) end
+				end
+				for obj, hl in pairs(TRP.Tracked) do
+					if not obj or not obj.Parent then TRP_Remove(obj) end
+				end
+			end
+		end)
+	else
+		if TRP.Thread then pcall(function() task.cancel(TRP.Thread) end); TRP.Thread = nil end
+		TRP_ClearAll()
+	end
+end)
+TRP_Toggle.Color = TRP_Row:Color(TRP.Color, function(c)
+	TRP.Color = c
+	for obj, hl in pairs(TRP.Tracked) do
+		pcall(function()
+			if hl and hl.Parent then
+				hl.FillColor = c
+				hl.OutlineColor = c
+			end
+		end)
+	end
+end)
+
+-- ============================================================
+-- 7. MAP PREDICTION (logic baru — single line compact)
+-- ============================================================
+local MP = { Enabled = false, Gui = nil, Box = nil, Label = nil, Conns = {}, Running = false, LastMap = nil, LastMapExists = false }
+local MP_CFG = {
+	TextSize = 7,
+	StartX = 0.5,
+	StartY = 56,
+	ALWAYS_SHOW = false,
+	UpdateRate = 0.5,
+}
+local function MP_Esc(s)
+	s = tostring(s)
+	s = string.gsub(s, "&", "&amp;")
+	s = string.gsub(s, "<", "&lt;")
+	s = string.gsub(s, ">", "&gt;")
+	return s
+end
+local function MP_IsSpec()
+	local t = Players.LocalPlayer.Team
+	return t ~= nil and t.Name == "Spectator"
+end
+local function MP_ReadKiller()
+	local pGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	local spec = pGui and pGui:FindFirstChild("Spectator")
+	local info = spec and spec:FindFirstChild("Info")
+	local lbP = info and info:FindFirstChild("Leaderboard")
+	local lb = lbP and lbP:FindFirstChild("Leaderboard")
+	if not lb then return nil, false end
+	local highest, predicted = -1, nil
+	for _, f in ipairs(lb:GetChildren()) do
+		if f:IsA("GuiObject") then
+			local kcF = f:FindFirstChild("kc")
+			local kc = kcF and kcF:FindFirstChild("kc")
+			if kc then
+				local v = tonumber(kc.Text) or 0
+				if v > highest then highest = v; predicted = f.Name end
 			end
 		end
-		local your = info:FindFirstChild("Your")
-		local myKC = your and your:FindFirstChild("KillerChance")
-		local myVal = myKC and tonumber(myKC.Text) or 0
-		if myVal > hi then pred = Players.LocalPlayer.Name .. " (You)" end
-		return pred
 	end
-	local function MP_DetectMap()
-		local map = workspace:FindFirstChild("Map"); if not map then return nil end
-		if map:FindFirstChild("random shakes") or map:FindFirstChild("SCP-173 Room") or map:FindFirstChild("SCP-205 Room") then return "Site 68"
-		elseif map:FindFirstChild("HooksMeat") then return "BLOODBATH! Club"
-		elseif map:FindFirstChild("Gate") and map.Gate:FindFirstChild("vfx") then return "Firelink Shrine"
-		elseif map:FindFirstChild("Bldg_Addon_RooftopUnit_A") or map:FindFirstChild("Rooftop") then return "Mercy Hospital Rooftop"
-		elseif map:FindFirstChild("White Armored Car") then return "Mount Massive Asylum"
-		elseif map:FindFirstChild("Dumbster") then return "The Bay Harbor"
-		elseif map:FindFirstChild("water pump") then return "Valdelobos Village"
-		elseif map:FindFirstChild("LargeBoulder01") then return "Woodview Cabin" end
-		return nil
-	end
-	local function MP_Build()
-		if MP.Gui then return end
-		local parent = getParent()
-		local sg = make("ScreenGui", { Name = "FLUX_PredictorUI", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 998, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, parent)
-		local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(MP_CFG.StartX, 0, 0, MP_CFG.StartY), Size = UDim2.new(0, MP_CFG.BoxWidth, 0, 40), BackgroundTransparency = 1, BorderSizePixel = 0, Active = true, Visible = false }, sg)
-		local bar = make("Frame", { Name = "Bar", Position = UDim2.new(0, 0, 0, 2), Size = UDim2.new(0, 3, 1, -4), BackgroundColor3 = MP_CFG.Accent, BorderSizePixel = 0 }, box)
-		corner(bar, 99)
-		local barStroke = make("UIStroke", { Color = Color3.fromRGB(0, 0, 0), Thickness = 1 }, bar)
-		local function mkLine(y) return make("TextLabel", { Position = UDim2.new(0, 11, 0, y), Size = UDim2.new(1, -11, 0, 20), BackgroundTransparency = 1, RichText = true, Font = MP_CFG.Font, TextSize = MP_CFG.TextSize, TextColor3 = MP_CFG.Text, TextStrokeColor3 = Color3.fromRGB(0, 0, 0), TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }, box) end
-		MP.KillerLine = mkLine(0); MP.MapLine = mkLine(20)
-		MP_SetLine(MP.KillerLine, "Next Killer", "-", MP_Hex(MP_CFG.Red))
-		MP_SetLine(MP.MapLine, "Next Map", "-", MP_Hex(MP_CFG.Black))
-		local drag, dS, sP = false, nil, nil
-		table.insert(MP.Conns, box.InputBegan:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = true; dS = Vector2.new(i.Position.X, i.Position.Y); sP = Vector2.new(box.Position.X.Offset, box.Position.Y.Offset) end end))
-		table.insert(MP.Conns, UserInputService.InputChanged:Connect(function(i) if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then local d = Vector2.new(i.Position.X, i.Position.Y) - dS; box.Position = UDim2.new(box.Position.X.Scale, sP.X + d.X, 0, sP.Y + d.Y) end end))
-		table.insert(MP.Conns, UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = false end end))
-		MP.Gui = sg; MP.Box = box
-	end
-	local function MP_Update()
-		local spec = MP_IsSpec()
-		if MP.Box then MP.Box.Visible = spec end
-		if not spec then return end
-		MP_SetLine(MP.KillerLine, "Next Killer", MP_ReadKiller() or "-", MP_Hex(MP_CFG.Red))
-		local map = workspace:FindFirstChild("Map"); local exists = map ~= nil; local det = MP_DetectMap(); local v = "-"
-		if MP.LastMapExists and not exists then v = (MP.LastMap or "Unknown") .. " (Setting up)"
-		elseif exists and det then MP.LastMap = det; v = det
-		elseif exists then v = "Unknown" end
-		MP.LastMapExists = exists
-		MP_SetLine(MP.MapLine, "Next Map", v, MP_Hex(MP_CFG.Black))
-	end
-	local MP_Row = Add("Map Prediction")
-	MP_Row:Toggle(false, function(state)
-		MP.Enabled = state
-		if state then MP_Build(); task.spawn(function() while MP.Enabled do pcall(MP_Update); task.wait(MP_CFG.UpdateRate) end end)
-		else
-			if MP.Gui then pcall(function() MP.Gui:Destroy() end); MP.Gui = nil; MP.Box = nil; MP.KillerLine = nil; MP.MapLine = nil end
-			for _, c in ipairs(MP.Conns) do pcall(function() c:Disconnect() end) end
-			MP.Conns = {}
+	local your = info:FindFirstChild("Your")
+	local myKC = your and your:FindFirstChild("KillerChance")
+	local myVal = myKC and tonumber(myKC.Text) or 0
+	if myVal > highest then return Players.LocalPlayer.Name, true end
+	return predicted, predicted == Players.LocalPlayer.Name
+end
+local function MP_DetectMap()
+	local map = workspace:FindFirstChild("Map")
+	if not map then return nil end
+	if map:FindFirstChild("random shakes") or map:FindFirstChild("SCP-173 Room") or map:FindFirstChild("SCP-205 Room") then return "Site 68"
+	elseif map:FindFirstChild("HooksMeat") then return "BLOODBATH! Club"
+	elseif map:FindFirstChild("Gate") and map.Gate:FindFirstChild("vfx") then return "Firelink Shrine"
+	elseif map:FindFirstChild("Bldg_Addon_RooftopUnit_A") or map:FindFirstChild("Rooftop") then return "Mercy Hospital Rooftop"
+	elseif map:FindFirstChild("White Armored Car") then return "Mount Massive Asylum"
+	elseif map:FindFirstChild("Dumbster") then return "The Bay Harbor"
+	elseif map:FindFirstChild("water pump") then return "Valdelobos Village"
+	elseif map:FindFirstChild("BrickWall") then return "Ashwood Farm"
+	elseif map:FindFirstChild("LargeBoulder01") then return "Woodview Cabin" end
+	return nil
+end
+local function MP_Build()
+	if MP.Gui then return end
+	local parent = getParent()
+	local sg = make("ScreenGui", {
+		Name = "FLUX_PredictorUI",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 998,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, parent)
+	local box = make("Frame", {
+		Name = "Box",
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(MP_CFG.StartX, 0, 0, MP_CFG.StartY),
+		Size = UDim2.new(0, 50, 0, 14),
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.3,
+		BorderSizePixel = 0,
+		Active = true,
+		Visible = false,
+		AutomaticSize = Enum.AutomaticSize.X,
+	}, sg)
+	corner(box, 4)
+	local st = make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1, Transparency = 0.2 }, box)
+	make("UIPadding", {
+		PaddingLeft = UDim.new(0, 5),
+		PaddingRight = UDim.new(0, 5),
+		PaddingTop = UDim.new(0, 2),
+		PaddingBottom = UDim.new(0, 2),
+	}, box)
+	local label = make("TextLabel", {
+		Name = "Text",
+		BackgroundTransparency = 1,
+		Size = UDim2.new(0, 0, 0, 10),
+		AutomaticSize = Enum.AutomaticSize.X,
+		RichText = true,
+		Font = Enum.Font.GothamBold,
+		TextSize = MP_CFG.TextSize,
+		TextColor3 = Color3.fromRGB(255, 255, 255),
+		TextStrokeColor3 = Color3.fromRGB(255, 255, 255),
+		TextStrokeTransparency = 0.6,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Center,
+		Text = "Map : -  |  Killer : -",
+	}, box)
+	local dragging, dragStart, startPos = false, nil, nil
+	table.insert(MP.Conns, box.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = Vector2.new(input.Position.X, input.Position.Y)
+			startPos = Vector2.new(box.Position.X.Offset, box.Position.Y.Offset)
 		end
-	end)
+	end))
+	table.insert(MP.Conns, UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+			box.Position = UDim2.new(box.Position.X.Scale, startPos.X + d.X, 0, startPos.Y + d.Y)
+		end
+	end))
+	table.insert(MP.Conns, UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end))
+	MP.Gui = sg
+	MP.Box = box
+	MP.Label = label
+end
+local function MP_Update()
+	if not MP.Box or not MP.Label then return end
+	local spec = MP_IsSpec()
+	MP.Box.Visible = spec or MP_CFG.ALWAYS_SHOW
+	if not spec then return end
+	local killerName, isYou = MP_ReadKiller()
+	local killerTxt
+	if killerName and isYou then killerTxt = '<font color="#FF0000">(You)</font>'
+	elseif killerName then killerTxt = MP_Esc(killerName)
+	else killerTxt = "-" end
+	local map = workspace:FindFirstChild("Map")
+	local exists = map ~= nil
+	local detected = MP_DetectMap()
+	local mapVal = "-"
+	if MP.LastMapExists and not exists then mapVal = (MP.LastMap or "Unknown") .. " (Setting up)"
+	elseif exists and detected then MP.LastMap = detected; mapVal = detected
+	elseif exists then mapVal = "Unknown" end
+	MP.LastMapExists = exists
+	local txt = "Map : " .. MP_Esc(mapVal) .. "  |  Killer : " .. killerTxt
+	if MP.Label.Text ~= txt then MP.Label.Text = txt end
+end
+local MP_Row = Add("Map Prediction")
+MP_Row:Toggle(false, function(state)
+	MP.Enabled = state
+	if state then
+		MP_Build()
+		MP.Running = true
+		MP.Conns.Thread = task.spawn(function()
+			while MP.Running do
+				pcall(MP_Update)
+				task.wait(MP_CFG.UpdateRate)
+			end
+		end)
+	else
+		MP.Running = false
+		if MP.Gui then pcall(function() MP.Gui:Destroy() end); MP.Gui = nil; MP.Box = nil; MP.Label = nil end
+		for _, c in ipairs(MP.Conns) do
+			if type(c) == "userdata" then pcall(function() c:Disconnect() end) end
+		end
+		if MP.Conns.Thread then pcall(function() task.cancel(MP.Conns.Thread) end) end
+		MP.Conns = {}
+	end
+end)
 
 	-- ============================================================
 	-- 8. PALLET ESP
@@ -4773,81 +4799,178 @@ bb.Parent = obj
 	PE_Toggle.Color = PE_Row:Color(PE.Color, function(c) PE.Color = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("PalletESP_Outline"); if h and h:IsA("Highlight") then h.FillColor = c end end end)
     PE_Toggle.OutlineColor = PE_Row:Color(PE_Outline, function(c) PE_Outline = c; for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("PalletESP_Outline"); if h and h:IsA("Highlight") then h.OutlineColor = c end end end)
 
-	-- ============================================================
-	-- 9. PERKS KILLER PREDICTION
-	-- ============================================================
-	local PK = { Enabled = false, Gui = nil, Lines = {}, Conns = {}, Color = Color3.fromRGB(0, 0, 0) }
-	local PK_CFG = { Accent = Color3.fromRGB(255, 255, 255), Text = Color3.fromRGB(255, 255, 255), Red = Color3.fromRGB(0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 13, BoxWidth = 220, StartX = 0.18, StartY = 0.30, MaxPerks = 5, LineHeight = 18, UpdateRate = 1 }
-	local function PK_Esc(s) s = tostring(s); s = string.gsub(s, "&", "&amp;"); s = string.gsub(s, "<", "&lt;"); s = string.gsub(s, ">", "&gt;"); return s end
-	local function PK_Hex(c) return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5)) end
-	local function PK_Build()
-		if PK.Gui then return end
-		local parent = getParent()
-		local sg = make("ScreenGui", { Name = "FLUX_PerksUI", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 997, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, parent)
-		local total = 1 + PK_CFG.MaxPerks
-		local box = make("Frame", { Name = "Box", Position = UDim2.new(PK_CFG.StartX, 0, PK_CFG.StartY, 0), Size = UDim2.new(0, PK_CFG.BoxWidth, 0, 4 + PK_CFG.LineHeight), BackgroundTransparency = 1, BorderSizePixel = 0, Active = true }, sg)
-		local bar = make("Frame", { Name = "Bar", Position = UDim2.new(0, 0, 0, 2), Size = UDim2.new(0, 3, 1, -4), BackgroundColor3 = PK_CFG.Accent, BorderSizePixel = 0 }, box)
-		corner(bar, 99)
-		local barStroke = make("UIStroke", { Color = Color3.fromRGB(0, 0, 0), Thickness = 1 }, bar)
-		PK.Lines = {}
-		for i = 1, total do
-			PK.Lines[i] = make("TextLabel", { Position = UDim2.new(0, 11, 0, 2 + (i - 1) * PK_CFG.LineHeight), Size = UDim2.new(1, -11, 0, PK_CFG.LineHeight), BackgroundTransparency = 1, RichText = true, Font = PK_CFG.Font, TextSize = PK_CFG.TextSize, TextColor3 = PK_CFG.Text, TextStrokeColor3 = Color3.fromRGB(0, 0, 0), TextStrokeTransparency = 0.5, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Visible = i == 1 }, box)
-		end
-		local drag, dS, sP = false, nil, nil
-		table.insert(PK.Conns, box.InputBegan:Connect(function(i)
-			if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-				drag = true; dS = Vector2.new(i.Position.X, i.Position.Y)
-				local cam = workspace.CurrentCamera; local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
-				sP = Vector2.new(box.Position.X.Scale * vs.X + box.Position.X.Offset, box.Position.Y.Scale * vs.Y + box.Position.Y.Offset)
+-- ============================================================
+-- 9. PERKS INFO PREDICTION (logic baru, ukuran lebih kecil)
+-- ============================================================
+local PK = { Enabled = false, Gui = nil, Lines = {}, Conns = {}, Running = false }
+local PK_CFG = {
+	Accent = Color3.fromRGB(255, 255, 255),
+	Text = Color3.fromRGB(255, 255, 255),
+	Red = Color3.fromRGB(0, 0, 0),
+	Font = Enum.Font.GothamBold,
+	TextSize = 6.5,
+	BoxWidth = 110,
+	StartX = 0.18,
+	StartY = 0.30,
+	MaxPerks = 5,
+	LineHeight = 9,
+	UpdateRate = 1,
+}
+local function PK_Esc(s)
+	s = tostring(s)
+	s = string.gsub(s, "&", "&amp;")
+	s = string.gsub(s, "<", "&lt;")
+	s = string.gsub(s, ">", "&gt;")
+	return s
+end
+local function PK_Hex(c)
+	return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+end
+local PK_RED_HEX = PK_Hex(PK_CFG.Red)
+local function PK_Red(s)
+	return "<stroke color=\"#FFFFFF\" transparency=\"0.5\"><font color=\"" .. PK_RED_HEX .. "\">" .. PK_Esc(s) .. "</font></stroke>"
+end
+local function PK_KillerPlayer()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= Players.LocalPlayer and p.Team and p.Team.Name == "Killer" then return p end
+	end
+	return nil
+end
+local function PK_ReadPerks(char)
+	local result, seen = {}, {}
+	if not char then return result end
+	for _, c in ipairs(char:GetDescendants()) do
+		local n, lv = string.match(tostring(c.Name), "^(.+)%s+(%d+)$")
+		if n then
+			n = string.gsub(n, "^%s+", "")
+			n = string.gsub(n, "%s+$", "")
+			if n ~= "" and not seen[n] then
+				seen[n] = true
+				table.insert(result, { Name = n, Level = lv })
 			end
-		end))
-		table.insert(PK.Conns, UserInputService.InputChanged:Connect(function(i) if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then local d = Vector2.new(i.Position.X, i.Position.Y) - dS; box.Position = UDim2.new(0, sP.X + d.X, 0, sP.Y + d.Y) end end))
-		table.insert(PK.Conns, UserInputService.InputEnded:Connect(function(i) if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then drag = false end end))
-		PK.Gui = sg; PK.Box = box
-	end
-	local function PK_KillerPlayer() for _, p in ipairs(Players:GetPlayers()) do if p ~= Players.LocalPlayer and p.Team and p.Team.Name == "Killer" then return p end end; return nil end
-	local function PK_ReadPerks(char)
-		local result, seen = {}, {}
-		if not char then return result end
-		for _, c in ipairs(char:GetDescendants()) do
-			local n, lv = string.match(tostring(c.Name), "^(.+)%s+(%d+)$")
-			if n then
-				n = string.gsub(n, "^%s+", ""); n = string.gsub(n, "%s+$", "")
-				if n ~= "" and not seen[n] then seen[n] = true; table.insert(result, { Name = n, Level = lv }) end
-			end
 		end
-		table.sort(result, function(a, b) return a.Name < b.Name end)
-		return result
 	end
-	local function PK_Red(s) return "<stroke color=\"#FFFFFF\" transparency=\"0.5\"><font color=\"" .. PK_Hex(PK.Color) .. "\">" .. PK_Esc(s) .. "</font></stroke>" end
-	local function PK_Update()
-		local k = PK_KillerPlayer()
-		local name = k and (k.DisplayName or k.Name) or "-"
-		local t1 = "Killer : " .. PK_Red(name)
-		if PK.Lines[1].Text ~= t1 then PK.Lines[1].Text = t1 end
-		local perks = {}
-		if k and k.Character then perks = PK_ReadPerks(k.Character) end
-		local shown = math.min(#perks, PK_CFG.MaxPerks)
-		for i = 1, PK_CFG.MaxPerks do
-			local lbl = PK.Lines[i + 1]; local p = perks[i]
-			if p and i <= shown then
-				local tx = "- " .. PK_Esc(p.Name) .. " " .. PK_Red(p.Level)
-				if lbl.Text ~= tx then lbl.Text = tx end
-				lbl.Visible = true
-			else lbl.Visible = false end
+	table.sort(result, function(a, b) return a.Name < b.Name end)
+	return result
+end
+local function PK_SetText(label, txt)
+	if label.Text ~= txt then label.Text = txt end
+end
+local function PK_Build()
+	if PK.Gui then return end
+	local parent = getParent()
+	local sg = make("ScreenGui", {
+		Name = "FLUX_PerksUI",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		DisplayOrder = 997,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, parent)
+	local total = 1 + PK_CFG.MaxPerks
+	local box = make("Frame", {
+		Name = "Box",
+		Position = UDim2.new(PK_CFG.StartX, 0, PK_CFG.StartY, 0),
+		Size = UDim2.new(0, PK_CFG.BoxWidth, 0, 2 + PK_CFG.LineHeight),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Active = true,
+	}, sg)
+	local bar = make("Frame", {
+		Name = "Bar",
+		Position = UDim2.new(0, 0, 0, 1),
+		Size = UDim2.new(0, 2, 1, -2),
+		BackgroundColor3 = PK_CFG.Accent,
+		BorderSizePixel = 0,
+	}, box)
+	corner(bar, 99)
+	local barStroke = make("UIStroke", { Color = Color3.fromRGB(0, 0, 0), Thickness = 0.5 }, bar)
+	PK.Lines = {}
+	for i = 1, total do
+		PK.Lines[i] = make("TextLabel", {
+			Position = UDim2.new(0, 6, 0, 1 + (i - 1) * PK_CFG.LineHeight),
+			Size = UDim2.new(1, -6, 0, PK_CFG.LineHeight),
+			BackgroundTransparency = 1,
+			RichText = true,
+			Font = PK_CFG.Font,
+			TextSize = PK_CFG.TextSize,
+			TextColor3 = PK_CFG.Text,
+			TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+			TextStrokeTransparency = 0.5,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Visible = i == 1,
+		}, box)
+	end
+	local dragging, dragStart, startPos = false, nil, nil
+	table.insert(PK.Conns, box.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = Vector2.new(input.Position.X, input.Position.Y)
+			local cam = workspace.CurrentCamera
+			local vs = cam and cam.ViewportSize or Vector2.new(1280, 720)
+			startPos = Vector2.new(
+				box.Position.X.Scale * vs.X + box.Position.X.Offset,
+				box.Position.Y.Scale * vs.Y + box.Position.Y.Offset
+			)
 		end
-		if PK.Box then PK.Box.Size = UDim2.new(0, PK_CFG.BoxWidth, 0, 4 + PK_CFG.LineHeight * (1 + shown)) end
-	end
-	local PK_Row = Add("Perks Killer Prediction")
-	PK_Row:Toggle(false, function(state)
-		PK.Enabled = state
-		if state then PK_Build(); task.spawn(function() while PK.Enabled do pcall(PK_Update); task.wait(PK_CFG.UpdateRate) end end)
+	end))
+	table.insert(PK.Conns, UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+			box.Position = UDim2.new(0, startPos.X + d.X, 0, startPos.Y + d.Y)
+		end
+	end))
+	table.insert(PK.Conns, UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end))
+	PK.Gui = sg
+	PK.Box = box
+end
+local function PK_Update()
+	if not PK.Lines[1] then return end
+	PK_SetText(PK.Lines[1], "Perks Info")
+	local killer = PK_KillerPlayer()
+	local perks = {}
+	if killer and killer.Character then perks = PK_ReadPerks(killer.Character) end
+	local shown = math.min(#perks, PK_CFG.MaxPerks)
+	for i = 1, PK_CFG.MaxPerks do
+		local lbl = PK.Lines[i + 1]
+		local p = perks[i]
+		if p and i <= shown then
+			PK_SetText(lbl, "- " .. PK_Esc(p.Name) .. " " .. PK_Red(p.Level))
+			lbl.Visible = true
 		else
-			if PK.Gui then pcall(function() PK.Gui:Destroy() end); PK.Gui = nil; PK.Box = nil; PK.Lines = {} end
-			for _, c in ipairs(PK.Conns) do pcall(function() c:Disconnect() end) end
-			PK.Conns = {}
+			lbl.Visible = false
 		end
-	end)
+	end
+	if PK.Box then
+		PK.Box.Size = UDim2.new(0, PK_CFG.BoxWidth, 0, 2 + PK_CFG.LineHeight * (1 + shown))
+	end
+end
+local PK_Row = Add("Perks Info Prediction")
+PK_Row:Toggle(false, function(state)
+	PK.Enabled = state
+	if state then
+		PK_Build()
+		PK.Running = true
+		PK.Conns.Thread = task.spawn(function()
+			while PK.Running do
+				pcall(PK_Update)
+				task.wait(PK_CFG.UpdateRate)
+			end
+		end)
+	else
+		PK.Running = false
+		if PK.Gui then pcall(function() PK.Gui:Destroy() end); PK.Gui = nil; PK.Box = nil; PK.Lines = {} end
+		for _, c in ipairs(PK.Conns) do
+			if type(c) == "userdata" then pcall(function() c:Disconnect() end) end
+		end
+		if PK.Conns.Thread then pcall(function() task.cancel(PK.Conns.Thread) end) end
+		PK.Conns = {}
+	end
+end)
 
 	-- ============================================================
 	-- 10. WINDOW ESP
