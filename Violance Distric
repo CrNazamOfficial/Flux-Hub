@@ -2953,6 +2953,7 @@ local BG2_LockBtn = BG2_Row:Button({ "Lock", "Unlock" }, function(label, num)
 	BG2.ButtonLocked = (num == 1)
 end)
 end)
+end) 
 
 -- ===== END BAGIAN 2/3 =====
 -- BAGIAN 3/3 dimulai dari: RunTab("Killer", ...) s/d akhir script
@@ -4346,6 +4347,155 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	LF_Toggle.Extras = { LF_Row:Stepper({ Min = 40, Max = 140, Step = 1, Default = 70 }, function(v) LF.Value = v; if LF.Enabled then LF_Set(v) end end) }
 
 -- ============================================================
+-- 2. GENERATOR ESP + PROGRESS
+-- ============================================================
+local GE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
+local GE_CFG = { OUTLINE = Color3.fromRGB(139, 69, 19), BG = Color3.fromRGB(15, 15, 15), BORDER = Color3.fromRGB(60, 60, 60), TEXT = Color3.fromRGB(255, 255, 255), COL_START = Color3.fromRGB(235, 94, 40), COL_MID = Color3.fromRGB(247, 197, 65), COL_END = Color3.fromRGB(38, 194, 129) }
+local function GE_Color(p) if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end; return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2) end
+local function GE_Progress(gen)
+	local v = gen:FindFirstChild("Progress", true) or gen:FindFirstChild("Repair", true) or gen:FindFirstChild("Charge", true)
+	if v and (v:IsA("NumberValue") or v:IsA("IntValue")) then return math.clamp(v.Value, 0, 100) end
+	local prompt = gen:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if prompt and prompt.HoldDuration > 0 then local cur = prompt:GetAttribute("CurrentTime"); if cur then return math.floor((cur / prompt.HoldDuration) * 100) end end
+	local attr = gen:GetAttribute("Progress") or gen:GetAttribute("Repair") or gen:GetAttribute("RepairProgress")
+	if attr then return math.clamp(math.floor(attr), 0, 100) end
+	return nil
+end
+local function GE_IsGeneratorModel(obj)
+	if not obj:IsA("Model") then return false end
+	local nm = string.lower(obj.Name)
+	if nm ~= "generator" and string.sub(nm, 1, 9) ~= "generator" then return false end
+	local hasAttr = obj:GetAttribute("RepairProgress") ~= nil
+		or obj:GetAttribute("ProgressRepair") ~= nil
+		or obj:GetAttribute("kickcount") ~= nil
+		or obj:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+	if not hasAttr then return false end
+	return true
+end
+local function GE_Adornee(model)
+	local cands = {}
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") and p.Transparency < 0.9 then
+			local owner = p:FindFirstAncestorOfClass("Model")
+			if owner == model then
+				local vol = p.Size.X * p.Size.Y * p.Size.Z
+				if vol < 5000 then table.insert(cands, p) end
+			end
+		end
+	end
+	if #cands == 0 then return model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart") end
+	local top, topY = nil, -math.huge
+	for _, p in ipairs(cands) do if p.Position.Y > topY then topY = p.Position.Y; top = p end end
+	return top
+end
+local function GE_Cleanup(obj)
+	local old = obj:FindFirstChild("GenESP_Outline"); if old then old:Destroy() end
+	local oldTag = obj:FindFirstChild("GenESP_Tag"); if oldTag then oldTag:Destroy() end
+end
+local function GE_Apply(obj)
+	if not GE_IsGeneratorModel(obj) then return end
+	GE_Cleanup(obj)
+	local hl = Instance.new("Highlight")
+	hl.Name = "GenESP_Outline"
+	hl.FillColor = GE.Color
+	hl.FillTransparency = 0.7
+	hl.OutlineColor = GE_CFG.OUTLINE
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = obj
+	local adornee = GE_Adornee(obj)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "GenESP_Tag"
+	bb.Size = UDim2.new(0, 40, 0, 10)
+	bb.SizeOffset = Vector2.new(0, 0)
+	bb.AlwaysOnTop = true
+	bb.ResetOnSpawn = false
+	bb.LightInfluence = 0
+	bb.DistanceLowerLimit = 0
+	bb.DistanceUpperLimit = 500
+	bb.MaxDistance = 500
+	bb.ClipsDescendants = false
+	bb.Active = false
+	if adornee then
+		bb.Adornee = adornee
+		bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0)
+	else
+		bb.Adornee = obj
+		bb.StudsOffset = Vector3.new(0, 3, 0)
+	end
+	bb.Parent = obj
+	local bg = Instance.new("Frame"); bg.Name = "MainFrame"; bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = GE_CFG.BG; bg.BorderSizePixel = 1; bg.BorderColor3 = GE_CFG.BORDER; bg.Parent = bb
+	local barC = Instance.new("Frame"); barC.Name = "BarContainer"; barC.Size = UDim2.new(1, 0, 1, 0); barC.BackgroundTransparency = 1; barC.ClipsDescendants = true; barC.Parent = bg
+	local bar = Instance.new("Frame"); bar.Name = "ProgressBar"; bar.Size = UDim2.new(0, 0, 1, 0); bar.BorderSizePixel = 0; bar.BackgroundColor3 = GE_CFG.COL_START; bar.Parent = barC
+	local txt = Instance.new("TextLabel"); txt.Name = "ProgressText"; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1; txt.ZIndex = 3; txt.Font = Enum.Font.GothamBold; txt.TextSize = 10; txt.TextColor3 = GE_CFG.TEXT; txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0); txt.TextStrokeTransparency = 0.3; txt.Parent = bg
+	task.spawn(function()
+		local ti = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
+		local done = false
+		while GE.Enabled and obj and obj.Parent and not done do
+			if not GE_IsGeneratorModel(obj) then GE_Cleanup(obj); return end
+			local p = GE_Progress(obj) or 0
+			local cp = math.clamp(p, 0, 100)
+			if cp >= 100 then
+				done = true
+				bar.BackgroundColor3 = GE_CFG.COL_END
+				txt.Text = "100%"
+				TweenService:Create(bar, ti, { Size = UDim2.new(1, 0, 1, 0) }):Play()
+				task.wait(0.3)
+				bg.Visible = false
+				hl.Enabled = false
+			else
+				bg.Visible = true
+				hl.Enabled = true
+				txt.Text = string.format("%d%%", cp)
+				TweenService:Create(bar, ti, { Size = UDim2.new(cp / 100, 0, 1, 0), BackgroundColor3 = GE_Color(cp / 100) }):Play()
+			end
+			task.wait(0.15)
+		end
+	end)
+end
+local function GE_ScanAll()
+	for _, o in ipairs(workspace:GetDescendants()) do
+		if o:IsA("Model") then GE_Apply(o) end
+	end
+end
+local function GE_ClearAll()
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline"); if h then h:Destroy() end
+		local t = o:FindFirstChild("GenESP_Tag"); if t then t:Destroy() end
+	end
+end
+local GE_Row = Add("Generator Esp + Progress")
+local GE_Toggle = GE_Row:Toggle(false, function(state)
+	GE.Enabled = state
+	if state then
+		GE_ScanAll()
+		table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d)
+			task.wait(0.3)
+			if GE.Enabled and d:IsA("Model") then GE_Apply(d) end
+		end))
+	else
+		for _, c in ipairs(GE.Conns) do pcall(function() c:Disconnect() end) end
+		GE.Conns = {}
+		GE_ClearAll()
+	end
+end)
+GE_Toggle.Color = GE_Row:Color(GE.Color, function(c)
+	GE.Color = c
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline")
+		if h and h:IsA("Highlight") then h.FillColor = c end
+	end
+end)
+GE_Toggle.OutlineColor = GE_Row:Color(GE_CFG.OUTLINE, function(c)
+	GE_CFG.OUTLINE = c
+	for _, o in ipairs(workspace:GetDescendants()) do
+		local h = o:FindFirstChild("GenESP_Outline")
+		if h and h:IsA("Highlight") then h.OutlineColor = c end
+	end
+end)
+
+
+-- ============================================================
 -- 13. PUMPKIN ESP
 -- ============================================================
 local PMK = {
@@ -4410,7 +4560,6 @@ PMK_Toggle.Color = PMK_Row:Color(PMK.Color, function(c)
 		end)
 	end
 end)
-
 
 -- ============================================================
 -- 14. TRAP ESP
