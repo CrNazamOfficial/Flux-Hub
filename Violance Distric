@@ -2952,6 +2952,7 @@ end)
 local BG2_LockBtn = BG2_Row:Button({ "Lock", "Unlock" }, function(label, num)
 	BG2.ButtonLocked = (num == 1)
 end)
+end)
 
 -- ===== END BAGIAN 2/3 =====
 -- BAGIAN 3/3 dimulai dari: RunTab("Killer", ...) s/d akhir script
