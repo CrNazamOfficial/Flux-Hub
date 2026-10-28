@@ -3893,7 +3893,7 @@ BS.Destroy = function()
 	BS.Conns = {}
 	if BS_ChainRemote then UnregisterHookHandler(BS_ChainRemote); BS_ChainRemote = nil end
 	if BS_genv[BS.GenvKey] == BS then BS_genv[BS.GenvKey] = nil end
-end)
+end
 	-- ============================================================
 	-- 2. NO COOLDOWN SKILL (logic asli)
 	-- ============================================================
