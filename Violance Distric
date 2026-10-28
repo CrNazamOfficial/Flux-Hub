@@ -3972,15 +3972,15 @@ end
 			end
 		end)
 	end
-	local AB_Row = Add("Anti Blind")
+		local AB_Row = Add("Anti Blind")
 	AB_Row:Toggle(false, function(state)
 		AB.Enabled = state
 		if state then AB_Loop()
 		else if AB.Thread then pcall(function() task.cancel(AB.Thread) end); AB.Thread = nil end end
 	end)
+end)  ← TAMBAH INI
 
 RunTab("Visual", function(Add, Title, AddFeature)
-	Title("Features")
 
 	-- ============================================================
 	-- 1. FOV KILLER OUTLINE
