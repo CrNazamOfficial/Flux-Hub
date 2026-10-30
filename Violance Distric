@@ -1597,6 +1597,122 @@ local AST_Toggle = AST_RefRow:Toggle(false, function(state)
 end)
 AST_RefRow:Dropdown({ "NORMAL", "INSTANT" }, "INSTANT", function(v) AST.Mode = v end)
 
+-- ============================================================
+-- FAST VAULT (integrasi Flux Hub + Panel)
+-- ============================================================
+local FV = {
+	Enabled = false, Hooked = false, Conns = {},
+	OrigEvaluate = nil, OrigController = nil,
+	OrigStateValidate = nil, StateObject = nil,
+	FAST_CONST = 5,
+}
+
+local function FV_FindStateObject()
+	if FV.StateObject and FV.StateObject._onVaultAnimation and FV.StateObject._onPalletSlide then
+		return FV.StateObject
+	end
+	FV.StateObject = nil
+	local char = Players.LocalPlayer.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+	local team = Players.LocalPlayer.Team
+	if team and team.Name == "Killer" then return nil end
+	pcall(function()
+		local candidates = nil
+		if typeof(filtergc) == "function" then
+			candidates = filtergc("function", { Constants = { "_onVaultAnimation" } })
+		elseif typeof(getgc) == "function" then
+			candidates = {}
+			for _, fn in ipairs(getgc()) do
+				if type(fn) == "function" and (not islclosure or islclosure(fn)) then
+					local consts = getconstants and getconstants(fn)
+					if consts then
+						for _, c in ipairs(consts) do
+							if c == "_onVaultAnimation" then table.insert(candidates, fn); break end
+						end
+					end
+				end
+			end
+		end
+		for _, fn in ipairs(candidates or {}) do
+			local ups = getupvalues and getupvalues(fn)
+			for _, v in pairs(ups or {}) do
+				if type(v) == "table" and v["_onVaultAnimation"] and v["_cancelVaultTraversal"] then
+					FV.StateObject = v; break
+				end
+			end
+			if FV.StateObject then break end
+		end
+	end)
+	return FV.StateObject
+end
+
+local function FV_HookModules()
+	if FV.Hooked then return true end
+	pcall(function()
+		local mod = require(ReplicatedStorage.Modules.Survivors.SurvivorVault)
+		if mod and not mod._hookedFastVaultVD then
+			FV.OrigEvaluate = mod.evaluate
+			mod.evaluate = function(...)
+				if FV.Enabled then return true, "ready", FV.FAST_CONST end
+				return FV.OrigEvaluate(...)
+			end
+			mod._hookedFastVaultVD = true
+		end
+	end)
+	pcall(function()
+		local mod = require(ReplicatedStorage.Modules.Survivors.SurvivorAnimationsController)
+		if mod and not mod._hookedFastVaultVD then
+			FV.OrigController = mod._validateFastVault
+			mod._validateFastVault = function(...)
+				if FV.Enabled then return true, "ready", FV.FAST_CONST end
+				return FV.OrigController(...)
+			end
+			mod._hookedFastVaultVD = true
+		end
+	end)
+	FV.Hooked = true
+	return true
+end
+
+local function FV_HookState()
+	local s = FV_FindStateObject()
+	if s and not s._hookedFastVaultVD then
+		FV.OrigStateValidate = s._validateFastVault
+		s._validateFastVault = function(...)
+			if FV.Enabled then return true, "ready", FV.FAST_CONST end
+			if FV.OrigStateValidate then return FV.OrigStateValidate(...) end
+			return true, "ready", FV.FAST_CONST
+		end
+		s._hookedFastVaultVD = true
+	end
+end
+
+local FV_Row = Add("Fast Vault")
+FV_Row:Toggle(false, function(state)
+	FV.Enabled = state
+	if state then
+		task.spawn(function()
+			local tries = 0
+			while FV.Enabled and tries < 15 and not FV.Hooked do
+				tries = tries + 1
+				if FV_HookModules() then break end
+				task.wait(1)
+			end
+		end)
+		table.insert(FV.Conns, RunService.Heartbeat:Connect(function()
+			if not FV.Enabled then return end
+			local now = os.clock()
+			if now - (FV.LastStateSearch or 0) >= 3 then
+				FV.LastStateSearch = now
+				pcall(FV_HookModules); pcall(FV_HookState)
+			end
+		end))
+	else
+		for _, c in ipairs(FV.Conns) do pcall(function() c:Disconnect() end) end
+		FV.Conns = {}
+	end
+end)
+
 	-- ============================================================
 	-- 6. AUTO DODGE CROUCH (logic asli)
 	-- ============================================================
