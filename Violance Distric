@@ -1787,437 +1787,345 @@ end)
 	ADC_Toggle.Extras = { ADC_Row:Stepper({ Min = 15, Max = 35, Step = 1, Default = 25 }, function(v) ADC.Range = v end) }	
 
 -- ============================================================
--- 7. AUTO PARRY (improved range + refleks adaptive)
+-- 7. AUTO PARRY (logic 100% dari source, UI persis lama)
 -- ============================================================
-local AP = {
-	Enabled = false, Range = 10, Visual = true,
-	CharData = {}, Attacks = {}, PlayerConns = {}, Conns = {},
-	Ping = 0, LastFire = nil, RingFolder = nil, RingParts = nil,
-	MyChar = nil, MyRoot = nil, MyHum = nil, MyAlive = false,
-	RefireAdj = 0.12,
+local NP = {
+	Cfg = {
+		AutoParry = false,
+		Safety = true,
+		Aggressive = true,
+		Circle = true,
+		Radius = 12,
+		Face = 0.8,
+		RingColor = Color3.fromRGB(255, 255, 255),
+		IgnoredSkills = {},
+	},
+	State = {
+		ParryCooldown = false,
+		ParryCooldownThread = nil,
+		ParryRingFolder = nil,
+		ParryRingParts = nil,
+		ParryRingRayParams = nil,
+		ParryRingRayChar = nil,
+	},
+	Attached = {},
+	Installed = false,
 }
-local AP_ID = {}
-for _, id in ipairs({
-	"110355011987939", "121216847022485", "139369275981139", "117042998468241", "133963973694098",
-	"113255068724446", "74968262036854", "118907603246885", "78432063483146", "122812055447896",
-	"78935059863801", "98163597193511", "80411309607666", "105374834496520", "129784271201071",
-	"132817836308238", "111920872708571", "82666958311998", "130593238885843", "109402730355822",
-	"138720291317243", "115244153053858", "117070354890871", "106871536134254", "135002183282873",
-	"127417297154354", "83333467665074", "129626174716003", "84926129581106", "101636125032002",
-	"125430111937587", "88848807662765", "123809268724645", "93902163029544", "75618342544502", "104540716539347", "79310600168078", "113691709436161", "81963230963908",
-}) do AP_ID[id] = true end
-local AP_HIT_TIME = {}
-local AP_MAX_FIRES = 2
-local AP_FIRE_WINDOW = 0.5
-local AP_LOS = true
-local AP_LUNGE = true
-local AP_LUNGE_DURATION = 0.6
-local AP_C_RING_IDLE = Color3.fromRGB(255, 255, 255)
-local AP_C_RING_ACTIVE = Color3.fromRGB(40, 255, 80)
-local AP_IdCache = setmetatable({}, { __mode = "k" })
-local function AP_AnimId(track)
-	local c = AP_IdCache[track]
-	if c ~= nil then if c == false then return nil end; return c end
-	local ok, raw = pcall(function() local a = track.Animation; if a then return a.AnimationId end end)
-	if ok and type(raw) == "string" then
-		local d = string.match(raw, "%d+")
-		if d then AP_IdCache[track] = d; return d end
-		AP_IdCache[track] = false
+
+local NP_RING_SEGMENTS = 32
+local NP_RING_DASH_RATIO = 0.7
+local NP_RING_HEIGHT = 0.05
+local NP_RING_WIDTH = 0.18
+local NP_RING_TRANSPARENCY = 0.35
+local NP_RING_GROUND_OFFSET = 0.1
+
+local NP_VALID_PARRY_IDS = {
+	["117042998468241"] = true, ["133963973694098"] = true, ["93902163029544"] = true,
+	["75618342544502"] = true, ["74968262036854"] = true, ["113255068724446"] = true,
+	["123809268724645"] = true, ["101636125032002"] = true, ["125430111937587"] = true,
+	["84926129581106"] = true, ["81963230963908"] = true, ["129626174716003"] = true,
+	["113691709436161"] = true, ["105374834496520"] = true, ["111920872708571"] = true,
+	["115244153053858"] = true, ["130593238885843"] = true, ["138720291317243"] = true,
+	["117070354890871"] = true, ["106871536134254"] = true, ["135002183282873"] = true,
+	["121216847022485"] = true, ["127417297154354"] = true, ["83333467665074"] = true,
+}
+
+local function NP_IsKiller(p)
+	return p and p.Team and p.Team.Name == "Killer"
+end
+
+local function NP_IsDowned(char)
+	return char and (char:GetAttribute("Knocked") == true or char:GetAttribute("IsHooked") == true)
+end
+
+local function NP_IsSafeToParry(char)
+	if not NP.Cfg.Safety then return true end
+	if not char then return false end
+	local interactObj = char:FindFirstChild("CheckInterractable")
+	if interactObj then
+		if interactObj:GetAttribute("isVaulting") == true then return false end
+		if interactObj:GetAttribute("isRepairing") == true then return false end
+		if interactObj:GetAttribute("isUnhooking") == true then return false end
+		if interactObj:GetAttribute("isHealing") == true then return false end
+		if interactObj:GetAttribute("isSliding") == true then return false end
 	end
-	return nil
+	return true
 end
-local function AP_UpdateSelf()
-	local c = Players.LocalPlayer.Character
-	if c ~= AP.MyChar then AP.MyChar = c; AP.MyRoot = nil; AP.MyHum = nil end
-	if not c then AP.MyAlive = false; return end
-	if not (AP.MyRoot and AP.MyRoot.Parent) then AP.MyRoot = c:FindFirstChild("HumanoidRootPart") end
-	if not (AP.MyHum and AP.MyHum.Parent) then AP.MyHum = c:FindFirstChildOfClass("Humanoid") end
-	AP.MyAlive = (AP.MyRoot ~= nil) and (AP.MyHum ~= nil) and AP.MyHum.Health > 0
-end
-local function AP_RefreshPing()
-	local ok, v = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
-	if ok and type(v) == "number" then
-		AP.Ping = math.clamp(v, 0, 0.4)
-		local targetRefire = math.max(0.06, 0.12 - AP.Ping * 0.15)
-		AP.RefireAdj = AP.RefireAdj + (targetRefire - AP.RefireAdj) * 0.3
-	end
-end
-local AP_ParryBtn = nil
-local AP_LastBtn = 0
-local function AP_GetBtn()
-	if AP_ParryBtn and AP_ParryBtn.Parent then return AP_ParryBtn end
-	AP_ParryBtn = nil
-	local now = os.clock()
-	if now - AP_LastBtn < 0.2 then return nil end
-	AP_LastBtn = now
-	local pg = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-	if not pg then return nil end
-	local sm = pg:FindFirstChild("Survivor-mob")
-	if not sm then return nil end
-	local controls = sm:FindFirstChild("Controls")
-	local btn = controls and controls:FindFirstChild("Gui-mob")
-	if not btn then btn = sm:FindFirstChild("Gui-mob", true) end
-	if btn and btn:IsA("GuiButton") then AP_ParryBtn = btn; return btn end
-	return nil
-end
-local function AP_Press()
-	local btn = AP_GetBtn()
-	if not btn then return false end
-	if firesignal then
-		local ok = pcall(firesignal, btn.MouseButton1Down)
-		if ok then return true end
-	end
-	if getconnections then
-		local ok, list = pcall(getconnections, btn.MouseButton1Down)
-		if ok and list then
-			for _, c in ipairs(list) do pcall(function() c:Fire() end) end
-			return true
-		end
-	end
-	return false
-end
-local function AP_IsBlocked(rec, kroot, now)
-	if not AP_LOS then return false end
-	if now - rec.losT < 0.04 then return rec.losBlocked end
-	rec.losT = now
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.RespectCanCollide = true
-	local excl = {}
-	for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(excl, p.Character) end end
-	if AP.MyChar then table.insert(excl, AP.MyChar) end
-	if AP.RingFolder then table.insert(excl, AP.RingFolder) end
-	params.FilterDescendantsInstances = excl
-	local ok, res = pcall(workspace.Raycast, workspace, kroot.Position, AP.MyRoot.Position - kroot.Position, params)
-	rec.losBlocked = ok and (res ~= nil) or false
-	return rec.losBlocked
-end
-local function AP_TryPress(rec, kroot, dist)
-	if rec.fires >= AP_MAX_FIRES then return end
-	local t = os.clock()
-	if t - rec.lastTry < AP.RefireAdj then return end
-	local d = rec.data
-	if d.windowFires >= AP_MAX_FIRES and (t - d.windowT) <= AP_FIRE_WINDOW then return end
-	if AP_IsBlocked(rec, kroot, t) then return end
-	rec.lastTry = t
-	if AP_Press() then
-		if (t - d.windowT) > AP_FIRE_WINDOW then d.windowT = t; d.windowFires = 0 end
-		d.windowFires = d.windowFires + 1
-		rec.fires = rec.fires + 1
-		AP.LastFire = { t = t, detectMs = (t - rec.start) * 1000, id = rec.id }
-	end
-end
-local function AP_Eff(kroot, delta, dist)
-	if dist > 0.001 and AP.Ping > 0 then
-		local rv = kroot.AssemblyLinearVelocity - AP.MyRoot.AssemblyLinearVelocity
-		local cl = rv:Dot(delta.Unit)
-		if cl > 0 then
-			local adjusted = dist - cl * AP.Ping
-			return math.max(0, adjusted)
-		end
-	end
-	return dist
-end
-local function AP_DistCheck(kroot)
-	if not (AP.MyRoot and AP.MyRoot.Parent and kroot and kroot.Parent) then return false, math.huge end
-	local delta = AP.MyRoot.Position - kroot.Position
-	local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude
-	local vert = math.abs(delta.Y)
-	if vert > 8 then return false, horiz end
-	local full = delta.Magnitude
-	return true, full
-end
-local function AP_Process(rec, now, fresh)
-	if rec.isLunge then
-		if (not fresh) and (not rec.data.lunging) and (now - rec.start > 0.1) then
-			if AP.Attacks[rec.key] == rec then AP.Attacks[rec.key] = nil end
-			return false
+
+local function NP_TapMobileParryButton()
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then return end
+	local survivorMob = playerGui:FindFirstChild("Survivor-mob")
+	local parryBtn = survivorMob and survivorMob:FindFirstChild("Controls") and survivorMob.Controls:FindFirstChild("Gui-mob")
+	if parryBtn and parryBtn.Visible then
+		if firesignal then
+			pcall(function()
+				firesignal(parryBtn.MouseButton1Down)
+				task.wait(0.01)
+				firesignal(parryBtn.MouseButton1Up)
+			end)
 		end
 	else
-		local tr = rec.track
-		if (not fresh) and (not tr.IsPlaying) and (now - rec.start > 0.1) then
-			if AP.Attacks[tr] == rec then AP.Attacks[tr] = nil end
-			return false
-		end
+		pcall(function()
+			if mouse2click then mouse2click(); return end
+			if mouse2press and mouse2release then mouse2press(); task.wait(0.01); mouse2release(); return end
+			if MouseButton2Click then MouseButton2Click(); return end
+			local VIM = game:GetService("VirtualInputManager")
+			VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
+			task.wait(0.01)
+			VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+		end)
 	end
-	if not (AP.MyRoot and AP.MyRoot.Parent) then return false end
-	local kroot = rec.kroot
-	if not (kroot and kroot.Parent) then
-		kroot = rec.data.char:FindFirstChild("HumanoidRootPart")
-		rec.kroot = kroot
-		if not kroot then return false end
-	end
-	local valid, dist = AP_DistCheck(kroot)
-	if not valid then
-		if rec.armed == nil then rec.armed = false end
-		return false
-	end
-	local delta = AP.MyRoot.Position - kroot.Position
-	local inRange = dist <= AP.Range
-	if rec.armed == nil then rec.armed = AP.MyAlive and (AP_Eff(kroot, delta, dist) <= AP.Range) or false end
-	if not rec.armed then
-		if rec.data.lunging then rec.armed = true else return false end
-	end
-	if (not AP.Enabled) or (not AP.MyAlive) then return inRange end
-	local eff = AP_Eff(kroot, delta, dist)
-	if eff <= AP.Range then
-		local hit = AP_HIT_TIME[rec.id]
-		if hit and (now - rec.start) < (hit - AP.Ping) then return inRange end
-		AP_TryPress(rec, kroot, dist)
-	end
-	return inRange
 end
-local function AP_Register(d, track, id, isEvent)
-	local now = os.clock()
-	local rec = AP.Attacks[track]
-	if rec then
-		if isEvent then
-			rec.start = now; rec.fires = 0; rec.lastTry = -math.huge; rec.armed = nil; rec.losT = -math.huge; rec.losBlocked = false
+
+local function NP_ExecuteParry()
+	if NP.State.ParryCooldown then return end
+	pcall(function()
+		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		local items = remotes and remotes:FindFirstChild("Items")
+		local dagger = items and items:FindFirstChild("Parrying Dagger")
+		local parryRemote = dagger and dagger:FindFirstChild("parry")
+		if parryRemote then
+			for _ = 1, 10 do parryRemote:FireServer() end
 		end
-		return rec
-	end
-	rec = { data = d, track = track, id = id, start = now, fires = 0, lastTry = -math.huge, kroot = nil, armed = nil, losT = -math.huge, losBlocked = false }
-	AP.Attacks[track] = rec
-	local c
-	c = track.Stopped:Connect(function()
-		if AP.Attacks[track] == rec then AP.Attacks[track] = nil end
-		if c then c:Disconnect() end
+		task.spawn(NP_TapMobileParryButton)
 	end)
-	return rec
 end
-local function AP_IsKiller(d)
-	if d.isKiller then return true end
-	if d.char and d.char.Parent then
-		if d.char:FindFirstChild("Lookscriptkiller", true) then d.isKiller = true; return true end
-	end
-	return false
-end
-local function AP_StartLunge(d, now)
-	local rec = AP.Attacks[d]
-	if rec then
-		rec.start = now; rec.fires = 0; rec.lastTry = -math.huge; rec.armed = true; rec.kroot = nil; rec.losT = -math.huge; rec.losBlocked = false
-	else
-		rec = { data = d, key = d, isLunge = true, track = nil, id = "lunge", start = now, fires = 0, lastTry = -math.huge, kroot = nil, armed = true, losT = -math.huge, losBlocked = false }
-		AP.Attacks[d] = rec
-	end
-	AP_Process(rec, now, true)
-end
-local function AP_RefreshLunge(d, now)
-	if d.lunging and now >= d.lungeUntil then d.lunging = false end
-end
-local function AP_FindData(inst)
-	local cur = inst
-	while cur and cur ~= game do
-		local d = AP.CharData[cur]
-		if d then return d end
-		cur = cur.Parent
-	end
-	return nil
-end
-local function AP_OnLunge(...)
-	if not AP_LUNGE then return end
-	local now = os.clock()
-	local list = {}
-	local n = select("#", ...)
-	for i = 1, n do
-		local a = select(i, ...)
-		if typeof(a) == "Instance" then
-			local t = a
-			if a:IsA("Player") then t = a.Character end
-			local d = t and AP_FindData(t)
-			if d and AP_IsKiller(d) then table.insert(list, d) end
-		end
-	end
-	if #list == 0 then
-		for _, d in pairs(AP.CharData) do if d.isKiller then table.insert(list, d) end end
-	end
-	for _, d in ipairs(list) do
-		d.lungeUntil = now + AP_LUNGE_DURATION
-		d.lunging = true
-		AP_StartLunge(d, now)
-	end
-end
-local function AP_OnAnim(d, track)
-	local id = AP_AnimId(track)
-	if not id or not AP_ID[id] then return end
-	if not AP_IsKiller(d) then return end
-	AP_UpdateSelf()
-	local okLen, len = pcall(function() return track.Length end)
-	if okLen and type(len) == "number" and len > 0.05 and len < 5 then
-		AP_HIT_TIME[id] = AP_HIT_TIME[id] or len * 0.6
-	end
-	local rec = AP_Register(d, track, id, true)
-	if rec then AP_Process(rec, os.clock(), true) end
-end
-local function AP_UnhookChar(char)
-	local d = AP.CharData[char]
-	if not d then return end
-	AP.CharData[char] = nil
-	for _, c in ipairs(d.conns) do pcall(function() c:Disconnect() end) end
-	if d.animConn then pcall(function() d.animConn:Disconnect() end) end
-	for k, rec in pairs(AP.Attacks) do if rec.data == d then AP.Attacks[k] = nil end end
-end
-local function AP_HookAnim(d, animator)
-	if d.animConn then pcall(function() d.animConn:Disconnect() end) end
-	d.animator = animator
-	d.animConn = animator.AnimationPlayed:Connect(function(track) AP_OnAnim(d, track) end)
-end
-local function AP_HookChar(char)
-	if AP.CharData[char] then return end
-	local d = { char = char, conns = {}, isKiller = false, animator = nil, animConn = nil, lunging = false, lungeUntil = 0, windowT = -math.huge, windowFires = 0 }
-	AP.CharData[char] = d
-	table.insert(d.conns, char.AncestryChanged:Connect(function(_, par) if par == nil then AP_UnhookChar(char) end end))
+
+local function NP_ListenToParryResult()
 	task.spawn(function()
-		local hum = char:WaitForChild("Humanoid", 20)
-		if not hum or AP.CharData[char] ~= d then return end
-		table.insert(d.conns, hum.ChildAdded:Connect(function(c) if c:IsA("Animator") then AP_HookAnim(d, c) end end))
-		local anim = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 20)
-		if anim and AP.CharData[char] == d then AP_HookAnim(d, anim) end
+		local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+		local items = remotes and remotes:WaitForChild("Items", 5)
+		local dagger = items and items:WaitForChild("Parrying Dagger", 5)
+		local parryResultRemote = dagger and dagger:WaitForChild("parryResult", 5)
+		if parryResultRemote then
+			track(parryResultRemote.OnClientEvent:Connect(function(arg1, arg2)
+				local cdDur = tonumber(arg2) or ((arg1 == true) and 90 or 60)
+				NP.State.ParryCooldown = true
+				if NP.State.ParryCooldownThread then task.cancel(NP.State.ParryCooldownThread) end
+				NP.State.ParryCooldownThread = task.delay(cdDur, function()
+					NP.State.ParryCooldown = false
+				end)
+			end))
+		end
 	end)
 end
-local function AP_HookPlayer(p)
-	if p == Players.LocalPlayer or AP.PlayerConns[p] then return end
-	local list = {}
-	AP.PlayerConns[p] = list
-	table.insert(list, p.CharacterAdded:Connect(function(c) AP_HookChar(c) end))
-	if p.Character then AP_HookChar(p.Character) end
+
+local function NP_AttachParrySensor(kChar)
+	if not kChar or NP.Attached[kChar] then return end
+	NP.Attached[kChar] = true
+	local humanoid = kChar:FindFirstChild("Humanoid")
+	if not humanoid then humanoid = kChar:WaitForChild("Humanoid", 5) end
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then animator = humanoid:WaitForChild("Animator", 5) end
+	if not animator then return end
+
+	track(humanoid.ChildAdded:Connect(function(child)
+		if child:IsA("Animator") then
+			NP.Attached[kChar] = nil
+			NP_AttachParrySensor(kChar)
+		end
+	end))
+
+	track(kChar.AncestryChanged:Connect(function(_, parent)
+		if not parent then NP.Attached[kChar] = nil end
+	end))
+
+	track(animator.AnimationPlayed:Connect(function(animTrack)
+		local animId = animTrack.Animation and animTrack.Animation.AnimationId or ""
+		local id = animId:match("%d+")
+		local attackName = NP_VALID_PARRY_IDS[id]
+		if not attackName then return end
+		if not NP.Cfg.AutoParry then return end
+		if NP.State.ParryCooldown then return end
+		if NP.Cfg.IgnoredSkills[attackName] then return end
+
+		local myChar = Players.LocalPlayer.Character
+		if NP_IsDowned(myChar) or not NP_IsSafeToParry(myChar) then return end
+		local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+		local kHRP = kChar:FindFirstChild("HumanoidRootPart")
+		if not myHRP or not kHRP then return end
+
+		local startDistance = (myHRP.Position - kHRP.Position).Magnitude
+		if NP.Cfg.Aggressive then
+			local aggressiveRadius = 12
+			local detectionRadius = NP.Cfg.Radius + 5
+			if startDistance > detectionRadius then return end
+			if startDistance <= aggressiveRadius then
+				NP_ExecuteParry()
+			else
+				local tracker
+				local startTime = os.clock()
+				tracker = RunService.Heartbeat:Connect(function()
+					if os.clock() - startTime >= 1.5 or NP.State.ParryCooldown or not myHRP or not kHRP or NP_IsDowned(myChar) then
+						if tracker then tracker:Disconnect() end
+						return
+					end
+					if (myHRP.Position - kHRP.Position).Magnitude <= aggressiveRadius then
+						NP_ExecuteParry()
+						if tracker then tracker:Disconnect() end
+					end
+				end)
+			end
+		else
+			if startDistance > NP.Cfg.Radius then return end
+			local myPosFlat = Vector3.new(myHRP.Position.X, 0, myHRP.Position.Z)
+			local kPosFlat = Vector3.new(kHRP.Position.X, 0, kHRP.Position.Z)
+			local flatDelta = myPosFlat - kPosFlat
+			if flatDelta.Magnitude > 0 then
+				local flatDirection = flatDelta.Unit
+				local kLookFlat = Vector3.new(kHRP.CFrame.LookVector.X, 0, kHRP.CFrame.LookVector.Z).Unit
+				if kLookFlat:Dot(flatDirection) < NP.Cfg.Face then return end
+			end
+			NP_ExecuteParry()
+		end
+	end))
 end
-local function AP_UnhookPlayer(p)
-	local list = AP.PlayerConns[p]
-	if list then for _, c in ipairs(list) do pcall(function() c:Disconnect() end) end; AP.PlayerConns[p] = nil end
-	if p.Character then AP_UnhookChar(p.Character) end
+
+local function NP_TryAttach(p)
+	if p ~= Players.LocalPlayer and NP_IsKiller(p) and p.Character then
+		NP_AttachParrySensor(p.Character)
+	end
 end
-local function AP_DestroyRing()
-	if AP.RingFolder then pcall(function() AP.RingFolder:Destroy() end); AP.RingFolder = nil end
-	AP.RingParts = nil
+
+local function NP_SetupPlayer(p)
+	if p == Players.LocalPlayer then return end
+	track(p.CharacterAdded:Connect(function() NP_TryAttach(p) end))
+	track(p:GetPropertyChangedSignal("Team"):Connect(function() NP_TryAttach(p) end))
+	if p.Character then NP_TryAttach(p) end
 end
-local function AP_EnsureRing()
+
+local function NP_DestroyRing()
+	if NP.State.ParryRingFolder then
+		pcall(function() NP.State.ParryRingFolder:Destroy() end)
+		NP.State.ParryRingFolder = nil
+	end
+	NP.State.ParryRingParts = nil
+end
+
+local function NP_EnsureRing()
 	local cam = workspace.CurrentCamera
 	if not cam then return nil end
-	if AP.RingFolder and AP.RingFolder.Parent == cam then return AP.RingParts end
-	AP_DestroyRing()
-	local folder = Instance.new("Folder"); folder.Name = "AP_Ring"; folder.Parent = cam; AP.RingFolder = folder
-	local segs = {}
-	for i = 1, 32 do
-		local p = Instance.new("Part")
-		p.Name = "Seg_" .. i; p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false; p.CastShadow = false
-		p.Material = Enum.Material.Neon; p.Size = Vector3.new(1, 0.05, 0.18); p.Color = AP_C_RING_IDLE; p.Transparency = 0.4
-		p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
-		p.Parent = folder
-		segs[i] = p
+	if NP.State.ParryRingFolder and NP.State.ParryRingFolder.Parent == cam then
+		return NP.State.ParryRingParts
 	end
-	AP.RingParts = segs
+	NP_DestroyRing()
+	local folder = Instance.new("Folder")
+	folder.Name = "Flux_AP_ParryRing"
+	folder.Parent = cam
+	NP.State.ParryRingFolder = folder
+	local segs = {}
+	for i = 1, NP_RING_SEGMENTS do
+		local part = Instance.new("Part")
+		part.Name = "Seg_" .. i
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.CastShadow = false
+		part.Material = Enum.Material.Neon
+		part.Size = Vector3.new(1, NP_RING_HEIGHT, NP_RING_WIDTH)
+		part.Color = NP.Cfg.RingColor
+		part.Transparency = NP_RING_TRANSPARENCY
+		part.TopSurface = Enum.SurfaceType.Smooth
+		part.BottomSurface = Enum.SurfaceType.Smooth
+		part.Parent = folder
+		segs[i] = part
+	end
+	NP.State.ParryRingParts = segs
 	return segs
 end
-local function AP_UpdateRing(anyIn)
-	if not (AP.Visual and AP.MyRoot and AP.MyRoot.Parent and AP.MyAlive) then
-		if AP.RingFolder then AP.RingFolder.Parent = nil end
-		return
+
+local function NP_GetRingGroundDy(hrp, myChar)
+	if not hrp then return 0 end
+	if not NP.State.ParryRingRayParams then
+		NP.State.ParryRingRayParams = RaycastParams.new()
+		NP.State.ParryRingRayParams.FilterType = Enum.RaycastFilterType.Exclude
+		NP.State.ParryRingRayParams.RespectCanCollide = true
 	end
-	local parts = AP_EnsureRing(); if not parts then return end
-	if AP.RingFolder.Parent ~= workspace.CurrentCamera then AP.RingFolder.Parent = workspace.CurrentCamera end
-	local range = AP.Range
-	local step = (2 * math.pi) / 32
-	local col = anyIn and AP_C_RING_ACTIVE or AP_C_RING_IDLE
-	for i = 1, 32 do
+	if NP.State.ParryRingRayChar ~= myChar then
+		NP.State.ParryRingRayChar = myChar
+		NP.State.ParryRingRayParams.FilterDescendantsInstances = myChar and { myChar } or {}
+	end
+	local origin = hrp.Position
+	local ok, result = pcall(workspace.Raycast, workspace, origin, Vector3.new(0, -30, 0), NP.State.ParryRingRayParams)
+	if ok and result then
+		return (result.Position.Y + NP_RING_GROUND_OFFSET) - origin.Y
+	end
+	local hip = 2
+	local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+	if hum and hum.HipHeight and hum.HipHeight >= 0.1 then hip = hum.HipHeight end
+	return -(hip + hrp.Size.Y / 2) + NP_RING_GROUND_OFFSET
+end
+
+local function NP_UpdateRing(hrp, myChar, range)
+	local parts = NP_EnsureRing()
+	if not parts then return end
+	local cam = workspace.CurrentCamera
+	if NP.State.ParryRingFolder.Parent ~= cam then NP.State.ParryRingFolder.Parent = cam end
+	local stepAng = (2 * math.pi) / NP_RING_SEGMENTS
+	local dy = NP_GetRingGroundDy(hrp, myChar)
+	local baseY = hrp.Position.Y + dy
+	for i = 1, NP_RING_SEGMENTS do
 		local seg = parts[i]
-		local a0 = (i - 1) * step
-		local a1 = a0 + step * 0.7
+		local a0 = (i - 1) * stepAng
+		local a1 = a0 + stepAng * NP_RING_DASH_RATIO
 		local p0x, p0z = math.cos(a0) * range, math.sin(a0) * range
 		local p1x, p1z = math.cos(a1) * range, math.sin(a1) * range
 		local mx, mz = (p0x + p1x) / 2, (p0z + p1z) / 2
 		local dx, dz = p1x - p0x, p1z - p0z
 		local len = math.sqrt(dx * dx + dz * dz)
-		if len < 0.001 then seg.Transparency = 1 else
+		if len < 0.001 then
+			seg.Transparency = 1
+		else
 			local yaw = math.atan2(dz, dx)
-			seg.Size = Vector3.new(len, 0.05, 0.18)
-			seg.CFrame = CFrame.new(AP.MyRoot.Position.X + mx, AP.MyRoot.Position.Y - 2, AP.MyRoot.Position.Z + mz) * CFrame.Angles(0, -yaw, 0)
-			seg.Transparency = 0.4
+			seg.Size = Vector3.new(len, NP_RING_HEIGHT, NP_RING_WIDTH)
+			seg.CFrame = CFrame.new(hrp.Position.X + mx, baseY, hrp.Position.Z + mz) * CFrame.Angles(0, -yaw, 0)
+			seg.Transparency = NP_RING_TRANSPARENCY
+			seg.Color = NP.Cfg.RingColor
 		end
-		seg.Color = col
 	end
 end
-local function AP_HookAll()
-	table.insert(AP.Conns, Players.PlayerAdded:Connect(AP_HookPlayer))
-	table.insert(AP.Conns, Players.PlayerRemoving:Connect(AP_UnhookPlayer))
-	for _, p in ipairs(Players:GetPlayers()) do AP_HookPlayer(p) end
-end
-local function AP_UnhookAll()
-	for _, c in ipairs(AP.Conns) do pcall(function() c:Disconnect() end) end
-	AP.Conns = {}
-	for p in pairs(AP.PlayerConns) do AP_UnhookPlayer(p) end
-	for ch in pairs(AP.CharData) do AP_UnhookChar(ch) end
-	AP.Attacks = {}
-	AP_DestroyRing()
-end
-local function AP_OnParryResult(success, cooldown)
-	if not AP.LastFire then return end
-	local t = os.clock()
-	if t - AP.LastFire.t > 3 then return end
-	AP.LastFire = nil
-end
-task.spawn(function()
-	pcall(function()
-		local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
-		local items = remotes and remotes:WaitForChild("Items", 30)
-		local folder = items and items:WaitForChild("Parrying Dagger", 30)
-		local result = folder and folder:WaitForChild("parryResult", 30)
-		if result then table.insert(AP.Conns, result.OnClientEvent:Connect(AP_OnParryResult)) end
+
+local function NP_Install()
+	if NP.Installed then return end
+	NP.Installed = true
+	NP_ListenToParryResult()
+	for _, p in ipairs(Players:GetPlayers()) do NP_SetupPlayer(p) end
+	track(Players.PlayerAdded:Connect(NP_SetupPlayer))
+	task.spawn(function()
+		while gui.Parent do
+			task.wait(5)
+			for _, p in ipairs(Players:GetPlayers()) do NP_TryAttach(p) end
+		end
 	end)
+	track(RunService.Heartbeat:Connect(function()
+		local char = Players.LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if NP.Cfg.Circle and NP.Cfg.AutoParry and hrp then
+			NP_UpdateRing(hrp, char, tonumber(NP.Cfg.Radius) or 12)
+		elseif NP.State.ParryRingFolder then
+			NP_DestroyRing()
+		end
+	end))
+end
+
+NP_Install()
+
+-- ===== UI persis lama =====
+local NP_Row = Add("Auto Parry")
+NP_Row:Toggle(false, function(state)
+	NP.Cfg.AutoParry = state
 end)
-local AP_Row = Add("Auto Parry")
-local AP_Toggle = AP_Row:Toggle(false, function(state)
-	AP.Enabled = state
-	if state then
-		AP_UpdateSelf()
-		AP_RefreshPing()
-		AP_HookAll()
-		task.spawn(function()
-			while AP.Enabled do
-				local now = os.clock()
-				AP_UpdateSelf()
-				if now - (AP._lastPing or 0) >= 0.5 then AP._lastPing = now; AP_RefreshPing() end
-				for _, d in pairs(AP.CharData) do
-					AP_RefreshLunge(d, now)
-					if d.isKiller and d.animator then
-						local ok, tracks = pcall(d.animator.GetPlayingAnimationTracks, d.animator)
-						if ok and tracks then
-							for i = 1, #tracks do
-								local tr = tracks[i]
-								if not AP.Attacks[tr] then
-									local id = AP_AnimId(tr)
-									if id and AP_ID[id] then AP_Register(d, tr, id, false) end
-								end
-							end
-						end
-					end
-				end
-				local anyIn = false
-				for _, rec in pairs(AP.Attacks) do
-					if AP_Process(rec, now, false) then anyIn = true end
-				end
-				AP_UpdateRing(anyIn)
-				task.wait()
-			end
-			AP_UnhookAll()
-		end)
-		task.spawn(function()
-			local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
-			local att = remotes and remotes:WaitForChild("Attacks", 30)
-			local lunge = att and att:WaitForChild("Lunge", 30)
-			if lunge and AP.Enabled and (lunge:IsA("RemoteEvent") or lunge:IsA("UnreliableRemoteEvent")) then
-				table.insert(AP.Conns, lunge.OnClientEvent:Connect(AP_OnLunge))
-			end
-		end)
-	else
-		AP_UnhookAll()
-		if AP.LastFire then AP.LastFire = nil end
+NP_Row:Stepper({ Min = 5, Max = 12, Step = 1, Default = 12 }, function(v) NP.Cfg.Radius = v end)
+NP_Row:Check("Range Parry", true, function(v) NP.Cfg.Circle = v end)
+NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
+	NP.Cfg.RingColor = c
+	if NP.State.ParryRingParts then
+		for _, seg in ipairs(NP.State.ParryRingParts) do pcall(function() seg.Color = c end) end
 	end
 end)
-AP_Toggle.Color = AP_Row:Color(AP_C_RING_ACTIVE, function(c) AP_C_RING_ACTIVE = c end)
-AP_Toggle.Extras = AP_Toggle.Extras or {}
-AP_Toggle.Extras[1] = AP_Row:Stepper({ Min = 5, Max = 12, Step = 1, Default = 10 }, function(v) AP.Range = v end)
-AP_Toggle.Extras[2] = AP_Row:Check("Range Parry", false, function(v) AP.Visual = v; if not v then AP_DestroyRing() end end)
 
 	-- ============================================================
 	-- 8. AUTO GENERATOR (logic asli + fix check normal/instant)
