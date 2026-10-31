@@ -2123,37 +2123,21 @@ NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
 end)
 
 -- ============================================================
--- SILENT AIM [ TOF ] (fitur baru, logic dari file TOF)
+-- SILENT AIM [ TOF ] (hook asli, UI hub)
 -- ============================================================
 local TOF = {
-	Enabled = false,
-	Mode = "Killer",
-	HitSound = true,
-	HitSoundPick = "Hit",
-	Laser = true,
-	LaserColor = Color3.fromRGB(255, 255, 255),
-	targetBody = nil,
-	targetName = nil,
-	myRootRef = nil,
-	SCPCache = {},
-	SCPCacheTimer = 0,
+	Enabled = false, Mode = "Killer", HitSound = true, HitSoundPick = "Hit",
+	Laser = true, LaserColor = Color3.fromRGB(255, 255, 255),
+	targetBody = nil, targetName = nil, myRootRef = nil,
+	SCPCache = {}, SCPCacheTimer = 0,
 	track = { body = nil, pos = Vector3.new(), t = 0, vel = Vector3.new() },
-	hitWatch = nil,
-	lastHitAt = 0,
-	LaserBeam = nil,
-	Alive = true,
+	hitWatch = nil, lastHitAt = 0, LaserBeam = nil, Alive = true,
 }
 local TOF_CFG = {
-	KILLER_MARKER_NAME = "Lookscriptkiller",
-	TOOL_NAME = "Twist of Fate",
+	KILLER_MARKER_NAME = "Lookscriptkiller", TOOL_NAME = "Twist of Fate",
 	MUZZLE_OFFSET = Vector3.new(0.7, 1.373, -2.5),
-	PROJECTILE_SPEED = 260,
-	PREDICT_BIAS = 0.15,
-	MAX_LEAD = 3.5,
-	HIT_SOUND_VOLUME = 2,
-	HIT_WATCH_TIME = 2.5,
-	HIT_DEBOUNCE = 0.5,
-	STUN_SPEED_RATIO = 0.3,
+	PROJECTILE_SPEED = 260, PREDICT_BIAS = 0.15, MAX_LEAD = 3.5,
+	HIT_SOUND_VOLUME = 2, HIT_WATCH_TIME = 2.5, HIT_DEBOUNCE = 0.5, STUN_SPEED_RATIO = 0.3,
 	HIT_SOUNDS = {
 		{ name = "Hit", id = "5276754334" },
 		{ name = "Yareu", id = "72500584153933" },
@@ -2168,11 +2152,9 @@ local function TOF_IsScoping()
 	local char = TOF_GetCharacter()
 	return char ~= nil and char:GetAttribute("Aiming") == true
 end
-
 local function TOF_ResetTrack()
 	TOF.track.body = nil; TOF.track.pos = Vector3.new(); TOF.track.t = 0; TOF.track.vel = Vector3.new()
 end
-
 local function TOF_UpdateVelocity(body)
 	local now = tick()
 	local curPos = body.Position
@@ -2191,7 +2173,6 @@ local function TOF_UpdateVelocity(body)
 	end
 	return TOF.track.vel
 end
-
 local function TOF_GetVelocity(body)
 	local vel = Vector3.new()
 	if TOF.track.body == body then vel = TOF.track.vel end
@@ -2201,7 +2182,6 @@ local function TOF_GetVelocity(body)
 	end
 	return vel
 end
-
 local function TOF_PredictPosition(fromPos, body)
 	local targetPos = body.Position
 	local vel = TOF_GetVelocity(body)
@@ -2217,7 +2197,6 @@ local function TOF_PredictPosition(fromPos, body)
 	if offset.Magnitude > TOF_CFG.MAX_LEAD then finalPos = targetPos + offset.Unit * TOF_CFG.MAX_LEAD end
 	return finalPos
 end
-
 local function TOF_GetBody(character)
 	if not character then return nil end
 	return character:FindFirstChild("UpperTorso")
@@ -2225,7 +2204,6 @@ local function TOF_GetBody(character)
 		or character:FindFirstChild("LowerTorso")
 		or character:FindFirstChild("HumanoidRootPart")
 end
-
 local function TOF_GetSCPs()
 	if tick() - TOF.SCPCacheTimer < 0.5 then return TOF.SCPCache end
 	local newTargets = {}
@@ -2245,7 +2223,6 @@ local function TOF_GetSCPs()
 	TOF.SCPCacheTimer = tick()
 	return TOF.SCPCache
 end
-
 local function TOF_GetTarget()
 	local myChar = TOF_GetCharacter()
 	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -2286,21 +2263,18 @@ local function TOF_GetTarget()
 	end
 	return bestBody, bestName
 end
-
 local function TOF_RefreshTarget()
 	local char = TOF_GetCharacter()
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	TOF.myRootRef = root
 	if root then
 		local body, name = TOF_GetTarget()
-		TOF.targetBody = body
-		TOF.targetName = name
+		TOF.targetBody = body; TOF.targetName = name
 		if body then TOF_UpdateVelocity(body) end
 	else
 		TOF.targetBody = nil; TOF.targetName = nil
 	end
 end
-
 local function TOF_PlayHitSound(force)
 	if not force and not TOF.HitSound then return end
 	local entry = nil
@@ -2316,7 +2290,6 @@ local function TOF_PlayHitSound(force)
 		Debris:AddItem(snd, 8)
 	end)
 end
-
 local function TOF_StunAttr(char)
 	local ok, attrs = pcall(function() return char:GetAttributes() end)
 	if not ok or type(attrs) ~= "table" then return false end
@@ -2327,7 +2300,6 @@ local function TOF_StunAttr(char)
 	end
 	return false
 end
-
 local function TOF_MarkShot(body)
 	if not body or not body.Parent then return end
 	local char = body.Parent
@@ -2335,7 +2307,6 @@ local function TOF_MarkShot(body)
 	if not hum then TOF.hitWatch = nil; return end
 	TOF.hitWatch = { char = char, hum = hum, t0 = os.clock(), hp = hum.Health, ws = hum.WalkSpeed, stun = TOF_StunAttr(char) }
 end
-
 local function TOF_StepHit()
 	local w = TOF.hitWatch
 	if not w then return end
@@ -2356,7 +2327,6 @@ local function TOF_StepHit()
 		end
 	end
 end
-
 local function TOF_SilentDirection()
 	if not TOF.Enabled then return nil end
 	local root = TOF.myRootRef
@@ -2377,22 +2347,34 @@ local function TOF_SilentDirection()
 	return d / m
 end
 
--- Hook pakai registry global Hub (biar nggak tabrakan)
-RegisterHookHandler(TOF_FireRemote, function(args, self)
-	if not TOF.Enabled then return args end
-	local tool = args[1]
-	local dir = args[2]
-	if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
-		local ok, newDir = pcall(TOF_SilentDirection)
-		if ok and typeof(newDir) == "Vector3" then
-			local out = table.pack(table.unpack(args, 1, args.n or #args))
-			out[2] = newDir
-			return out
-		end
-	end
-	return args
-end)
-EnsureNamecallHook()
+-- ===== HOOK ASLI (hookmetamethod sendiri) =====
+local TOF_HookOk = false
+if hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure then
+	pcall(function()
+		local old
+		old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+			local method = getnamecallmethod()
+			if method == "FireServer" and self == TOF_FireRemote then
+				local mine = false
+				if checkcaller then mine = checkcaller() end
+				if not mine and TOF.Enabled then
+					local tool, dir = ...
+					if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
+						local okAim, newDir = pcall(TOF_SilentDirection)
+						if okAim and typeof(newDir) == "Vector3" then
+							setnamecallmethod("FireServer")
+							return old(self, tool, newDir, select(3, ...))
+						end
+					end
+				end
+				setnamecallmethod("FireServer")
+				return old(self, ...)
+			end
+			return old(self, ...)
+		end))
+		TOF_HookOk = true
+	end)
+end
 
 -- Laser
 local function TOF_HideLaser()
@@ -2432,7 +2414,6 @@ local function TOF_UpdateLaser()
 end
 
 -- Loop
-local TOF_Conns = {}
 task.spawn(function()
 	while TOF.Alive and gui.Parent do
 		pcall(TOF_RefreshTarget)
@@ -2445,13 +2426,13 @@ task.spawn(function()
 		task.wait(0.03)
 	end
 end)
-table.insert(TOF_Conns, RunService.Heartbeat:Connect(function()
+track(RunService.Heartbeat:Connect(function()
 	if not TOF.Alive then return end
 	local body = TOF.targetBody
 	if body and body.Parent then pcall(TOF_UpdateVelocity, body) end
 	pcall(TOF_UpdateLaser)
 end))
-table.insert(TOF_Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+track(Players.LocalPlayer.CharacterAdded:Connect(function()
 	TOF_HideLaser()
 	TOF.SCPCache = {}; TOF.SCPCacheTimer = 0
 	TOF.targetBody = nil; TOF.myRootRef = nil
@@ -2460,7 +2441,10 @@ end))
 
 -- ===== UI (hub) =====
 local TOF_Row = Add("Silent Aim [ TOF ]")
-local TOF_Toggle = TOF_Row:Toggle(false, function(state) TOF.Enabled = state; if not state then TOF_HideLaser() end end)
+local TOF_Toggle = TOF_Row:Toggle(false, function(state)
+	TOF.Enabled = state
+	if not state then TOF_HideLaser() end
+end)
 TOF_Toggle.Mode = TOF_Row:Button({ "Killer", "SCP" }, function(label, idx)
 	TOF.Mode = idx == 1 and "Killer" or "SCP"
 	TOF.SCPCacheTimer = 0
@@ -3768,59 +3752,22 @@ SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = CONFIG.MIN_FOV, Max = CONFIG.MAX_
 SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.visual = v; if not v and SAV_TargetLabel then SAV_TargetLabel.Visible = false end end)
 
 -- ============================================================
--- 1b. SILENT AIM BUTCHER (logic baru 100%)
+-- 1b. SILENT AIM BUTCHER (hook asli, UI hub)
 -- ============================================================
 local BS = {
-	Enabled = false,
-	Dead = false,
-	Conns = {},
-	Cands = {},
-	Target = nil,
-	Snap = nil,
-	HookOk = false,
-	Casting = false,
-	CastUntil = 0,
-	Pending = nil,
-	Bypass = false,
-	MaxAngle = 180,
-	Lead = 0.03,
-	PingSec = 0,
-	CdA = nil,
-	CdB = nil,
-	CamPos = nil,
-	FaceActive = false,
-	SavedAuto = true,
-	Fired = 0,
-	Changed = 0,
-	LastSent = nil,
-	LastSentT = 0,
+	Enabled = false, Dead = false, Conns = {}, Cands = {}, Target = nil, Snap = nil,
+	HookOk = false, Casting = false, CastUntil = 0, Pending = nil, Bypass = false,
+	MaxAngle = 180, Lead = 0.03, PingSec = 0, CdA = nil, CdB = nil, CamPos = nil,
+	FaceActive = false, SavedAuto = true, Fired = 0, Changed = 0, LastSent = nil, LastSentT = 0,
 }
 local BS_CFG = {
-	IncludeBots = true,
-	ProjectileSpeed = 140,
-	MaxRange = 220,
-	ExtraLead = 0.03,
-	MaxPredictTime = 0.6,
-	MaxTargetSpeed = 40,
-	HistoryWindow = 0.35,
-	ReversalFactor = 0.3,
-	AimHeightOffset = 0,
-	RemoteName = "ChainThrow",
-	CooldownAttribute = "ChainMove1CD",
-	FaceTarget = true,
-	CastTimeout = 2.5,
-	FaceHold = 0.35,
-	AckWait = 0.45,
-	MaxAngleStart = 180,
-	MinAngle = 3,
-	VelocitySmoothing = 0.07,
-	StaleTime = 0.18,
-	PredictVertical = true,
-	LeadPingMul = 0.5,
-	MaxLead = 0.25,
-	TargetMode = "Crosshair",
-	DistWeight = 0.05,
-	TargetStick = 5,
+	IncludeBots = true, ProjectileSpeed = 140, MaxRange = 220, ExtraLead = 0.03,
+	MaxPredictTime = 0.6, MaxTargetSpeed = 40, HistoryWindow = 0.35, ReversalFactor = 0.3,
+	AimHeightOffset = 0, RemoteName = "ChainThrow", CooldownAttribute = "ChainMove1CD",
+	FaceTarget = true, CastTimeout = 2.5, FaceHold = 0.35, AckWait = 0.45,
+	MaxAngleStart = 180, MinAngle = 3, VelocitySmoothing = 0.07, StaleTime = 0.18,
+	PredictVertical = true, LeadPingMul = 0.5, MaxLead = 0.25, TargetMode = "Crosshair",
+	DistWeight = 0.05, TargetStick = 5,
 }
 local BS_ZERO = Vector3.new(0, 0, 0)
 local BS_History = {}
@@ -3840,7 +3787,6 @@ table.insert(BS.Conns, workspace.DescendantRemoving:Connect(function(d)
 end))
 
 local function BS_dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
-
 local function BS_teamOk(plr)
 	local team = plr.Team
 	if team then
@@ -3852,7 +3798,6 @@ local function BS_teamOk(plr)
 	end
 	return true
 end
-
 local function BS_buildCandidates()
 	local list = {}
 	local charToPlr = {}
@@ -3883,7 +3828,6 @@ local function BS_buildCandidates()
 	end
 	return list
 end
-
 local function BS_pushHistory(key, pos, now)
 	local h = BS_History[key]
 	if not h then h = {lastMove = now}; BS_History[key] = h end
@@ -3903,12 +3847,10 @@ local function BS_pushHistory(key, pos, now)
 	h[#h + 1] = {t = now, p = pos}
 	while #h > 0 and now - h[1].t > BS_CFG.HistoryWindow do table.remove(h, 1) end
 end
-
 local function BS_clampVel(v)
 	if v.Magnitude > BS_CFG.MaxTargetSpeed then return v.Unit * BS_CFG.MaxTargetSpeed end
 	return v
 end
-
 local function BS_fitVel(h, i0, i1)
 	local n = i1 - i0 + 1
 	if n < 2 then return nil end
@@ -3926,7 +3868,6 @@ local function BS_fitVel(h, i0, i1)
 	if sxx < 1e-6 then return nil end
 	return Vector3.new(sxt / sxx, 0, szt / sxx)
 end
-
 local function BS_estimateVelocity(key, hrp, now)
 	local av = hrp.AssemblyLinearVelocity
 	local asm = Vector3.new(av.X, 0, av.Z)
@@ -3958,14 +3899,12 @@ local function BS_estimateVelocity(key, hrp, now)
 	BS_VelState[key] = {v = v, t = now}
 	return BS_clampVel(v), 1
 end
-
 local function BS_readPingSec()
 	local ms = 0
 	pcall(function() ms = Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
 	if type(ms) ~= "number" then ms = 0 end
 	return math.clamp(ms / 1000, 0, 1)
 end
-
 local function BS_makeParams(ignore)
 	local p = RaycastParams.new()
 	local ok = pcall(function() p.FilterType = Enum.RaycastFilterType.Exclude end)
@@ -3973,7 +3912,6 @@ local function BS_makeParams(ignore)
 	p.FilterDescendantsInstances = ignore
 	return p
 end
-
 local function BS_chooseTarget()
 	local cam = workspace.CurrentCamera
 	local myChar = Players.LocalPlayer.Character
@@ -4015,7 +3953,6 @@ local function BS_chooseTarget()
 	end
 	return bestV or bestA
 end
-
 local function BS_aimFromSnap(snap, origin)
 	local pos = snap.pos
 	local hrp = snap.hrp
@@ -4038,7 +3975,6 @@ local function BS_aimFromSnap(snap, origin)
 	end
 	return aim
 end
-
 local function BS_limitDir(orig, want, maxDeg)
 	local o = want
 	if orig.Magnitude > 0.001 then o = orig.Unit end
@@ -4051,14 +3987,12 @@ local function BS_limitDir(orig, want, maxDeg)
 	local r = math.rad(maxDeg)
 	return o * math.cos(r) + perp * math.sin(r)
 end
-
 local function BS_copyArgs(args)
 	local out = {}
 	for i = 1, args.n do out[i] = args[i] end
 	out.n = args.n
 	return out
 end
-
 local function BS_onFire(remote, args)
 	if BS.Dead then return nil end
 	local a1 = args[1]
@@ -4101,38 +4035,62 @@ local function BS_onFire(remote, args)
 	return out
 end
 
-local function BS_HandlerFn(args, self)
-	if not BS.Enabled or BS.Dead then return args end
-	if BS.Bypass then return args end
-	if typeof(self) ~= "Instance" or self.Name ~= BS_CFG.RemoteName then return args end
-	local ok, newArgs = pcall(BS_onFire, self, args)
-	if ok and newArgs then return newArgs end
-	return args
-end
-
-local function BS_FindChainRemote()
-	local found = nil
-	pcall(function()
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		if not r then return end
-		for _, d in ipairs(r:GetDescendants()) do
-			if d.Name == BS_CFG.RemoteName and (d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent")) then
-				found = d; return
-			end
+local BS_oldNamecall
+local function BS_handler(self, ...)
+	local method = getnamecallmethod and getnamecallmethod() or ""
+	if method == "FireServer" and not BS.Bypass and typeof(self) == "Instance"
+		and self.Name == BS_CFG.RemoteName and not (checkcaller and checkcaller()) then
+		local args = table.pack(...)
+		local ok, newArgs = pcall(BS_onFire, self, args)
+		if setnamecallmethod then pcall(setnamecallmethod, "FireServer") end
+		if ok and newArgs then
+			return BS_oldNamecall(self, table.unpack(newArgs, 1, newArgs.n))
 		end
-	end)
-	return found
-end
-
-local function BS_InstallHook()
-	local chainRemote = BS_FindChainRemote()
-	if chainRemote then
-		RegisterHookHandler(chainRemote, BS_HandlerFn)
-		EnsureNamecallHook()
-		BS.HookOk = true
-		return true
 	end
-	return false
+	return BS_oldNamecall(self, ...)
+end
+local BS_wrapped = BS_handler
+if newcclosure then
+	local ok, w = pcall(newcclosure, BS_handler)
+	if ok and w then BS_wrapped = w end
+end
+if hookmetamethod then
+	local ok, res = pcall(function() return hookmetamethod(game, "__namecall", BS_wrapped) end)
+	if ok and res then BS_oldNamecall = res; BS.HookOk = true end
+end
+if not BS.HookOk and getrawmetatable then
+	pcall(function()
+		local mt = getrawmetatable(game)
+		local orig = mt.__namecall
+		local ro = isreadonly and isreadonly(mt)
+		if setreadonly then setreadonly(mt, false)
+		elseif make_writeable then make_writeable(mt) end
+		BS_oldNamecall = orig
+		mt.__namecall = BS_wrapped
+		if setreadonly and ro then setreadonly(mt, true) end
+		BS.HookOk = true
+	end)
+end
+if hookfunction then
+	pcall(function()
+		local tmp = Instance.new("RemoteEvent")
+		local fs = tmp.FireServer
+		pcall(function() tmp:Destroy() end)
+		local oldFS
+		local function fsh(self, ...)
+			if not BS.Bypass and typeof(self) == "Instance" and self.Name == BS_CFG.RemoteName
+				and not (checkcaller and checkcaller()) then
+				local args = table.pack(...)
+				local ok, newArgs = pcall(BS_onFire, self, args)
+				if ok and newArgs then
+					return oldFS(self, table.unpack(newArgs, 1, newArgs.n))
+				end
+			end
+			return oldFS(self, ...)
+		end
+		oldFS = hookfunction(fs, newcclosure and newcclosure(fsh) or fsh)
+		BS.HookOk = true
+	end)
 end
 
 local function BS_releaseFace()
@@ -4145,7 +4103,6 @@ local function BS_releaseFace()
 		end)
 	end
 end
-
 local function BS_checkPending()
 	local p = BS.Pending
 	if not p then return end
@@ -4176,7 +4133,6 @@ local function BS_checkPending()
 	pcall(function() p.remote:FireServer(table.unpack(fb, 1, fb.n)) end)
 	BS.Bypass = false
 end
-
 local function BS_faceStep()
 	if BS.Dead then return end
 	local now = os.clock()
@@ -4199,20 +4155,26 @@ local function BS_faceStep()
 	end
 end
 
--- ===== UI (hub) =====
+local BS_Heartbeat = nil
 local BS_Row = Add("Silent Aim Butcher")
 local BS_Toggle = BS_Row:Toggle(false, function(state)
 	BS.Enabled = state
+	BS.Pending = nil
+	BS.Target = nil
+	BS.Snap = nil
+	BS.Casting = false
+	BS.CastUntil = 0
+	BS.LastSent = nil
 	if state then
-		BS.Dead = false
-		local ok = BS_InstallHook()
-		if not ok then
-			warn("[Butcher] ChainThrow remote tidak ditemukan, hook gagal")
+		if not BS.HookOk then
+			warn("[Butcher] Hook gagal, executor tidak support")
 			BS_Toggle.Set(false, true)
 			return
 		end
+		BS.Dead = false
 		local acc, accSlow = 0, 0
-		table.insert(BS.Conns, RunService.Heartbeat:Connect(function(dt)
+		if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end) end
+		BS_Heartbeat = RunService.Heartbeat:Connect(function(dt)
 			if BS.Dead or not BS.Enabled then return end
 			local now = os.clock()
 			local cands = BS_buildCandidates()
@@ -4261,35 +4223,21 @@ local BS_Toggle = BS_Row:Toggle(false, function(state)
 				end
 				BS.Snap = {
 					pos = t.hrp.Position + Vector3.new(0, BS_CFG.AimHeightOffset, 0),
-					hrp = t.hrp,
-					vel = vel,
-					factor = factor,
-					lead = BS.Lead,
-					airborne = airborne,
-					vy = vy,
-					floorY = floorY,
+					hrp = t.hrp, vel = vel, factor = factor, lead = BS.Lead,
+					airborne = airborne, vy = vy, floorY = floorY,
 				}
 			else
 				BS.Snap = nil
 			end
 			BS_checkPending()
-		end))
+		end)
 		pcall(function() RunService:BindToRenderStep("FluxButcherFace", 2000, BS_faceStep) end)
 	else
-		for _, c in ipairs(BS.Conns) do pcall(function() c:Disconnect() end) end
-		BS.Conns = {}
+		if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end); BS_Heartbeat = nil end
 		pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
-		BS.Target = nil; BS.Snap = nil; BS.Pending = nil
 		BS_releaseFace()
 	end
 end)
-BS_Toggle.Destroy = function()
-	BS.Dead = true
-	pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
-	BS_releaseFace()
-	for _, c in ipairs(BS.Conns) do pcall(function() c:Disconnect() end) end
-	BS.Conns = {}
-end
 
 	-- ============================================================
 	-- 3. MASKED [ BETA ] (logic asli)
