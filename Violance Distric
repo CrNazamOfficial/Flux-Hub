@@ -1787,290 +1787,295 @@ end)
 	ADC_Toggle.Extras = { ADC_Row:Stepper({ Min = 15, Max = 35, Step = 1, Default = 25 }, function(v) ADC.Range = v end) }	
 
 -- ============================================================
--- 7. AUTO PARRY (logic 100% dari source, UI persis lama)
+-- 7. AUTO PARRY (logic baru 100%)
 -- ============================================================
-local NP = {
+local AP = {
 	Cfg = {
 		AutoParry = false,
-		Safety = true,
-		Aggressive = true,
 		Circle = true,
 		Radius = 12,
-		Face = 0.8,
+		FacingHalfAngle = 60,
+		FacingLateral = 6,
+		BlockNeedsAll = false,
+		ParrySafety = true,
 		RingColor = Color3.fromRGB(255, 255, 255),
-		IgnoredSkills = {},
 	},
-	State = {
-		ParryCooldown = false,
-		ParryCooldownThread = nil,
-		ParryRingFolder = nil,
-		ParryRingParts = nil,
-		ParryRingRayParams = nil,
-		ParryRingRayChar = nil,
-	},
+	State = { Cooldown = false, CooldownThread = nil, RingFolder = nil, RingParts = nil, RayParams = nil, RayChar = nil },
 	Attached = {},
-	Installed = false,
+	Tracked = {},
+	Fired = setmetatable({}, { __mode = "k" }),
+	Hooked = setmetatable({}, { __mode = "k" }),
+	Cache = { Remote = nil, Button = nil },
 }
-
-local NP_RING_SEGMENTS = 32
-local NP_RING_DASH_RATIO = 0.7
-local NP_RING_HEIGHT = 0.05
-local NP_RING_WIDTH = 0.18
-local NP_RING_TRANSPARENCY = 0.35
-local NP_RING_GROUND_OFFSET = 0.1
-
-local NP_VALID_PARRY_IDS = {
-	["117042998468241"] = true, ["133963973694098"] = true, ["93902163029544"] = true,
-	["75618342544502"] = true, ["74968262036854"] = true, ["113255068724446"] = true,
-	["123809268724645"] = true, ["101636125032002"] = true, ["125430111937587"] = true,
-	["84926129581106"] = true, ["81963230963908"] = true, ["129626174716003"] = true,
-	["113691709436161"] = true, ["105374834496520"] = true, ["111920872708571"] = true,
-	["115244153053858"] = true, ["130593238885843"] = true, ["138720291317243"] = true,
-	["117070354890871"] = true, ["106871536134254"] = true, ["135002183282873"] = true,
-	["121216847022485"] = true, ["127417297154354"] = true, ["83333467665074"] = true,
+local AP_IDS = {
+	["122812055447896"] = true, ["133963973694098"] = true, ["117042998468241"] = true,
+	["135002183282873"] = true, ["121216847022485"] = true, ["132817836308238"] = true,
+	["129784271201071"] = true, ["82666958311998"] = true, ["78432063483146"] = true,
+	["118907603246885"] = true, ["139369275981139"] = true, ["110355011987939"] = true,
+	["111920872708571"] = true, ["105374834496520"] = true, ["138720291317243"] = true,
+	["106871536134254"] = true, ["130593238885843"] = true, ["115244153053858"] = true,
+	["74968262036854"] = true, ["113255068724446"] = true, ["98163597193511"] = true,
+	["80411309607666"] = true, ["127417297154354"] = true, ["83333467665074"] = true,
+	["129626174716003"] = true, ["84926129581106"] = true, ["101636125032002"] = true,
+	["125430111937587"] = true, ["93902163029544"] = true, ["75618342544502"] = true,
+	["104540716539347"] = true, ["79310600168078"] = true, ["123809268724645"] = true,
+	["81963230963908"] = true, ["113691709436161"] = true, ["117070354890871"] = true,
+	["88848807662765"] = true,
 }
+local AP_SPECIAL_ID = "98163597193511"
+local AP_SPECIAL_RANGE = 16
 
-local function NP_IsKiller(p)
+local function AP_GetRemote()
+	local r = AP.Cache.Remote
+	if r and r.Parent then return r end
+	local rem = ReplicatedStorage:FindFirstChild("Remotes")
+	local i = rem and rem:FindFirstChild("Items")
+	local d = i and i:FindFirstChild("Parrying Dagger")
+	r = d and d:FindFirstChild("parry")
+	AP.Cache.Remote = r
+	return r
+end
+
+local function AP_GetButton()
+	local b = AP.Cache.Button
+	if b and b.Parent then return b end
+	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	local sm = pg and pg:FindFirstChild("Survivor-mob")
+	local c = sm and sm:FindFirstChild("Controls")
+	b = c and c:FindFirstChild("Gui-mob")
+	AP.Cache.Button = b
+	return b
+end
+
+local function AP_ExecuteParry()
+	pcall(function()
+		local pr = AP_GetRemote()
+		if pr then pr:FireServer() end
+	end)
+	pcall(function()
+		local b = AP_GetButton()
+		if b then
+			if firesignal then
+				firesignal(b.MouseButton1Down)
+				firesignal(b.MouseButton1Up)
+			elseif getconnections then
+				for _, x in ipairs(getconnections(b.MouseButton1Down)) do pcall(function() x:Fire() end) end
+			end
+		else
+			if mouse2click then mouse2click()
+			elseif mouse2press and mouse2release then mouse2press(); mouse2release()
+			elseif MouseButton2Click then MouseButton2Click() end
+		end
+	end)
+end
+
+task.spawn(function()
+	local r = ReplicatedStorage:WaitForChild("Remotes", 5)
+	local i = r and r:WaitForChild("Items", 5)
+	local d = i and i:WaitForChild("Parrying Dagger", 5)
+	local pr = d and d:WaitForChild("parryResult", 5)
+	if pr then
+		track(pr.OnClientEvent:Connect(function(a, b)
+			local cd = tonumber(b) or ((a == true) and 90 or 60)
+			AP.State.Cooldown = true
+			if AP.State.CooldownThread then task.cancel(AP.State.CooldownThread) end
+			AP.State.CooldownThread = task.delay(cd, function() AP.State.Cooldown = false end)
+		end))
+	end
+end)
+
+local function AP_IsKiller(p)
 	return p and p.Team and p.Team.Name == "Killer"
 end
 
-local function NP_IsDowned(char)
-	return char and (char:GetAttribute("Knocked") == true or char:GetAttribute("IsHooked") == true)
+local function AP_IsFacingMe(kHRP, myHRP)
+	local to = myHRP.Position - kHRP.Position
+	local flatTo = Vector3.new(to.X, 0, to.Z)
+	if flatTo.Magnitude < 0.5 then return true end
+	local look = kHRP.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude < 0.001 then return true end
+	flatLook = flatLook.Unit
+	local dot = flatLook:Dot(flatTo.Unit)
+	if dot <= 0 then return false end
+	if math.deg(math.acos(math.clamp(dot, -1, 1))) <= AP.Cfg.FacingHalfAngle then return true end
+	local lateral = (flatTo - flatLook * flatTo:Dot(flatLook)).Magnitude
+	return lateral <= AP.Cfg.FacingLateral
 end
 
-local function NP_IsSafeToParry(char)
-	if not NP.Cfg.Safety then return true end
+local AP_BlockParams = RaycastParams.new()
+AP_BlockParams.FilterType = Enum.RaycastFilterType.Exclude
+AP_BlockParams.RespectCanCollide = true
+local AP_BLOCK_HEIGHTS = { -2.5, 0, 2 }
+
+local function AP_IsBlocked(kChar, myChar, kHRP, myHRP)
+	AP_BlockParams.FilterDescendantsInstances = { kChar, myChar }
+	local hits = 0
+	for _, h in ipairs(AP_BLOCK_HEIGHTS) do
+		local from = kHRP.Position + Vector3.new(0, h, 0)
+		local to = myHRP.Position + Vector3.new(0, h, 0)
+		local hit = workspace:Raycast(from, to - from, AP_BlockParams)
+		if hit then hits += 1
+		elseif AP.Cfg.BlockNeedsAll then return false end
+	end
+	if AP.Cfg.BlockNeedsAll then return hits == #AP_BLOCK_HEIGHTS end
+	return hits > 0
+end
+
+local function AP_IsSafeToParry(char)
+	if not AP.Cfg.ParrySafety then return true end
 	if not char then return false end
-	local interactObj = char:FindFirstChild("CheckInterractable")
-	if interactObj then
-		if interactObj:GetAttribute("isVaulting") == true then return false end
-		if interactObj:GetAttribute("isRepairing") == true then return false end
-		if interactObj:GetAttribute("isUnhooking") == true then return false end
-		if interactObj:GetAttribute("isHealing") == true then return false end
-		if interactObj:GetAttribute("isSliding") == true then return false end
+	local io = char:FindFirstChild("CheckInterractable")
+	if io then
+		if io:GetAttribute("isVaulting") == true then return false end
+		if io:GetAttribute("isRepairing") == true then return false end
+		if io:GetAttribute("isUnhooking") == true then return false end
+		if io:GetAttribute("isHealing") == true then return false end
+		if io:GetAttribute("isSliding") == true then return false end
 	end
 	return true
 end
 
-local function NP_TapMobileParryButton()
-	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
-	if not playerGui then return end
-	local survivorMob = playerGui:FindFirstChild("Survivor-mob")
-	local parryBtn = survivorMob and survivorMob:FindFirstChild("Controls") and survivorMob.Controls:FindFirstChild("Gui-mob")
-	if parryBtn and parryBtn.Visible then
-		if firesignal then
-			pcall(function()
-				firesignal(parryBtn.MouseButton1Down)
-				task.wait(0.01)
-				firesignal(parryBtn.MouseButton1Up)
-			end)
-		end
-	else
-		pcall(function()
-			if mouse2click then mouse2click(); return end
-			if mouse2press and mouse2release then mouse2press(); task.wait(0.01); mouse2release(); return end
-			if MouseButton2Click then MouseButton2Click(); return end
-			local VIM = game:GetService("VirtualInputManager")
-			VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0)
-			task.wait(0.01)
-			VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
-		end)
-	end
+local function AP_HookTrack(t)
+	if AP.Hooked[t] then return end
+	AP.Hooked[t] = true
+	track(t.Stopped:Connect(function() AP.Fired[t] = nil end))
 end
 
-local function NP_ExecuteParry()
-	if NP.State.ParryCooldown then return end
-	pcall(function()
-		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-		local items = remotes and remotes:FindFirstChild("Items")
-		local dagger = items and items:FindFirstChild("Parrying Dagger")
-		local parryRemote = dagger and dagger:FindFirstChild("parry")
-		if parryRemote then
-			for _ = 1, 10 do parryRemote:FireServer() end
-		end
-		task.spawn(NP_TapMobileParryButton)
-	end)
+local function AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
+	if AP.Fired[t] then return end
+	if not AP.Cfg.AutoParry then return end
+	local aid = t.Animation and t.Animation.AnimationId or ""
+	local id = aid:match("%d+")
+	if not AP_IDS[id] then return end
+	local range = (id == AP_SPECIAL_ID) and AP_SPECIAL_RANGE or AP.Cfg.Radius
+	if (myHRP.Position - kHRP.Position).Magnitude > range then return end
+	if not AP_IsSafeToParry(myChar) then return end
+	if not AP_IsFacingMe(kHRP, myHRP) then return end
+	if AP_IsBlocked(kChar, myChar, kHRP, myHRP) then return end
+	AP.Fired[t] = true
+	AP_HookTrack(t)
+	AP_ExecuteParry()
 end
 
-local function NP_ListenToParryResult()
-	task.spawn(function()
-		local remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
-		local items = remotes and remotes:WaitForChild("Items", 5)
-		local dagger = items and items:WaitForChild("Parrying Dagger", 5)
-		local parryResultRemote = dagger and dagger:WaitForChild("parryResult", 5)
-		if parryResultRemote then
-			track(parryResultRemote.OnClientEvent:Connect(function(arg1, arg2)
-				local cdDur = tonumber(arg2) or ((arg1 == true) and 90 or 60)
-				NP.State.ParryCooldown = true
-				if NP.State.ParryCooldownThread then task.cancel(NP.State.ParryCooldownThread) end
-				NP.State.ParryCooldownThread = task.delay(cdDur, function()
-					NP.State.ParryCooldown = false
-				end)
-			end))
-		end
-	end)
-end
-
-local function NP_AttachParrySensor(kChar)
-	if not kChar or NP.Attached[kChar] then return end
-	NP.Attached[kChar] = true
-	local humanoid = kChar:FindFirstChild("Humanoid")
-	if not humanoid then humanoid = kChar:WaitForChild("Humanoid", 5) end
-	if not humanoid then return end
-	local animator = humanoid:FindFirstChildOfClass("Animator")
-	if not animator then animator = humanoid:WaitForChild("Animator", 5) end
-	if not animator then return end
-
-	track(humanoid.ChildAdded:Connect(function(child)
-		if child:IsA("Animator") then
-			NP.Attached[kChar] = nil
-			NP_AttachParrySensor(kChar)
-		end
+local function AP_Attach(kChar)
+	if not kChar or AP.Attached[kChar] then return end
+	AP.Attached[kChar] = true
+	local hum = kChar:FindFirstChild("Humanoid") or kChar:WaitForChild("Humanoid", 5)
+	if not hum then return end
+	local anim = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
+	if not anim then return end
+	AP.Tracked[kChar] = anim
+	track(hum.ChildAdded:Connect(function(c)
+		if c:IsA("Animator") then AP.Attached[kChar] = nil; AP.Tracked[kChar] = nil; AP_Attach(kChar) end
 	end))
-
-	track(kChar.AncestryChanged:Connect(function(_, parent)
-		if not parent then NP.Attached[kChar] = nil end
+	track(kChar.AncestryChanged:Connect(function(_, p)
+		if not p then AP.Attached[kChar] = nil; AP.Tracked[kChar] = nil end
 	end))
-
-	track(animator.AnimationPlayed:Connect(function(animTrack)
-		local animId = animTrack.Animation and animTrack.Animation.AnimationId or ""
-		local id = animId:match("%d+")
-		local attackName = NP_VALID_PARRY_IDS[id]
-		if not attackName then return end
-		if not NP.Cfg.AutoParry then return end
-		if NP.State.ParryCooldown then return end
-		if NP.Cfg.IgnoredSkills[attackName] then return end
-
+	track(anim.AnimationPlayed:Connect(function(t)
 		local myChar = Players.LocalPlayer.Character
-		if NP_IsDowned(myChar) or not NP_IsSafeToParry(myChar) then return end
 		local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 		local kHRP = kChar:FindFirstChild("HumanoidRootPart")
 		if not myHRP or not kHRP then return end
-
-		local startDistance = (myHRP.Position - kHRP.Position).Magnitude
-		if NP.Cfg.Aggressive then
-			local aggressiveRadius = 12
-			local detectionRadius = NP.Cfg.Radius + 5
-			if startDistance > detectionRadius then return end
-			if startDistance <= aggressiveRadius then
-				NP_ExecuteParry()
-			else
-				local tracker
-				local startTime = os.clock()
-				tracker = RunService.Heartbeat:Connect(function()
-					if os.clock() - startTime >= 1.5 or NP.State.ParryCooldown or not myHRP or not kHRP or NP_IsDowned(myChar) then
-						if tracker then tracker:Disconnect() end
-						return
-					end
-					if (myHRP.Position - kHRP.Position).Magnitude <= aggressiveRadius then
-						NP_ExecuteParry()
-						if tracker then tracker:Disconnect() end
-					end
-				end)
-			end
-		else
-			if startDistance > NP.Cfg.Radius then return end
-			local myPosFlat = Vector3.new(myHRP.Position.X, 0, myHRP.Position.Z)
-			local kPosFlat = Vector3.new(kHRP.Position.X, 0, kHRP.Position.Z)
-			local flatDelta = myPosFlat - kPosFlat
-			if flatDelta.Magnitude > 0 then
-				local flatDirection = flatDelta.Unit
-				local kLookFlat = Vector3.new(kHRP.CFrame.LookVector.X, 0, kHRP.CFrame.LookVector.Z).Unit
-				if kLookFlat:Dot(flatDirection) < NP.Cfg.Face then return end
-			end
-			NP_ExecuteParry()
-		end
+		AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
 	end))
 end
 
-local function NP_TryAttach(p)
-	if p ~= Players.LocalPlayer and NP_IsKiller(p) and p.Character then
-		NP_AttachParrySensor(p.Character)
-	end
+local function AP_TryAttach(p)
+	if p ~= Players.LocalPlayer and AP_IsKiller(p) and p.Character then AP_Attach(p.Character) end
 end
 
-local function NP_SetupPlayer(p)
+local function AP_Setup(p)
 	if p == Players.LocalPlayer then return end
-	track(p.CharacterAdded:Connect(function() NP_TryAttach(p) end))
-	track(p:GetPropertyChangedSignal("Team"):Connect(function() NP_TryAttach(p) end))
-	if p.Character then NP_TryAttach(p) end
+	track(p.CharacterAdded:Connect(function() AP_TryAttach(p) end))
+	track(p:GetPropertyChangedSignal("Team"):Connect(function() AP_TryAttach(p) end))
+	if p.Character then AP_TryAttach(p) end
 end
 
-local function NP_DestroyRing()
-	if NP.State.ParryRingFolder then
-		pcall(function() NP.State.ParryRingFolder:Destroy() end)
-		NP.State.ParryRingFolder = nil
+for _, p in ipairs(Players:GetPlayers()) do AP_Setup(p) end
+track(Players.PlayerAdded:Connect(AP_Setup))
+task.spawn(function()
+	while gui.Parent do
+		task.wait(5)
+		for _, p in ipairs(Players:GetPlayers()) do AP_TryAttach(p) end
 	end
-	NP.State.ParryRingParts = nil
+end)
+
+track(RunService.RenderStepped:Connect(function()
+	if not AP.Cfg.AutoParry then return end
+	local myChar = Players.LocalPlayer.Character
+	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHRP then return end
+	local maxRange = math.max(AP.Cfg.Radius, AP_SPECIAL_RANGE)
+	for kChar, anim in pairs(AP.Tracked) do
+		if not kChar.Parent or not anim.Parent then
+			AP.Tracked[kChar] = nil
+		else
+			local kHRP = kChar:FindFirstChild("HumanoidRootPart")
+			if kHRP and (myHRP.Position - kHRP.Position).Magnitude <= maxRange then
+				for _, t in ipairs(anim:GetPlayingAnimationTracks()) do
+					AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
+				end
+			end
+		end
+	end
+end))
+
+local function AP_DestroyRing()
+	if AP.State.RingFolder then pcall(function() AP.State.RingFolder:Destroy() end); AP.State.RingFolder = nil end
+	AP.State.RingParts = nil
 end
 
-local function NP_EnsureRing()
+local function AP_EnsureRing()
 	local cam = workspace.CurrentCamera
 	if not cam then return nil end
-	if NP.State.ParryRingFolder and NP.State.ParryRingFolder.Parent == cam then
-		return NP.State.ParryRingParts
-	end
-	NP_DestroyRing()
-	local folder = Instance.new("Folder")
-	folder.Name = "Flux_AP_ParryRing"
-	folder.Parent = cam
-	NP.State.ParryRingFolder = folder
+	if AP.State.RingFolder and AP.State.RingFolder.Parent == cam then return AP.State.RingParts end
+	AP_DestroyRing()
+	local f = Instance.new("Folder"); f.Name = "AP_Ring"; f.Parent = cam; AP.State.RingFolder = f
 	local segs = {}
-	for i = 1, NP_RING_SEGMENTS do
-		local part = Instance.new("Part")
-		part.Name = "Seg_" .. i
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanQuery = false
-		part.CanTouch = false
-		part.CastShadow = false
-		part.Material = Enum.Material.Neon
-		part.Size = Vector3.new(1, NP_RING_HEIGHT, NP_RING_WIDTH)
-		part.Color = NP.Cfg.RingColor
-		part.Transparency = NP_RING_TRANSPARENCY
-		part.TopSurface = Enum.SurfaceType.Smooth
-		part.BottomSurface = Enum.SurfaceType.Smooth
-		part.Parent = folder
-		segs[i] = part
+	for i = 1, 32 do
+		local p = Instance.new("Part")
+		p.Name = "Seg_" .. i; p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false; p.CastShadow = false
+		p.Material = Enum.Material.Neon; p.Size = Vector3.new(1, 0.05, 0.18); p.Color = AP.Cfg.RingColor; p.Transparency = 0.35
+		p.TopSurface = Enum.SurfaceType.Smooth; p.BottomSurface = Enum.SurfaceType.Smooth
+		p.Parent = f
+		segs[i] = p
 	end
-	NP.State.ParryRingParts = segs
+	AP.State.RingParts = segs
 	return segs
 end
 
-local function NP_GetRingGroundDy(hrp, myChar)
+local function AP_GroundDy(hrp, myChar)
 	if not hrp then return 0 end
-	if not NP.State.ParryRingRayParams then
-		NP.State.ParryRingRayParams = RaycastParams.new()
-		NP.State.ParryRingRayParams.FilterType = Enum.RaycastFilterType.Exclude
-		NP.State.ParryRingRayParams.RespectCanCollide = true
+	if not AP.State.RayParams then
+		AP.State.RayParams = RaycastParams.new()
+		AP.State.RayParams.FilterType = Enum.RaycastFilterType.Exclude
+		AP.State.RayParams.RespectCanCollide = true
 	end
-	if NP.State.ParryRingRayChar ~= myChar then
-		NP.State.ParryRingRayChar = myChar
-		NP.State.ParryRingRayParams.FilterDescendantsInstances = myChar and { myChar } or {}
+	if AP.State.RayChar ~= myChar then
+		AP.State.RayChar = myChar
+		AP.State.RayParams.FilterDescendantsInstances = myChar and { myChar } or {}
 	end
-	local origin = hrp.Position
-	local ok, result = pcall(workspace.Raycast, workspace, origin, Vector3.new(0, -30, 0), NP.State.ParryRingRayParams)
-	if ok and result then
-		return (result.Position.Y + NP_RING_GROUND_OFFSET) - origin.Y
-	end
+	local ok, res = pcall(workspace.Raycast, workspace, hrp.Position, Vector3.new(0, -30, 0), AP.State.RayParams)
+	if ok and res then return (res.Position.Y + 0.1) - hrp.Position.Y end
 	local hip = 2
 	local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 	if hum and hum.HipHeight and hum.HipHeight >= 0.1 then hip = hum.HipHeight end
-	return -(hip + hrp.Size.Y / 2) + NP_RING_GROUND_OFFSET
+	return -(hip + hrp.Size.Y / 2) + 0.1
 end
 
-local function NP_UpdateRing(hrp, myChar, range)
-	local parts = NP_EnsureRing()
+local function AP_UpdateRing(hrp, myChar, range)
+	local parts = AP_EnsureRing()
 	if not parts then return end
 	local cam = workspace.CurrentCamera
-	if NP.State.ParryRingFolder.Parent ~= cam then NP.State.ParryRingFolder.Parent = cam end
-	local stepAng = (2 * math.pi) / NP_RING_SEGMENTS
-	local dy = NP_GetRingGroundDy(hrp, myChar)
+	if AP.State.RingFolder.Parent ~= cam then AP.State.RingFolder.Parent = cam end
+	local step = (2 * math.pi) / 32
+	local dy = AP_GroundDy(hrp, myChar)
 	local baseY = hrp.Position.Y + dy
-	for i = 1, NP_RING_SEGMENTS do
+	for i = 1, 32 do
 		local seg = parts[i]
-		local a0 = (i - 1) * stepAng
-		local a1 = a0 + stepAng * NP_RING_DASH_RATIO
+		local a0 = (i - 1) * step
+		local a1 = a0 + step * 0.7
 		local p0x, p0z = math.cos(a0) * range, math.sin(a0) * range
 		local p1x, p1z = math.cos(a1) * range, math.sin(a1) * range
 		local mx, mz = (p0x + p1x) / 2, (p0z + p1z) / 2
@@ -2080,52 +2085,392 @@ local function NP_UpdateRing(hrp, myChar, range)
 			seg.Transparency = 1
 		else
 			local yaw = math.atan2(dz, dx)
-			seg.Size = Vector3.new(len, NP_RING_HEIGHT, NP_RING_WIDTH)
+			seg.Size = Vector3.new(len, 0.05, 0.18)
 			seg.CFrame = CFrame.new(hrp.Position.X + mx, baseY, hrp.Position.Z + mz) * CFrame.Angles(0, -yaw, 0)
-			seg.Transparency = NP_RING_TRANSPARENCY
-			seg.Color = NP.Cfg.RingColor
+			seg.Transparency = 0.35
+			seg.Color = AP.Cfg.RingColor
 		end
 	end
 end
 
-local function NP_Install()
-	if NP.Installed then return end
-	NP.Installed = true
-	NP_ListenToParryResult()
-	for _, p in ipairs(Players:GetPlayers()) do NP_SetupPlayer(p) end
-	track(Players.PlayerAdded:Connect(NP_SetupPlayer))
-	task.spawn(function()
-		while gui.Parent do
-			task.wait(5)
-			for _, p in ipairs(Players:GetPlayers()) do NP_TryAttach(p) end
-		end
-	end)
-	track(RunService.Heartbeat:Connect(function()
-		local char = Players.LocalPlayer.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if NP.Cfg.Circle and NP.Cfg.AutoParry and hrp then
-			NP_UpdateRing(hrp, char, tonumber(NP.Cfg.Radius) or 12)
-		elseif NP.State.ParryRingFolder then
-			NP_DestroyRing()
-		end
-	end))
-end
+track(RunService.Heartbeat:Connect(function()
+	local char = Players.LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if AP.Cfg.Circle and AP.Cfg.AutoParry and hrp then
+		AP_UpdateRing(hrp, char, AP.Cfg.Radius)
+	elseif AP.State.RingFolder then
+		AP_DestroyRing()
+	end
+end))
 
-NP_Install()
-
--- ===== UI persis lama =====
 local NP_Row = Add("Auto Parry")
 NP_Row:Toggle(false, function(state)
-	NP.Cfg.AutoParry = state
+	AP.Cfg.AutoParry = state
+	if not state then AP_DestroyRing() end
 end)
-NP_Row:Stepper({ Min = 5, Max = 12, Step = 1, Default = 12 }, function(v) NP.Cfg.Radius = v end)
-NP_Row:Check("Range Parry", true, function(v) NP.Cfg.Circle = v end)
+NP_Row:Stepper({ Min = 5, Max = 12, Step = 1, Default = 12 }, function(v)
+	AP.Cfg.Radius = v
+end)
+NP_Row:Check("Range Parry", true, function(v)
+	AP.Cfg.Circle = v
+	if not v then AP_DestroyRing() end
+end)
 NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
-	NP.Cfg.RingColor = c
-	if NP.State.ParryRingParts then
-		for _, seg in ipairs(NP.State.ParryRingParts) do pcall(function() seg.Color = c end) end
+	AP.Cfg.RingColor = c
+	if AP.State.RingParts then
+		for _, seg in ipairs(AP.State.RingParts) do pcall(function() seg.Color = c end) end
 	end
 end)
+
+-- ============================================================
+-- SILENT AIM [ TOF ] (fitur baru, logic dari file TOF)
+-- ============================================================
+local TOF = {
+	Enabled = false,
+	Mode = "Killer",
+	HitSound = true,
+	HitSoundPick = "Hit",
+	Laser = true,
+	LaserColor = Color3.fromRGB(255, 255, 255),
+	targetBody = nil,
+	targetName = nil,
+	myRootRef = nil,
+	SCPCache = {},
+	SCPCacheTimer = 0,
+	track = { body = nil, pos = Vector3.new(), t = 0, vel = Vector3.new() },
+	hitWatch = nil,
+	lastHitAt = 0,
+	LaserBeam = nil,
+	Alive = true,
+}
+local TOF_CFG = {
+	KILLER_MARKER_NAME = "Lookscriptkiller",
+	TOOL_NAME = "Twist of Fate",
+	MUZZLE_OFFSET = Vector3.new(0.7, 1.373, -2.5),
+	PROJECTILE_SPEED = 260,
+	PREDICT_BIAS = 0.15,
+	MAX_LEAD = 3.5,
+	HIT_SOUND_VOLUME = 2,
+	HIT_WATCH_TIME = 2.5,
+	HIT_DEBOUNCE = 0.5,
+	STUN_SPEED_RATIO = 0.3,
+	HIT_SOUNDS = {
+		{ name = "Hit", id = "5276754334" },
+		{ name = "Yareu", id = "72500584153933" },
+		{ name = "Quack", id = "9068554227" },
+	},
+}
+local TOF_FireRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Items"):WaitForChild(TOF_CFG.TOOL_NAME):WaitForChild("Fire")
+
+local function TOF_GetCharacter() return Players.LocalPlayer.Character end
+local function TOF_GetMuzzlePos(root) return (root.CFrame * CFrame.new(TOF_CFG.MUZZLE_OFFSET)).Position end
+local function TOF_IsScoping()
+	local char = TOF_GetCharacter()
+	return char ~= nil and char:GetAttribute("Aiming") == true
+end
+
+local function TOF_ResetTrack()
+	TOF.track.body = nil; TOF.track.pos = Vector3.new(); TOF.track.t = 0; TOF.track.vel = Vector3.new()
+end
+
+local function TOF_UpdateVelocity(body)
+	local now = tick()
+	local curPos = body.Position
+	if TOF.track.body ~= body then
+		TOF.track.body = body; TOF.track.pos = curPos; TOF.track.t = now; TOF.track.vel = Vector3.new()
+		return TOF.track.vel
+	end
+	local dt = now - TOF.track.t
+	if dt > 0.5 then
+		TOF.track.pos = curPos; TOF.track.t = now; TOF.track.vel = Vector3.new()
+		return TOF.track.vel
+	end
+	if dt >= 0.03 then
+		TOF.track.vel = (curPos - TOF.track.pos) / dt
+		TOF.track.pos = curPos; TOF.track.t = now
+	end
+	return TOF.track.vel
+end
+
+local function TOF_GetVelocity(body)
+	local vel = Vector3.new()
+	if TOF.track.body == body then vel = TOF.track.vel end
+	if vel.Magnitude < 1 then
+		local ok, av = pcall(function() return body.AssemblyLinearVelocity end)
+		if ok and av and av.Magnitude >= 1 then vel = av end
+	end
+	return vel
+end
+
+local function TOF_PredictPosition(fromPos, body)
+	local targetPos = body.Position
+	local vel = TOF_GetVelocity(body)
+	local dist = (targetPos - fromPos).Magnitude
+	local tFlight = dist / TOF_CFG.PROJECTILE_SPEED
+	for _ = 1, 2 do
+		local predicted = targetPos + vel * (tFlight + TOF_CFG.PREDICT_BIAS)
+		dist = (predicted - fromPos).Magnitude
+		tFlight = dist / TOF_CFG.PROJECTILE_SPEED
+	end
+	local finalPos = targetPos + vel * (tFlight + TOF_CFG.PREDICT_BIAS)
+	local offset = finalPos - targetPos
+	if offset.Magnitude > TOF_CFG.MAX_LEAD then finalPos = targetPos + offset.Unit * TOF_CFG.MAX_LEAD end
+	return finalPos
+end
+
+local function TOF_GetBody(character)
+	if not character then return nil end
+	return character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("LowerTorso")
+		or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function TOF_GetSCPs()
+	if tick() - TOF.SCPCacheTimer < 0.5 then return TOF.SCPCache end
+	local newTargets = {}
+	local mapFolder = workspace:FindFirstChild("Map")
+	if mapFolder then
+		for _, container in ipairs(mapFolder:GetDescendants()) do
+			if container:IsA("Model") and not Players:GetPlayerFromCharacter(container) then
+				local attributes = container:GetAttributes()
+				if container:GetAttribute("CorpseCreated0492") or next(attributes) ~= nil then
+					local root = container:FindFirstChild("HumanoidRootPart")
+					if root then table.insert(newTargets, root) end
+				end
+			end
+		end
+	end
+	TOF.SCPCache = newTargets
+	TOF.SCPCacheTimer = tick()
+	return TOF.SCPCache
+end
+
+local function TOF_GetTarget()
+	local myChar = TOF_GetCharacter()
+	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHRP then return nil, nil end
+	if TOF.Mode == "Killer" then
+		local nearestBody, nearestName, nearestDistance = nil, nil, math.huge
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player ~= Players.LocalPlayer then
+				local char = player.Character
+				if char and char:FindFirstChild(TOF_CFG.KILLER_MARKER_NAME, true) then
+					local body = TOF_GetBody(char)
+					if body then
+						local distance = (body.Position - myHRP.Position).Magnitude
+						if distance < nearestDistance then
+							nearestDistance = distance; nearestBody = body; nearestName = player.Name
+						end
+					end
+				end
+			end
+		end
+		return nearestBody, nearestName
+	end
+	local cam = workspace.CurrentCamera
+	if not cam then return nil, nil end
+	local camPos = cam.CFrame.Position
+	local camLook = cam.CFrame.LookVector
+	local bestBody, bestName, bestDot = nil, nil, -math.huge
+	for _, root in ipairs(TOF_GetSCPs()) do
+		if root and root.Parent then
+			local dir = root.Position - camPos
+			if dir.Magnitude > 0.001 then
+				local dot = camLook:Dot(dir.Unit)
+				if dot > 0.5 and dot > bestDot then
+					bestDot = dot; bestBody = root; bestName = root.Parent.Name
+				end
+			end
+		end
+	end
+	return bestBody, bestName
+end
+
+local function TOF_RefreshTarget()
+	local char = TOF_GetCharacter()
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	TOF.myRootRef = root
+	if root then
+		local body, name = TOF_GetTarget()
+		TOF.targetBody = body
+		TOF.targetName = name
+		if body then TOF_UpdateVelocity(body) end
+	else
+		TOF.targetBody = nil; TOF.targetName = nil
+	end
+end
+
+local function TOF_PlayHitSound(force)
+	if not force and not TOF.HitSound then return end
+	local entry = nil
+	for _, e in ipairs(TOF_CFG.HIT_SOUNDS) do if e.name == TOF.HitSoundPick then entry = e; break end end
+	if not entry then return end
+	pcall(function()
+		local snd = Instance.new("Sound")
+		snd.Name = "TOF_HitSound"
+		snd.SoundId = "rbxassetid://" .. tostring(entry.id)
+		snd.Volume = TOF_CFG.HIT_SOUND_VOLUME
+		snd.Parent = SoundService
+		snd:Play()
+		Debris:AddItem(snd, 8)
+	end)
+end
+
+local function TOF_StunAttr(char)
+	local ok, attrs = pcall(function() return char:GetAttributes() end)
+	if not ok or type(attrs) ~= "table" then return false end
+	for name, value in pairs(attrs) do
+		if string.find(string.lower(tostring(name)), "stun", 1, true) then
+			if value ~= nil and value ~= false and value ~= 0 then return true end
+		end
+	end
+	return false
+end
+
+local function TOF_MarkShot(body)
+	if not body or not body.Parent then return end
+	local char = body.Parent
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then TOF.hitWatch = nil; return end
+	TOF.hitWatch = { char = char, hum = hum, t0 = os.clock(), hp = hum.Health, ws = hum.WalkSpeed, stun = TOF_StunAttr(char) }
+end
+
+local function TOF_StepHit()
+	local w = TOF.hitWatch
+	if not w then return end
+	local now = os.clock()
+	if now - w.t0 > TOF_CFG.HIT_WATCH_TIME or not w.char.Parent or not w.hum.Parent then TOF.hitWatch = nil; return end
+	local hum = w.hum
+	local why = nil
+	if hum.Health < w.hp - 0.01 then why = "damage"
+	elseif w.ws > 0 and hum.WalkSpeed <= w.ws * TOF_CFG.STUN_SPEED_RATIO then why = "stun"
+	elseif not w.stun and TOF_StunAttr(w.char) then why = "stun" end
+	if hum.Health > w.hp then w.hp = hum.Health end
+	if hum.WalkSpeed > w.ws then w.ws = hum.WalkSpeed end
+	if why then
+		TOF.hitWatch = nil
+		if now - TOF.lastHitAt >= TOF_CFG.HIT_DEBOUNCE then
+			TOF.lastHitAt = now
+			TOF_PlayHitSound(false)
+		end
+	end
+end
+
+local function TOF_SilentDirection()
+	if not TOF.Enabled then return nil end
+	local root = TOF.myRootRef
+	if not root or root.Parent == nil then
+		local char = TOF_GetCharacter()
+		root = char and char:FindFirstChild("HumanoidRootPart")
+	end
+	local body = TOF.targetBody
+	if not body or body.Parent == nil then body = TOF_GetTarget() end
+	if not body or not root then return nil end
+	if body.Parent == nil or root.Parent == nil then return nil end
+	local fromPos = TOF_GetMuzzlePos(root)
+	local predictedPos = TOF_PredictPosition(fromPos, body)
+	local d = predictedPos - fromPos
+	local m = d.Magnitude
+	if m < 0.001 then return nil end
+	pcall(TOF_MarkShot, body)
+	return d / m
+end
+
+-- Hook pakai registry global Hub (biar nggak tabrakan)
+RegisterHookHandler(TOF_FireRemote, function(args, self)
+	if not TOF.Enabled then return args end
+	local tool = args[1]
+	local dir = args[2]
+	if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
+		local ok, newDir = pcall(TOF_SilentDirection)
+		if ok and typeof(newDir) == "Vector3" then
+			local out = table.pack(table.unpack(args, 1, args.n or #args))
+			out[2] = newDir
+			return out
+		end
+	end
+	return args
+end)
+EnsureNamecallHook()
+
+-- Laser
+local function TOF_HideLaser()
+	if TOF.LaserBeam then TOF.LaserBeam.Transparency = 1 end
+end
+local function TOF_ClearLaser()
+	if TOF.LaserBeam then pcall(function() TOF.LaserBeam:Destroy() end); TOF.LaserBeam = nil end
+end
+local function TOF_UpdateLaser()
+	if not TOF.Laser or not TOF.Enabled or not TOF_IsScoping() then TOF_HideLaser(); return end
+	local char = TOF_GetCharacter()
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local body = TOF.targetBody
+	if not root or not body or body.Parent == nil then TOF_HideLaser(); return end
+	local originPos = TOF_GetMuzzlePos(root)
+	local targetPos = TOF_PredictPosition(originPos, body)
+	if not TOF.LaserBeam or not TOF.LaserBeam.Parent then
+		TOF.LaserBeam = Instance.new("Part")
+		TOF.LaserBeam.Name = "TOF_AimLaser"
+		TOF.LaserBeam.Anchored = true
+		TOF.LaserBeam.CanCollide = false
+		pcall(function() TOF.LaserBeam.CanTouch = false end)
+		pcall(function() TOF.LaserBeam.CanQuery = false end)
+		TOF.LaserBeam.CastShadow = false
+		TOF.LaserBeam.Material = Enum.Material.Neon
+		TOF.LaserBeam.Color = TOF.LaserColor
+		TOF.LaserBeam.Transparency = 1
+		TOF.LaserBeam.Size = Vector3.new(0.05, 0.05, 0.05)
+		TOF.LaserBeam.Parent = workspace
+	end
+	TOF.LaserBeam.Color = TOF.LaserColor
+	local dist = (targetPos - originPos).Magnitude
+	if dist < 0.01 then TOF.LaserBeam.Transparency = 1; return end
+	TOF.LaserBeam.Size = Vector3.new(0.05, 0.05, dist)
+	TOF.LaserBeam.CFrame = CFrame.new((originPos + targetPos) / 2, targetPos)
+	TOF.LaserBeam.Transparency = 0
+end
+
+-- Loop
+local TOF_Conns = {}
+task.spawn(function()
+	while TOF.Alive and gui.Parent do
+		pcall(TOF_RefreshTarget)
+		task.wait(0.1)
+	end
+end)
+task.spawn(function()
+	while TOF.Alive and gui.Parent do
+		pcall(TOF_StepHit)
+		task.wait(0.03)
+	end
+end)
+table.insert(TOF_Conns, RunService.Heartbeat:Connect(function()
+	if not TOF.Alive then return end
+	local body = TOF.targetBody
+	if body and body.Parent then pcall(TOF_UpdateVelocity, body) end
+	pcall(TOF_UpdateLaser)
+end))
+table.insert(TOF_Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+	TOF_HideLaser()
+	TOF.SCPCache = {}; TOF.SCPCacheTimer = 0
+	TOF.targetBody = nil; TOF.myRootRef = nil
+	TOF_ResetTrack()
+end))
+
+-- ===== UI (hub) =====
+local TOF_Row = Add("Silent Aim [ TOF ]")
+local TOF_Toggle = TOF_Row:Toggle(false, function(state) TOF.Enabled = state; if not state then TOF_HideLaser() end end)
+TOF_Toggle.Mode = TOF_Row:Button({ "Killer", "SCP" }, function(label, idx)
+	TOF.Mode = idx == 1 and "Killer" or "SCP"
+	TOF.SCPCacheTimer = 0
+	TOF_ResetTrack()
+	pcall(TOF_RefreshTarget)
+end)
+TOF_Toggle.HitSound = TOF_Row:Check("Hit Sound", true, function(v) TOF.HitSound = v end)
+TOF_Toggle.HitSoundPick = TOF_Row:Dropdown({ "Hit", "Yareu", "Quack" }, "Hit", function(v) TOF.HitSoundPick = v end)
+TOF_Toggle.Laser = TOF_Row:Check("Laser", true, function(v) TOF.Laser = v; if not v then TOF_HideLaser() end end)
+TOF_Toggle.LaserColor = TOF_Row:Color(Color3.fromRGB(255, 255, 255), function(c) TOF.LaserColor = c end)
 
 	-- ============================================================
 	-- 8. AUTO GENERATOR (logic asli + fix check normal/instant)
@@ -3423,41 +3768,70 @@ SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = CONFIG.MIN_FOV, Max = CONFIG.MAX_
 SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.visual = v; if not v and SAV_TargetLabel then SAV_TargetLabel.Visible = false end end)
 
 -- ============================================================
--- 1b. SILENT AIM BUTCHER (logic baru, hook nyatu Flux Hub)
+-- 1b. SILENT AIM BUTCHER (logic baru 100%)
 -- ============================================================
 local BS = {
-	Enabled = false, Dead = false, Conns = {}, Cands = {}, Target = nil, Snap = nil,
-	HookOk = false, Casting = false, CastUntil = 0, Pending = nil, Bypass = false,
-	MaxAngle = 180, Lead = 0.03, PingSec = 0, CdA = nil, CdB = nil, CamPos = nil,
-	Proven = false, FaceActive = false, SavedAuto = true, Fired = 0, Changed = 0,
-	LastSent = nil, LastSentT = 0, GenvKey = "__FluxButcher",
+	Enabled = false,
+	Dead = false,
+	Conns = {},
+	Cands = {},
+	Target = nil,
+	Snap = nil,
+	HookOk = false,
+	Casting = false,
+	CastUntil = 0,
+	Pending = nil,
+	Bypass = false,
+	MaxAngle = 180,
+	Lead = 0.03,
+	PingSec = 0,
+	CdA = nil,
+	CdB = nil,
+	CamPos = nil,
+	FaceActive = false,
+	SavedAuto = true,
+	Fired = 0,
+	Changed = 0,
+	LastSent = nil,
+	LastSentT = 0,
 }
 local BS_CFG = {
-	IncludeBots = true, ProjectileSpeed = 140, MaxRange = 220, ExtraLead = 0.03,
-	MaxPredictTime = 0.6, MaxTargetSpeed = 40, HistoryWindow = 0.35, ReversalFactor = 0.3,
-	AimHeightOffset = 0, RemoteName = "ChainThrow", CooldownAttribute = "ChainMove1CD",
-	FaceTarget = true, CastTimeout = 2.5, FaceHold = 0.35, AckWait = 0.45,
-	MaxAngleStart = 180, MinAngle = 3,
+	IncludeBots = true,
+	ProjectileSpeed = 140,
+	MaxRange = 220,
+	ExtraLead = 0.03,
+	MaxPredictTime = 0.6,
+	MaxTargetSpeed = 40,
+	HistoryWindow = 0.35,
+	ReversalFactor = 0.3,
+	AimHeightOffset = 0,
+	RemoteName = "ChainThrow",
+	CooldownAttribute = "ChainMove1CD",
+	FaceTarget = true,
+	CastTimeout = 2.5,
+	FaceHold = 0.35,
+	AckWait = 0.45,
+	MaxAngleStart = 180,
+	MinAngle = 3,
+	VelocitySmoothing = 0.07,
+	StaleTime = 0.18,
+	PredictVertical = true,
+	LeadPingMul = 0.5,
+	MaxLead = 0.25,
+	TargetMode = "Crosshair",
+	DistWeight = 0.05,
+	TargetStick = 5,
 }
 local BS_ZERO = Vector3.new(0, 0, 0)
 local BS_History = {}
+local BS_VelState = {}
 local BS_Humanoids = {}
-local BS_ChainRemote = nil
 
-local BS_genv = (getgenv and getgenv()) or _G
-if BS_genv[BS.GenvKey] then pcall(function() BS_genv[BS.GenvKey].Destroy() end) end
-BS_genv[BS.GenvKey] = BS
-
-local function BS_scanHumanoids()
-	local fresh = {}
-	pcall(function()
-		for _, d in ipairs(workspace:GetDescendants()) do
-			if d.ClassName == "Humanoid" then fresh[d] = true end
-		end
-	end)
-	return fresh
-end
-BS_Humanoids = BS_scanHumanoids()
+pcall(function()
+	for _, d in ipairs(workspace:GetDescendants()) do
+		if d.ClassName == "Humanoid" then BS_Humanoids[d] = true end
+	end
+end)
 table.insert(BS.Conns, workspace.DescendantAdded:Connect(function(d)
 	if d.ClassName == "Humanoid" then BS_Humanoids[d] = true end
 end))
@@ -3466,6 +3840,7 @@ table.insert(BS.Conns, workspace.DescendantRemoving:Connect(function(d)
 end))
 
 local function BS_dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
+
 local function BS_teamOk(plr)
 	local team = plr.Team
 	if team then
@@ -3477,6 +3852,7 @@ local function BS_teamOk(plr)
 	end
 	return true
 end
+
 local function BS_buildCandidates()
 	local list = {}
 	local charToPlr = {}
@@ -3507,57 +3883,89 @@ local function BS_buildCandidates()
 	end
 	return list
 end
+
 local function BS_pushHistory(key, pos, now)
 	local h = BS_History[key]
-	if not h then h = {}; BS_History[key] = h end
+	if not h then h = {lastMove = now}; BS_History[key] = h end
 	local last = h[#h]
-	if last and (pos - last.p).Magnitude > 25 then
-		for i = #h, 1, -1 do h[i] = nil end
+	if last then
+		local moved = (pos - last.p).Magnitude
+		if moved > 25 then
+			for i = #h, 1, -1 do h[i] = nil end
+			BS_VelState[key] = nil
+			h.lastMove = now
+		elseif moved < 0.005 then
+			return
+		else
+			h.lastMove = now
+		end
 	end
 	h[#h + 1] = {t = now, p = pos}
 	while #h > 0 and now - h[1].t > BS_CFG.HistoryWindow do table.remove(h, 1) end
 end
+
 local function BS_clampVel(v)
 	if v.Magnitude > BS_CFG.MaxTargetSpeed then return v.Unit * BS_CFG.MaxTargetSpeed end
 	return v
 end
-local function BS_hv(a, b)
-	local dt = b.t - a.t
-	if dt <= 0.01 then return BS_ZERO end
-	local d = b.p - a.p
-	return Vector3.new(d.X / dt, 0, d.Z / dt)
+
+local function BS_fitVel(h, i0, i1)
+	local n = i1 - i0 + 1
+	if n < 2 then return nil end
+	if h[i1].t - h[i0].t < 0.05 then return nil end
+	local tm, xm, zm = 0, 0, 0
+	for i = i0, i1 do
+		tm = tm + h[i].t; xm = xm + h[i].p.X; zm = zm + h[i].p.Z
+	end
+	tm, xm, zm = tm / n, xm / n, zm / n
+	local sxx, sxt, szt = 0, 0, 0
+	for i = i0, i1 do
+		local dt = h[i].t - tm
+		sxx = sxx + dt * dt; sxt = sxt + dt * (h[i].p.X - xm); szt = szt + dt * (h[i].p.Z - zm)
+	end
+	if sxx < 1e-6 then return nil end
+	return Vector3.new(sxt / sxx, 0, szt / sxx)
 end
-local function BS_estimateVelocity(key, hrp)
+
+local function BS_estimateVelocity(key, hrp, now)
 	local av = hrp.AssemblyLinearVelocity
 	local asm = Vector3.new(av.X, 0, av.Z)
+	if asm.Magnitude < 1.5 then asm = BS_ZERO end
 	local h = BS_History[key]
-	if not h or #h < 3 then
-		if asm.Magnitude < 1.5 then asm = BS_ZERO end
-		return BS_clampVel(asm), 1
+	if not h or #h < 3 then BS_VelState[key] = nil; return BS_clampVel(asm), 1 end
+	if now - h.lastMove > BS_CFG.StaleTime then BS_VelState[key] = nil; return BS_clampVel(asm), 1 end
+	local n = #h
+	local vAll = BS_fitVel(h, 1, n)
+	if not vAll then return BS_clampVel(asm), 1 end
+	local vOld = BS_fitVel(h, 1, math.ceil(n / 2))
+	local vNew = BS_fitVel(h, math.floor(n / 2) + 1, n)
+	if vOld and vNew and vOld.Magnitude > 2 and vNew.Magnitude > 2
+		and BS_dot(vOld.Unit, vNew.Unit) < 0.2 then
+		local v = vNew
+		if v.Magnitude < 1.5 then v = BS_ZERO end
+		BS_VelState[key] = {v = v, t = now}
+		return BS_clampVel(v), BS_CFG.ReversalFactor
 	end
-	local first, last = h[1], h[#h]
-	if last.t - first.t < 0.06 then
-		if asm.Magnitude < 1.5 then asm = BS_ZERO end
-		return BS_clampVel(asm), 1
+	local raw = vAll * 0.6 + asm * 0.4
+	if raw.Magnitude < 1.5 then raw = BS_ZERO end
+	local vs = BS_VelState[key]
+	local v = raw
+	if vs then
+		local alpha = 1 - math.exp(-(now - vs.t) / BS_CFG.VelocitySmoothing)
+		v = vs.v:Lerp(raw, math.clamp(alpha, 0, 1))
+		if v.Magnitude < 1.5 then v = BS_ZERO end
 	end
-	local mid = h[math.ceil(#h / 2)]
-	local vAll = BS_hv(first, last)
-	local v1 = BS_hv(first, mid)
-	local v2 = BS_hv(mid, last)
-	local v = vAll * 0.6 + asm * 0.4
-	local factor = 1
-	if v1.Magnitude > 2 and v2.Magnitude > 2 and BS_dot(v1.Unit, v2.Unit) < 0.2 then
-		v = v2; factor = BS_CFG.ReversalFactor
-	end
-	if v.Magnitude < 1.5 then v = BS_ZERO end
-	return BS_clampVel(v), factor
+	BS_VelState[key] = {v = v, t = now}
+	return BS_clampVel(v), 1
 end
+
 local function BS_readPingSec()
 	local ms = 0
 	pcall(function() ms = Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
 	if type(ms) ~= "number" then ms = 0 end
 	return math.clamp(ms / 1000, 0, 1)
 end
+
 local function BS_makeParams(ignore)
 	local p = RaycastParams.new()
 	local ok = pcall(function() p.FilterType = Enum.RaycastFilterType.Exclude end)
@@ -3565,16 +3973,31 @@ local function BS_makeParams(ignore)
 	p.FilterDescendantsInstances = ignore
 	return p
 end
+
 local function BS_chooseTarget()
 	local cam = workspace.CurrentCamera
 	local myChar = Players.LocalPlayer.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	local from = myHrp and (myHrp.Position + Vector3.new(0, 1.5, 0)) or (cam and cam.CFrame.Position)
 	if not from then return nil end
-	local bestV, bestVd, bestA, bestAd
+	local camPos = cam and cam.CFrame.Position
+	local look = cam and cam.CFrame.LookVector
+	local prev = BS.Target and BS.Target.key
+	local bestV, bestVs, bestA, bestAs
 	for _, c in ipairs(BS.Cands) do
 		local d = (c.hrp.Position - from).Magnitude
 		if d <= BS_CFG.MaxRange then
+			local score = d
+			if BS_CFG.TargetMode == "Crosshair" and look and camPos then
+				local dir = c.hrp.Position - camPos
+				if dir.Magnitude > 0.01 then
+					local ang = math.deg(math.acos(math.clamp(BS_dot(look, dir.Unit), -1, 1)))
+					score = ang + d * BS_CFG.DistWeight
+				end
+			end
+			if prev and c.key == prev then
+				score = score - (BS_CFG.TargetMode == "Crosshair" and BS_CFG.TargetStick or 3)
+			end
 			local visible = false
 			local ok, res = pcall(function()
 				local ignore = {c.key}
@@ -3584,26 +4007,38 @@ local function BS_chooseTarget()
 			end)
 			if ok and res == nil then visible = true end
 			if visible then
-				if not bestVd or d < bestVd then bestV, bestVd = c, d end
+				if not bestVs or score < bestVs then bestV, bestVs = c, score end
 			else
-				if not bestAd or d < bestAd then bestA, bestAd = c, d end
+				if not bestAs or score < bestAs then bestA, bestAs = c, score end
 			end
 		end
 	end
 	return bestV or bestA
 end
+
 local function BS_aimFromSnap(snap, origin)
 	local pos = snap.pos
+	local hrp = snap.hrp
+	if hrp and hrp.Parent then pos = hrp.Position + Vector3.new(0, BS_CFG.AimHeightOffset, 0) end
 	local vel, factor, lead = snap.vel, snap.factor, snap.lead
 	local travel = (pos - origin).Magnitude / BS_CFG.ProjectileSpeed
 	local aim = pos
-	for _ = 1, 5 do
+	local prevAim
+	for _ = 1, 6 do
 		local tt = math.min(travel + lead, BS_CFG.MaxPredictTime)
 		aim = pos + vel * (tt * factor)
+		if snap.airborne then
+			local y = pos.Y + snap.vy * tt - 0.5 * workspace.Gravity * tt * tt
+			if snap.floorY and y < snap.floorY then y = snap.floorY end
+			aim = Vector3.new(aim.X, y, aim.Z)
+		end
 		travel = (aim - origin).Magnitude / BS_CFG.ProjectileSpeed
+		if prevAim and (aim - prevAim).Magnitude < 0.05 then break end
+		prevAim = aim
 	end
 	return aim
 end
+
 local function BS_limitDir(orig, want, maxDeg)
 	local o = want
 	if orig.Magnitude > 0.001 then o = orig.Unit end
@@ -3616,12 +4051,14 @@ local function BS_limitDir(orig, want, maxDeg)
 	local r = math.rad(maxDeg)
 	return o * math.cos(r) + perp * math.sin(r)
 end
+
 local function BS_copyArgs(args)
 	local out = {}
 	for i = 1, args.n do out[i] = args[i] end
 	out.n = args.n
 	return out
 end
+
 local function BS_onFire(remote, args)
 	if BS.Dead then return nil end
 	local a1 = args[1]
@@ -3663,60 +4100,41 @@ local function BS_onFire(remote, args)
 	BS.Pending = {t = now, remote = remote, orig = args, dev = dev, a = BS.CdA, b = BS.CdB}
 	return out
 end
+
 local function BS_HandlerFn(args, self)
 	if not BS.Enabled or BS.Dead then return args end
 	if BS.Bypass then return args end
 	if typeof(self) ~= "Instance" or self.Name ~= BS_CFG.RemoteName then return args end
 	local ok, newArgs = pcall(BS_onFire, self, args)
-	if ok and newArgs then
-		return newArgs
-	end
+	if ok and newArgs then return newArgs end
 	return args
 end
+
 local function BS_FindChainRemote()
+	local found = nil
 	pcall(function()
 		local r = ReplicatedStorage:FindFirstChild("Remotes")
 		if not r then return end
 		for _, d in ipairs(r:GetDescendants()) do
 			if d.Name == BS_CFG.RemoteName and (d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent")) then
-				BS_ChainRemote = d; return
+				found = d; return
 			end
 		end
 	end)
+	return found
 end
-local BS_FallbackHooked = false
-local BS_FallbackFS = nil
+
 local function BS_InstallHook()
-	BS_FindChainRemote()
-	if BS_ChainRemote then
-		RegisterHookHandler(BS_ChainRemote, BS_HandlerFn)
+	local chainRemote = BS_FindChainRemote()
+	if chainRemote then
+		RegisterHookHandler(chainRemote, BS_HandlerFn)
 		EnsureNamecallHook()
 		BS.HookOk = true
 		return true
 	end
-	if BS_FallbackHooked then return true end
-	if not hookfunction then return false end
-	pcall(function()
-		local tmp = Instance.new("RemoteEvent")
-		local fs = tmp.FireServer
-		pcall(function() tmp:Destroy() end)
-		local function fsh(self, ...)
-			if BS.Enabled and not BS.Bypass and typeof(self) == "Instance" and self.Name == BS_CFG.RemoteName
-				and not (checkcaller and checkcaller()) then
-				local args = table.pack(...)
-				local ok, newArgs = pcall(BS_onFire, self, args)
-				if ok and newArgs then
-					return BS_FallbackFS(self, table.unpack(newArgs, 1, newArgs.n))
-				end
-			end
-			return BS_FallbackFS(self, ...)
-		end
-		BS_FallbackFS = hookfunction(fs, newcclosure and newcclosure(fsh) or fsh)
-		BS_FallbackHooked = true
-		BS.HookOk = true
-	end)
-	return BS.HookOk
+	return false
 end
+
 local function BS_releaseFace()
 	if BS.FaceActive then
 		BS.FaceActive = false
@@ -3727,22 +4145,7 @@ local function BS_releaseFace()
 		end)
 	end
 end
-local function BS_resetTransient(full)
-	BS.Casting = false
-	BS.CastUntil = 0
-	BS.Pending = nil
-	BS.Snap = nil
-	BS.Target = nil
-	BS.LastSent = nil
-	BS.Bypass = false
-	BS.CdA = nil
-	BS.CdB = nil
-	BS_releaseFace()
-	if full then
-		BS.MaxAngle = BS_CFG.MaxAngleStart
-		for k in pairs(BS_History) do BS_History[k] = nil end
-	end
-end
+
 local function BS_checkPending()
 	local p = BS.Pending
 	if not p then return end
@@ -3754,11 +4157,9 @@ local function BS_checkPending()
 	if not known then return end
 	local accepted = (BS.CdA ~= p.a) or (BS.CdB ~= p.b)
 	if accepted then
-		BS.Proven = true
 		if p.dev >= BS.MaxAngle - 0.5 then BS.MaxAngle = math.min(180, BS.MaxAngle * 1.3 + 1) end
 		return
 	end
-	if BS.Proven then return end
 	BS.MaxAngle = math.max(BS_CFG.MinAngle, p.dev * 0.5)
 	local fb = BS_copyArgs(p.orig)
 	local info = fb[3]
@@ -3775,6 +4176,7 @@ local function BS_checkPending()
 	pcall(function() p.remote:FireServer(table.unpack(fb, 1, fb.n)) end)
 	BS.Bypass = false
 end
+
 local function BS_faceStep()
 	if BS.Dead then return end
 	local now = os.clock()
@@ -3797,20 +4199,20 @@ local function BS_faceStep()
 	end
 end
 
-local BS_Heartbeat = nil
+-- ===== UI (hub) =====
 local BS_Row = Add("Silent Aim Butcher")
 local BS_Toggle = BS_Row:Toggle(false, function(state)
 	BS.Enabled = state
-	BS_resetTransient(state)
 	if state then
-		if not BS_InstallHook() then
-			warn("[Butcher] Hook gagal")
+		BS.Dead = false
+		local ok = BS_InstallHook()
+		if not ok then
+			warn("[Butcher] ChainThrow remote tidak ditemukan, hook gagal")
 			BS_Toggle.Set(false, true)
 			return
 		end
-		BS.Dead = false
 		local acc, accSlow = 0, 0
-		BS_Heartbeat = RunService.Heartbeat:Connect(function(dt)
+		table.insert(BS.Conns, RunService.Heartbeat:Connect(function(dt)
 			if BS.Dead or not BS.Enabled then return end
 			local now = os.clock()
 			local cands = BS_buildCandidates()
@@ -3820,7 +4222,9 @@ local BS_Toggle = BS_Row:Toggle(false, function(state)
 				seen[c.key] = true
 				BS_pushHistory(c.key, c.hrp.Position, now)
 			end
-			for k in pairs(BS_History) do if not seen[k] then BS_History[k] = nil end end
+			for k in pairs(BS_History) do
+				if not seen[k] then BS_History[k] = nil; BS_VelState[k] = nil end
+			end
 			local cam = workspace.CurrentCamera
 			if cam then BS.CamPos = cam.CFrame.Position end
 			pcall(function()
@@ -3832,40 +4236,59 @@ local BS_Toggle = BS_Row:Toggle(false, function(state)
 			if accSlow >= 0.25 then
 				accSlow = 0
 				BS.PingSec = BS_readPingSec()
-				BS.Lead = math.clamp(BS.PingSec / 2, 0, 0.25) + BS_CFG.ExtraLead
+				BS.Lead = math.clamp(BS.PingSec * BS_CFG.LeadPingMul, 0, BS_CFG.MaxLead) + BS_CFG.ExtraLead
 			end
 			acc = acc + dt
 			if acc >= 0.05 then
 				acc = 0
-				local ok, tgt = pcall(BS_chooseTarget)
-				BS.Target = ok and tgt or nil
+				local ok2, tgt = pcall(BS_chooseTarget)
+				BS.Target = ok2 and tgt or nil
 			end
 			local t = BS.Target
 			if t and seen[t.key] and t.hrp.Parent and t.hum.Health > 0 then
-				local vel, factor = BS_estimateVelocity(t.key, t.hrp)
-				BS.Snap = {pos = t.hrp.Position + Vector3.new(0, BS_CFG.AimHeightOffset, 0), vel = vel, factor = factor, lead = BS.Lead}
+				local vel, factor = BS_estimateVelocity(t.key, t.hrp, now)
+				local airborne, vy, floorY = false, 0, nil
+				if BS_CFG.PredictVertical then
+					local okF, fm = pcall(function() return t.hum.FloorMaterial end)
+					if okF and fm == Enum.Material.Air then
+						airborne = true
+						vy = t.hrp.AssemblyLinearVelocity.Y
+						local okR, res = pcall(function()
+							return workspace:Raycast(t.hrp.Position, Vector3.new(0, -80, 0), BS_makeParams({t.key}))
+						end)
+						if okR and res then floorY = res.Position.Y + 3 end
+					end
+				end
+				BS.Snap = {
+					pos = t.hrp.Position + Vector3.new(0, BS_CFG.AimHeightOffset, 0),
+					hrp = t.hrp,
+					vel = vel,
+					factor = factor,
+					lead = BS.Lead,
+					airborne = airborne,
+					vy = vy,
+					floorY = floorY,
+				}
 			else
 				BS.Snap = nil
 			end
 			BS_checkPending()
-		end)
+		end))
 		pcall(function() RunService:BindToRenderStep("FluxButcherFace", 2000, BS_faceStep) end)
 	else
-		if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end); BS_Heartbeat = nil end
+		for _, c in ipairs(BS.Conns) do pcall(function() c:Disconnect() end) end
+		BS.Conns = {}
 		pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
 		BS.Target = nil; BS.Snap = nil; BS.Pending = nil
+		BS_releaseFace()
 	end
 end)
-
-BS.Destroy = function()
+BS_Toggle.Destroy = function()
 	BS.Dead = true
-	if BS_Heartbeat then pcall(function() BS_Heartbeat:Disconnect() end); BS_Heartbeat = nil end
 	pcall(function() RunService:UnbindFromRenderStep("FluxButcherFace") end)
 	BS_releaseFace()
 	for _, c in ipairs(BS.Conns) do pcall(function() c:Disconnect() end) end
 	BS.Conns = {}
-	if BS_ChainRemote then UnregisterHookHandler(BS_ChainRemote); BS_ChainRemote = nil end
-	if BS_genv[BS.GenvKey] == BS then BS_genv[BS.GenvKey] = nil end
 end
 
 	-- ============================================================
