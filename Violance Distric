@@ -2134,6 +2134,7 @@ end)
 
 -- ============================================================
 -- SILENT AIM [ TOF ]  (paste di dalam RunTab("Survivor", ...))
+-- 100% logic asli: ping-based lead, Blockcast muzzle, hit sound, dll.
 -- ============================================================
 do
 	local TOF = {
@@ -2155,8 +2156,9 @@ do
 		KILLER_MARKER_NAME = "Lookscriptkiller",
 		TOOL_NAME = "Twist of Fate",
 		MUZZLE_OFFSET = Vector3.new(0.7, 1.373, -2.5),
-		PROJECTILE_SPEED = 260,
-		PREDICT_BIAS = 0.15,
+		LEAD_PING_MULTIPLIER = 1.0,
+		MIN_LEAD_TIME = 0.03,
+		MAX_LEAD_TIME = 0.22,
 		MAX_LEAD = 3.5,
 		HIT_SOUND_VOLUME = 2,
 		HIT_WATCH_TIME = 2.5,
@@ -2184,40 +2186,65 @@ do
 		:WaitForChild(TOF_CFG.TOOL_NAME)
 		:WaitForChild("Fire")
 
-	local track = { body = nil, pos = Vector3.new(), t = 0, vel = Vector3.new() }
+	local TOF_Track = { body = nil, pos = Vector3.new(), t = 0, vel = Vector3.new() }
+	local SCPCache = {}
+	local SCPCacheTimer = 0
 
 	local function TOF_GetCharacter() return Players.LocalPlayer.Character end
-	local function TOF_GetMuzzlePos(root) return (root.CFrame * CFrame.new(TOF_CFG.MUZZLE_OFFSET)).Position end
+
+	local function TOF_GetPingSeconds()
+		local ok, ping = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
+		if ok and type(ping) == "number" and ping > 0 and ping < 1 then return ping end
+		return 0.06
+	end
+
+	local function TOF_GetMuzzlePos(root)
+		local nearPos = root.Position + Vector3.new(0, TOF_CFG.MUZZLE_OFFSET.Y, 0)
+		local rawMuzzle = (root.CFrame * CFrame.new(TOF_CFG.MUZZLE_OFFSET)).Position
+		local diff = rawMuzzle - nearPos
+		if diff.Magnitude <= 0.01 then return rawMuzzle end
+		local char = root.Parent
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = char and { char } or {}
+		params.IgnoreWater = true
+		local ok, hit = pcall(function()
+			return workspace:Blockcast(CFrame.new(nearPos, nearPos + diff.Unit), Vector3.new(0.5, 0.5, 0.5), diff, params)
+		end)
+		if ok and hit then return hit.Position - diff.Unit * 0.5 end
+		return rawMuzzle
+	end
+
 	local function TOF_IsScoping()
 		local char = TOF_GetCharacter()
 		return char ~= nil and char:GetAttribute("Aiming") == true
 	end
 
 	local function TOF_ResetTrack()
-		track.body = nil; track.pos = Vector3.new(); track.t = 0; track.vel = Vector3.new()
+		TOF_Track.body = nil; TOF_Track.pos = Vector3.new(); TOF_Track.t = 0; TOF_Track.vel = Vector3.new()
 	end
 
 	local function TOF_UpdateVelocity(body)
 		local now = tick(); local curPos = body.Position
-		if track.body ~= body then
-			track.body = body; track.pos = curPos; track.t = now; track.vel = Vector3.new()
-			return track.vel
+		if TOF_Track.body ~= body then
+			TOF_Track.body = body; TOF_Track.pos = curPos; TOF_Track.t = now; TOF_Track.vel = Vector3.new()
+			return TOF_Track.vel
 		end
-		local dt = now - track.t
+		local dt = now - TOF_Track.t
 		if dt > 0.5 then
-			track.pos = curPos; track.t = now; track.vel = Vector3.new()
-			return track.vel
+			TOF_Track.pos = curPos; TOF_Track.t = now; TOF_Track.vel = Vector3.new()
+			return TOF_Track.vel
 		end
 		if dt >= 0.03 then
-			track.vel = (curPos - track.pos) / dt
-			track.pos = curPos; track.t = now
+			TOF_Track.vel = (curPos - TOF_Track.pos) / dt
+			TOF_Track.pos = curPos; TOF_Track.t = now
 		end
-		return track.vel
+		return TOF_Track.vel
 	end
 
 	local function TOF_GetVelocity(body)
 		local vel = Vector3.new()
-		if track.body == body then vel = track.vel end
+		if TOF_Track.body == body then vel = TOF_Track.vel end
 		if vel.Magnitude < 1 then
 			local ok, av = pcall(function() return body.AssemblyLinearVelocity end)
 			if ok and av and av.Magnitude >= 1 then vel = av end
@@ -2228,14 +2255,8 @@ do
 	local function TOF_PredictPosition(fromPos, body)
 		local targetPos = body.Position
 		local vel = TOF_GetVelocity(body)
-		local dist = (targetPos - fromPos).Magnitude
-		local tFlight = dist / TOF_CFG.PROJECTILE_SPEED
-		for _ = 1, 2 do
-			local predicted = targetPos + vel * (tFlight + TOF_CFG.PREDICT_BIAS)
-			dist = (predicted - fromPos).Magnitude
-			tFlight = dist / TOF_CFG.PROJECTILE_SPEED
-		end
-		local finalPos = targetPos + vel * (tFlight + TOF_CFG.PREDICT_BIAS)
+		local leadTime = math.clamp(TOF_GetPingSeconds() * TOF_CFG.LEAD_PING_MULTIPLIER, TOF_CFG.MIN_LEAD_TIME, TOF_CFG.MAX_LEAD_TIME)
+		local finalPos = targetPos + vel * leadTime
 		local offset = finalPos - targetPos
 		if offset.Magnitude > TOF_CFG.MAX_LEAD then
 			finalPos = targetPos + offset.Unit * TOF_CFG.MAX_LEAD
@@ -2250,9 +2271,6 @@ do
 			or character:FindFirstChild("LowerTorso")
 			or character:FindFirstChild("HumanoidRootPart")
 	end
-
-	local SCPCache = {}
-	local SCPCacheTimer = 0
 
 	local function TOF_GetSCPs()
 		if tick() - SCPCacheTimer < 0.5 then return SCPCache end
@@ -2327,8 +2345,8 @@ do
 		end
 	end
 
-	local function TOF_PlayHitSound()
-		if not TOF.SoundEnabled then return end
+	local function TOF_PlayHitSound(force)
+		if not force and not TOF.SoundEnabled then return end
 		local entry = TOF_SOUNDS[TOF.SoundIndex]
 		if not entry then return end
 		pcall(function()
@@ -2381,7 +2399,7 @@ do
 		if why then
 			TOF.HitWatch = nil
 			if now - TOF.LastHitAt >= TOF_CFG.HIT_DEBOUNCE then
-				TOF.LastHitAt = now; TOF_PlayHitSound()
+				TOF.LastHitAt = now; TOF_PlayHitSound(false)
 			end
 		end
 	end
