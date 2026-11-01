@@ -1717,7 +1717,7 @@ end)
 	-- 6. AUTO DODGE CROUCH (logic asli)
 	-- ============================================================
 	local ADC = { Enabled = false, Thread = nil, IsCrouching = false, Range = 25, ActivationWindow = 1.5 }
-	local ADC_ABYSSAL = "rbxassetid://100014992013740"
+	local ADC_ABYSSAL = "rbxassetid://109126228335696"
 	local ADC_VIM = game:GetService("VirtualInputManager")
 	local ADC_Mobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 	local function ADC_GetCrouchBtn()
@@ -1808,6 +1808,12 @@ local AP = {
 	Cache = { Remote = nil, Button = nil },
 }
 local AP_IDS = {
+	["129895082621579"] = true, ["137220187658475"] = true, ["113499071528107"] = true,
+	["128387952281975"] = true, ["138125499040825"] = true, ["73426590603915"] = true,
+	["106987488279654"] = true, ["114699370608778"] = true, ["106859061030976"] = true,
+	["109975707842369"] = true, ["123782306962803"] = true, ["111427918159250"] = true,
+	["138606330835999"] = true, ["132549827448757"] = true, ["111471189402744"] = true,
+	["137097981510865"] = true, ["81877269249538"] = true, ["81642897917718"] = true,
 	["122812055447896"] = true, ["133963973694098"] = true, ["117042998468241"] = true,
 	["135002183282873"] = true, ["121216847022485"] = true, ["132817836308238"] = true,
 	["129784271201071"] = true, ["82666958311998"] = true, ["78432063483146"] = true,
@@ -1822,7 +1828,7 @@ local AP_IDS = {
 	["81963230963908"] = true, ["113691709436161"] = true, ["117070354890871"] = true,
 	["88848807662765"] = true,
 }
-local AP_SPECIAL_ID = "98163597193511"
+local AP_SPECIAL_ID = "114699370608778"
 local AP_SPECIAL_RANGE = 16
 
 local function AP_GetRemote()
@@ -2168,6 +2174,9 @@ do
 	local TOF_SOUND_NAMES = {}
 	for _, s in ipairs(TOF_SOUNDS) do table.insert(TOF_SOUND_NAMES, s.name) end
 
+	local TOF_SoundService = game:GetService("SoundService")
+	local TOF_Debris = game:GetService("Debris")
+
 	local FireRemote =
 		ReplicatedStorage
 		:WaitForChild("Remotes")
@@ -2327,9 +2336,9 @@ do
 			snd.Name = "TOF_HitSound"
 			snd.SoundId = "rbxassetid://" .. tostring(entry.id)
 			snd.Volume = TOF_CFG.HIT_SOUND_VOLUME
-			snd.Parent = SoundService
+			snd.Parent = TOF_SoundService
 			snd:Play()
-			game:GetService("Debris"):AddItem(snd, 8)
+			TOF_Debris:AddItem(snd, 8)
 		end)
 	end
 
@@ -2397,47 +2406,22 @@ do
 		return d / m
 	end
 
-	local TOF_SHARED = (getgenv and getgenv().__AIM_SHARED) or nil
-	if type(TOF_SHARED) ~= "table" then
-		TOF_SHARED = { hooked = false, gen = 0, remote = nil, aim = nil }
-		if getgenv then getgenv().__AIM_SHARED = TOF_SHARED end
-	end
-	TOF_SHARED.gen = (TOF_SHARED.gen or 0) + 1
-	local TOF_GEN = TOF_SHARED.gen
-	TOF_SHARED.remote = FireRemote
-	TOF_SHARED.aim = TOF_SilentDirection
-
 	local function TOF_InstallHook()
-		if TOF_SHARED.hooked then return true end
-		if not (hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure) then return false end
-		local ok = pcall(function()
-			local old
-			old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-				local method = getnamecallmethod()
-				if method == "FireServer" and self == TOF_SHARED.remote then
-					local mine = false
-					if checkcaller then mine = checkcaller() end
-					if not mine then
-						local fn = TOF_SHARED.aim
-						if fn then
-							local tool, dir = ...
-							if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
-								local okAim, newDir = pcall(fn)
-								if okAim and typeof(newDir) == "Vector3" then
-									setnamecallmethod("FireServer")
-									return old(self, tool, newDir, select(3, ...))
-								end
-							end
-						end
-					end
-					setnamecallmethod("FireServer")
-					return old(self, ...)
+		if TOF.Hooked then return true end
+		RegisterHookHandler(FireRemote, function(args, self)
+			if not TOF.Enabled then return args end
+			local tool, dir = args[1], args[2]
+			if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
+				local okAim, newDir = pcall(TOF_SilentDirection)
+				if okAim and typeof(newDir) == "Vector3" then
+					args[2] = newDir
 				end
-				return old(self, ...)
-			end))
+			end
+			return args
 		end)
-		if ok then TOF_SHARED.hooked = true end
-		return ok
+		EnsureNamecallHook()
+		TOF.Hooked = true
+		return true
 	end
 
 	local LaserBeam = nil
@@ -2476,9 +2460,8 @@ do
 		TOF_UpdateLaser(originPos, targetPos)
 	end
 
-	local heartbeatConn
-	heartbeatConn = RunService.Heartbeat:Connect(function()
-		if TOF_SHARED.gen ~= TOF_GEN then
+	local heartbeatConn = RunService.Heartbeat:Connect(function()
+		if not gui.Parent then
 			if heartbeatConn then heartbeatConn:Disconnect() end
 			pcall(TOF_ClearLaser)
 			return
@@ -2495,15 +2478,13 @@ do
 		TOF_ResetTrack()
 	end))
 
-	-- ===== ROW UI (Flux Hub) =====
 	local TOF_Row = Add("Silent Aim [ TOF ]")
 	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
 		TOF.Enabled = state
 		if state then
 			TOF_InstallHook()
 			task.spawn(function()
-				while TOF.Enabled do
-					if TOF_SHARED.gen ~= TOF_GEN then break end
+				while TOF.Enabled and gui.Parent do
 					pcall(TOF_RefreshTarget)
 					pcall(TOF_StepHit)
 					task.wait(0.1)
