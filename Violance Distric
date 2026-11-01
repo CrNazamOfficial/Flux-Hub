@@ -1787,7 +1787,7 @@ end)
 	ADC_Toggle.Extras = { ADC_Row:Stepper({ Min = 15, Max = 35, Step = 1, Default = 25 }, function(v) ADC.Range = v end) }	
 
 -- ============================================================
--- 7. AUTO PARRY (logic baru 100%)
+-- 7. AUTO PARRY (logic baru 100% + fallback parry)
 -- ============================================================
 local AP = {
 	Cfg = {
@@ -1860,6 +1860,10 @@ local function AP_ExecuteParry()
 				firesignal(b.MouseButton1Up)
 			elseif getconnections then
 				for _, x in ipairs(getconnections(b.MouseButton1Down)) do pcall(function() x:Fire() end) end
+			else
+				if mouse2click then mouse2click()
+				elseif mouse2press and mouse2release then mouse2press(); mouse2release()
+				elseif MouseButton2Click then MouseButton2Click() end
 			end
 		else
 			if mouse2click then mouse2click()
