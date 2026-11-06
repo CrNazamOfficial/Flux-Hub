@@ -1029,7 +1029,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Speed Boost", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -4489,7 +4489,7 @@ do
 
 	local State = {
 		Enabled = false,
-		ShowFov = true,
+		ShowFov = false,
 	}
 
 	local Aim = {
@@ -5182,12 +5182,14 @@ do
 	--------------------------------------------------
 
 	local VEIL_Row = Add("Silent Aim Veil")
-	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
-		State.Enabled = s
-		if not s then
-			Aim.Target = nil
-		end
-	end)
+    local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
+	State.Enabled = s
+	State.ShowFov = s
+	refreshFov()
+	if not s then
+		Aim.Target = nil
+	end
+end)
 
 	VEIL_Row:Check("Fov Circle", true, function(v)
 		State.ShowFov = v
@@ -5639,36 +5641,22 @@ local function HE_Cleanup(root)
 	local o = HE.Objs[root]
 	if not o then return end
 	HE.Objs[root] = nil
-	pcall(function() o.box:Destroy() end)
+	pcall(function() o.hl:Destroy() end)
 end
 
 local function HE_Setup(root)
 	if HE.Objs[root] then return end
+	local hl = Instance.new("Highlight")
+	hl.Name = "HookESP_Chams"
+	hl.Adornee = root
+	hl.FillColor = HE.Color
+	hl.FillTransparency = 0.75
+	hl.OutlineColor = HE.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = root
 
-	local attach = nil
-	if root.PrimaryPart and root.PrimaryPart:IsA("BasePart") then
-		attach = root.PrimaryPart
-	else
-		local hb = root:FindFirstChild("HitBox", true)
-		if hb and hb:IsA("BasePart") then
-			attach = hb
-		else
-			attach = root:FindFirstChildWhichIsA("BasePart", true)
-		end
-	end
-	if not attach then return end
-
-	local box = Instance.new("BoxHandleAdornment")
-	box.Name = "HookESP_Box"
-	box.Adornee = attach
-	box.AlwaysOnTop = true
-	box.ZIndex = 5
-	box.Size = attach.Size
-	box.Color3 = HE.Color
-	box.Transparency = 0
-	box.Parent = attach
-
-	HE.Objs[root] = { box = box, attach = attach }
+	HE.Objs[root] = { hl = hl }
 end
 
 local HE_Row = Add("Hook Esp")
@@ -5697,7 +5685,12 @@ end)
 HE_Toggle.Color = HE_Row:Color(HE.Color, function(c)
 	HE.Color = c
 	for _, o in pairs(HE.Objs) do
-		pcall(function() if o.box and o.box.Parent then o.box.Color3 = c end end)
+		pcall(function()
+			if o.hl and o.hl.Parent then
+				o.hl.FillColor = c
+				o.hl.OutlineColor = c
+			end
+		end)
 	end
 end)
 
@@ -5709,6 +5702,7 @@ local KE = {
 	Conns = {},
 	Color = Color3.fromRGB(255, 0, 0),
 	Objs = setmetatable({}, { __mode = "k" }),
+	Watchdog = nil,
 }
 
 local function KE_IsKiller(p)
@@ -5730,7 +5724,7 @@ local function KE_Clear(p)
 	local o = KE.Objs[p]
 	if not o then return end
 	KE.Objs[p] = nil
-	for _, b in ipairs(o.boxes) do pcall(function() b:Destroy() end) end
+	pcall(function() o.hl:Destroy() end)
 end
 
 local function KE_Refresh(p)
@@ -5738,34 +5732,29 @@ local function KE_Refresh(p)
 	local char = p.Character
 	if not char or not char.Parent then KE_Clear(p); return end
 	if not KE_IsKiller(p) then KE_Clear(p); return end
-	local root = char:FindFirstChild("HumanoidRootPart")
 	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not root or not hum or hum.Health <= 0 then KE_Clear(p); return end
+	if not hum or hum.Health <= 0 then KE_Clear(p); return end
 
 	local o = KE.Objs[p]
-	if o and o.char == char and o.boxes[1] and o.boxes[1].Parent then
-		for _, b in ipairs(o.boxes) do
-			pcall(function()
-				b.Adornee = root
-				b.Size = Vector3.new(3, 5.5, 3)
-				b.Color3 = KE.Color
-			end)
-		end
+	if o and o.char == char and o.hl and o.hl.Parent then
+		pcall(function()
+			o.hl.FillColor = KE.Color
+			o.hl.OutlineColor = KE.Color
+		end)
 		return
 	end
 
 	KE_Clear(p)
-	local box = Instance.new("BoxHandleAdornment")
-	box.Name = "KillerESP_Box"
-	box.Adornee = root
-	box.AlwaysOnTop = true
-	box.ZIndex = 5
-	box.Size = Vector3.new(3, 5.5, 3)
-	box.Color3 = KE.Color
-	box.Transparency = 0
-	box.Parent = root
+	local hl = Instance.new("Highlight")
+	hl.Name = "KillerESP_Chams"
+	hl.FillColor = KE.Color
+	hl.FillTransparency = 0.75
+	hl.OutlineColor = KE.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = char
 
-	KE.Objs[p] = { boxes = { box }, char = char }
+	KE.Objs[p] = { hl = hl, char = char }
 end
 
 local function KE_Apply(p)
@@ -5812,7 +5801,7 @@ local KE_Toggle = KE_Row:Toggle(false, function(state)
 				for _, p in ipairs(Players:GetPlayers()) do
 					if p ~= Players.LocalPlayer and p.Character and p.Character.Parent then
 						local o = KE.Objs[p]
-						local has = o and o.boxes[1] and o.boxes[1].Parent
+						local has = o and o.hl and o.hl.Parent
 						if KE_IsKiller(p) and not has then
 							KE_Refresh(p)
 						elseif not KE_IsKiller(p) and has then
@@ -5835,9 +5824,12 @@ end)
 KE_Toggle.Color = KE_Row:Color(KE.Color, function(c)
 	KE.Color = c
 	for _, o in pairs(KE.Objs) do
-		for _, b in ipairs(o.boxes) do
-			pcall(function() if b.Parent then b.Color3 = c end end)
-		end
+		pcall(function()
+			if o.hl and o.hl.Parent then
+				o.hl.FillColor = c
+				o.hl.OutlineColor = c
+			end
+		end)
 	end
 end)
 
@@ -5918,7 +5910,7 @@ local function GE_Cleanup(obj)
 	local o = GE.Objs[obj]
 	if not o then return end
 	GE.Objs[obj] = nil
-	pcall(function() o.box:Destroy() end)
+	pcall(function() o.hl:Destroy() end)
 	pcall(function() o.tag:Destroy() end)
 end
 local function GE_Apply(obj)
@@ -5928,15 +5920,15 @@ local function GE_Apply(obj)
 	local adornee = GE_Adornee(obj) or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
 	if not adornee then return end
 
-	local box = Instance.new("BoxHandleAdornment")
-	box.Name = "GenESP_Box"
-	box.Adornee = adornee
-	box.AlwaysOnTop = true
-	box.ZIndex = 5
-	box.Size = adornee.Size
-	box.Color3 = GE_CFG.OUTLINE
-	box.Transparency = 0
-	box.Parent = adornee
+	local hl = Instance.new("Highlight")
+	hl.Name = "GenESP_HL"
+	hl.Adornee = obj
+	hl.FillColor = Color3.fromRGB(255, 255, 255)
+	hl.FillTransparency = 0.85
+	hl.OutlineColor = GE_CFG.OUTLINE
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = obj
 
 	local tag = Instance.new("BillboardGui")
 	tag.Name = "GenESP_Tag"
@@ -5950,7 +5942,7 @@ local function GE_Apply(obj)
 	tag.MaxDistance = 500
 	tag.Adornee = adornee
 	tag.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0)
-	tag.Parent = adornee
+	tag.Parent = obj
 
 	local lbl = Instance.new("TextLabel")
 	lbl.Name = "Text"
@@ -5967,13 +5959,13 @@ local function GE_Apply(obj)
 	lbl.Text = "Generator | 0%"
 	lbl.Parent = tag
 
-	GE.Objs[obj] = { box = box, tag = tag, lbl = lbl }
+	GE.Objs[obj] = { hl = hl, tag = tag, lbl = lbl, adornee = adornee }
 
 	task.spawn(function()
 		local lastPct = -1
 		while GE.Enabled and obj and obj.Parent do
 			local o = GE.Objs[obj]
-			if not o or o.box ~= box or not box.Parent then return end
+			if not o or o.hl ~= hl or not hl.Parent then return end
 			if not GE_IsGeneratorModel(obj) then GE_Cleanup(obj); return end
 			local p = math.clamp(GE_Progress(obj) or 0, 0, 100)
 			local pct = math.floor(p + 0.5)
@@ -5982,7 +5974,8 @@ local function GE_Apply(obj)
 				local c = GE_Color(p / 100)
 				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
 				lbl.Text = string.format('Generator | <font color="#%s">%d%%</font>', hex, pct)
-				box.Transparency = (pct >= 100) and 1 or 0
+				hl.OutlineTransparency = (pct >= 100) and 1 or 0
+				hl.FillTransparency = (pct >= 100) and 1 or 0.85
 				tag.Enabled = (pct < 100)
 			end
 			task.wait(0.15)
@@ -5998,7 +5991,7 @@ end
 local function GE_ClearAll()
 	for obj in pairs(GE.Objs) do GE_Cleanup(obj) end
 	for _, o in ipairs(workspace:GetDescendants()) do
-		if o.Name == "GenESP_Box" or o.Name == "GenESP_Tag" then
+		if o.Name == "GenESP_HL" or o.Name == "GenESP_Tag" then
 			pcall(function() o:Destroy() end)
 		end
 	end
@@ -6021,10 +6014,119 @@ end)
 GE_Toggle.Color = GE_Row:Color(GE_CFG.OUTLINE, function(c)
 	GE_CFG.OUTLINE = c
 	for _, o in pairs(GE.Objs) do
-		pcall(function() if o.box and o.box.Parent then o.box.Color3 = c end end)
+		pcall(function() if o.hl and o.hl.Parent then o.hl.OutlineColor = c end end)
 	end
 end)
 
+-- ============================================================
+-- 15. SCP ESP
+-- ============================================================
+local SCPE = {
+	Enabled = false,
+	Conns = {},
+	Color = Color3.fromRGB(160, 60, 220),
+	Objs = setmetatable({}, { __mode = "k" }),
+	Watchdog = nil,
+}
+
+local function SCPE_IsSCP(model)
+	if not model or not model:IsA("Model") then return false end
+	if Players:GetPlayerFromCharacter(model) then return false end
+	if not model:IsDescendantOf(workspace) then return false end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return false end
+	if not model:FindFirstChild("HumanoidRootPart") then return false end
+	local attrs = model:GetAttributes()
+	if next(attrs) ~= nil then return true end
+	if model:GetAttribute("CorpseCreated0492") ~= nil then return true end
+	return false
+end
+
+local function SCPE_Clear(model)
+	local o = SCPE.Objs[model]
+	if not o then return end
+	SCPE.Objs[model] = nil
+	pcall(function() o.hl:Destroy() end)
+end
+
+local function SCPE_Apply(model)
+	if not SCPE_IsSCP(model) then return end
+	local o = SCPE.Objs[model]
+	if o and o.hl and o.hl.Parent then return end
+	SCPE_Clear(model)
+	local hl = Instance.new("Highlight")
+	hl.Name = "SCPESP_Chams"
+	hl.Adornee = model
+	hl.FillColor = SCPE.Color
+	hl.FillTransparency = 0.75
+	hl.OutlineColor = SCPE.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = model
+	SCPE.Objs[model] = { hl = hl }
+end
+
+local function SCPE_ScanAll()
+	local map = workspace:FindFirstChild("Map")
+	if not map then return end
+	for _, d in ipairs(map:GetDescendants()) do
+		if d:IsA("Model") then SCPE_Apply(d) end
+	end
+end
+
+local SCPE_Row = Add("SCP Esp")
+local SCPE_Toggle = SCPE_Row:Toggle(false, function(state)
+	SCPE.Enabled = state
+	if state then
+		SCPE_ScanAll()
+		local map = workspace:FindFirstChild("Map")
+		if map then
+			table.insert(SCPE.Conns, map.DescendantAdded:Connect(function(d)
+				task.wait(0.3)
+				if SCPE.Enabled and d:IsA("Model") then SCPE_Apply(d) end
+			end))
+			table.insert(SCPE.Conns, map.DescendantRemoving:Connect(function(d)
+				if SCPE.Objs[d] then SCPE_Clear(d) end
+			end))
+		end
+		SCPE.Watchdog = task.spawn(function()
+			while SCPE.Enabled do
+				task.wait(1)
+				for model, o in pairs(SCPE.Objs) do
+					if not model.Parent or not o.hl.Parent or not SCPE_IsSCP(model) then
+						SCPE_Clear(model)
+					else
+						pcall(function()
+							o.hl.FillColor = SCPE.Color
+							o.hl.OutlineColor = SCPE.Color
+						end)
+					end
+				end
+				for _, d in ipairs(workspace:GetDescendants()) do
+					if d:IsA("Model") and SCPE_IsSCP(d) and not SCPE.Objs[d] then
+						SCPE_Apply(d)
+					end
+				end
+			end
+		end)
+	else
+		if SCPE.Watchdog then pcall(function() task.cancel(SCPE.Watchdog) end); SCPE.Watchdog = nil end
+		for _, c in ipairs(SCPE.Conns) do pcall(function() c:Disconnect() end) end
+		SCPE.Conns = {}
+		for model in pairs(SCPE.Objs) do SCPE_Clear(model) end
+	end
+end)
+SCPE_Toggle.Color = SCPE_Row:Color(SCPE.Color, function(c)
+	SCPE.Color = c
+	for _, o in pairs(SCPE.Objs) do
+		pcall(function()
+			if o.hl and o.hl.Parent then
+				o.hl.FillColor = c
+				o.hl.OutlineColor = c
+			end
+		end)
+	end
+end)
 
 -- ============================================================
 -- 13. PUMPKIN ESP
@@ -6594,14 +6696,14 @@ end)
 	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.box then d.box.Color3 = c end; if d.hl then d.hl.FillColor = c; d.hl.OutlineColor = c end end end)
 
 -- ============================================================
--- 11. SURVIVOR ESP (upgraded)
+-- 11. SURVIVOR ESP
 -- ============================================================
 local SE = {
 	Enabled = false,
 	Conns = {},
 	Color = Color3.fromRGB(255, 255, 255),
-	Watchdog = nil,
 	Objs = setmetatable({}, { __mode = "k" }),
+	Watchdog = nil,
 }
 
 local function SE_IsKiller(p)
@@ -6624,7 +6726,7 @@ local function SE_Clear(p)
 	local o = SE.Objs[p]
 	if not o then return end
 	SE.Objs[p] = nil
-	for _, b in ipairs(o.boxes) do pcall(function() b:Destroy() end) end
+	pcall(function() o.hl:Destroy() end)
 end
 
 local function SE_RefreshHighlight(p)
@@ -6632,34 +6734,29 @@ local function SE_RefreshHighlight(p)
 	local char = p.Character
 	if not char or not char.Parent then SE_Clear(p); return end
 	if SE_IsKiller(p) then SE_Clear(p); return end
-	local root = char:FindFirstChild("HumanoidRootPart")
 	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not root or not hum or hum.Health <= 0 then SE_Clear(p); return end
+	if not hum or hum.Health <= 0 then SE_Clear(p); return end
 
 	local o = SE.Objs[p]
-	if o and o.char == char and o.boxes[1] and o.boxes[1].Parent then
-		for _, b in ipairs(o.boxes) do
-			pcall(function()
-				b.Adornee = root
-				b.Size = Vector3.new(3, 5.5, 3)
-				b.Color3 = SE.Color
-			end)
-		end
+	if o and o.char == char and o.hl and o.hl.Parent then
+		pcall(function()
+			o.hl.FillColor = SE.Color
+			o.hl.OutlineColor = SE.Color
+		end)
 		return
 	end
 
 	SE_Clear(p)
-	local box = Instance.new("BoxHandleAdornment")
-	box.Name = "SurvivorESP_Box"
-	box.Adornee = root
-	box.AlwaysOnTop = true
-	box.ZIndex = 5
-	box.Size = Vector3.new(3, 5.5, 3)
-	box.Color3 = SE.Color
-	box.Transparency = 0
-	box.Parent = root
+	local hl = Instance.new("Highlight")
+	hl.Name = "SurvivorESP_Chams"
+	hl.FillColor = SE.Color
+	hl.FillTransparency = 0.75
+	hl.OutlineColor = SE.Color
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Parent = char
 
-	SE.Objs[p] = { boxes = { box }, char = char }
+	SE.Objs[p] = { hl = hl, char = char }
 end
 
 local function SE_Apply(p)
@@ -6687,11 +6784,6 @@ local function SE_Apply(p)
 	table.insert(SE.Conns, p.Changed:Connect(function(prop)
 		if prop == "Team" then SE_RefreshHighlight(p) end
 	end))
-	table.insert(SE.Conns, p.CharacterAdded:Connect(function(char)
-		char.ChildAdded:Connect(function(c)
-			if c:IsA("Tool") then task.wait(0.2); SE_RefreshHighlight(p) end
-		end)
-	end))
 end
 
 local SE_Row = Add("Survivor Esp")
@@ -6706,7 +6798,7 @@ local SE_Toggle = SE_Row:Toggle(false, function(state)
 				for _, p in ipairs(Players:GetPlayers()) do
 					if p ~= Players.LocalPlayer and p.Character and p.Character.Parent then
 						local o = SE.Objs[p]
-						local has = o and o.boxes[1] and o.boxes[1].Parent
+						local has = o and o.hl and o.hl.Parent
 						if not SE_IsKiller(p) and not has then
 							SE_RefreshHighlight(p)
 						elseif SE_IsKiller(p) and has then
@@ -6729,11 +6821,15 @@ end)
 SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 	SE.Color = c
 	for _, o in pairs(SE.Objs) do
-		for _, b in ipairs(o.boxes) do
-			pcall(function() if b.Parent then b.Color3 = c end end)
-		end
+		pcall(function()
+			if o.hl and o.hl.Parent then
+				o.hl.FillColor = c
+				o.hl.OutlineColor = c
+			end
+		end)
 	end
 end)
+
 	-- ============================================================
 	-- 12. WORLD SETTING
 	-- ============================================================
