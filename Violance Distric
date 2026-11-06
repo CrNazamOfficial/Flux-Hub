@@ -2133,710 +2133,869 @@ NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
 end)
 
 -- ============================================================
--- SILENT AIM [ TOF ]  (paste di dalam RunTab("Survivor", ...))
--- 100% logic baru: multi-tracker, velocity window, accel,
--- latency ping, CastSolid, IsAirborne, SolveLead, ClampToWorld,
--- PickAimPoint (gap aim), aim cache, laser ke body.
+-- SILENT AIM [ TOF ] — HALLOWEEN 🎃
+-- Logic 100% utuh dari file asli. UI bawaan diganti row Flux Hub.
 -- ============================================================
 do
-	local TOF = {
-		Enabled = false,
-		TargetMode = "Killer",
-		LaserColor = Color3.fromRGB(255, 255, 255),
-		SoundEnabled = true,
-		SoundIndex = 1,
-		Hooked = false,
-		TargetBody = nil,
-		TargetName = nil,
-		MyRoot = nil,
-		HitWatch = nil,
-		LastHitAt = 0,
-		Conns = {},
+	local Players = game:GetService("Players")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local UserInputService = game:GetService("UserInputService")
+	local RunService = game:GetService("RunService")
+	local SoundService = game:GetService("SoundService")
+	local Debris = game:GetService("Debris")
+
+	local PLAYER = Players.LocalPlayer
+
+	local genv = (getgenv and getgenv()) or _G
+	local SHARED = genv.__AIM_SHARED
+	if type(SHARED) ~= "table" then
+		SHARED = { hooked = false, gen = 0, remote = nil, aim = nil }
+		genv.__AIM_SHARED = SHARED
+	end
+	SHARED.gen = (SHARED.gen or 0) + 1
+	local MY_GEN = SHARED.gen
+
+	--------------------------------------------------
+	-- CONFIG
+	--------------------------------------------------
+
+	local KILLER_MARKER_NAME = "Lookscriptkiller"
+	local AUTO_AIM_ENABLED = false            -- default OFF, diatur toggle Flux Hub
+
+	local DEFAULT_TARGET_MODE = "Killer"
+	local LASER_ENABLED = true
+	local LASER_COLOR = Color3.fromRGB(255, 255, 255)
+
+	local MODES = {
+		{
+			internal = "Killer", display = "Killer", key = Enum.KeyCode.K,
+			activeColor = Color3.fromRGB(180, 45, 45), activeTxt = Color3.fromRGB(255, 180, 180),
+		},
+		{
+			internal = "SCP", display = "SCP", key = Enum.KeyCode.L,
+			activeColor = Color3.fromRGB(120, 80, 10), activeTxt = Color3.fromRGB(255, 210, 100),
+		},
 	}
 
-	local TOF_CFG = {
-		KILLER_MARKER_NAME = "Lookscriptkiller",
-		TOOL_NAME = "Twist of Fate",
-		MUZZLE_OFFSET = Vector3.new(0.7, 1.373, -2.5),
-		PROJECTILE_SPEED = 260,
-		PING_FACTOR = 1.0,
-		EXTRA_LATENCY = 0.06,
-		MAX_LATENCY = 0.5,
-		MAX_LEAD_TIME = 2.0,
-		MAX_SPEED = 160,
-		VELOCITY_WINDOW = 0.14,
-		ACCEL_FACTOR = 0.4,
-		GAP_AIM_ENABLED = true,
-		AIM_MARGIN = 0.25,
-		BLOCK_BY_VISIBLE_PARTS = false,
-		HIT_SOUND_VOLUME = 2,
-		HIT_WATCH_TIME = 2.5,
-		HIT_DEBOUNCE = 0.5,
-		STUN_SPEED_RATIO = 0.3,
-		LASER_ENABLED = true,
-	}
+	local TOOL_NAME = "Twist of Fate"
 
-	local TOF_SOUNDS = {
+	local MUZZLE_OFFSET = Vector3.new(0.7, 1.373, -2.5)
+
+	local PROJECTILE_SPEED = 260
+	local PROJECTILE_GRAVITY = 0
+	local PREDICT_BIAS = 0.05
+	local PING_MULT = 1.0
+	local MAX_LEAD = 80
+	local MAX_TARGET_SPEED = 90
+	local HIST_WINDOW = 0.35
+
+	local RAY_RANGE = 2500
+	local SAMPLE_FRACTION = 0.35
+	local BODY_PRIORITY = {
+		UpperTorso = 0,
+		Torso = 0,
+		LowerTorso = 1,
+		HumanoidRootPart = 1,
+		Head = 2,
+	}
+	local DEFAULT_PRIORITY = 3
+
+	local HIT_SOUND_ENABLED = true
+	local HIT_SOUND_VOLUME = 2
+	local HIT_WATCH_TIME = 2.5
+	local HIT_DEBOUNCE = 0.5
+	local STUN_SPEED_RATIO = 0.3
+	local HIT_SOUNDS = {
 		{ name = "Hit", id = "5276754334" },
 		{ name = "Yareu", id = "72500584153933" },
 		{ name = "Quack", id = "9068554227" },
 	}
-
-	local TOF_SOUND_NAMES = {}
-	for _, s in ipairs(TOF_SOUNDS) do table.insert(TOF_SOUND_NAMES, s.name) end
-
-	local TOF_SoundService = game:GetService("SoundService")
-	local TOF_Debris = game:GetService("Debris")
+	local hitSoundIndex = 1
+	local HIT_SOUND_NAMES = {}
+	for _, s in ipairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, s.name) end
 
 	local FireRemote =
 		ReplicatedStorage
 		:WaitForChild("Remotes")
 		:WaitForChild("Items")
-		:WaitForChild(TOF_CFG.TOOL_NAME)
+		:WaitForChild(TOOL_NAME)
 		:WaitForChild("Fire")
 
-	local ZERO = Vector3.new(0, 0, 0)
-	local SAMPLE_KEEP = 0.7
-	local tracks = setmetatable({}, { __mode = "k" })
-	local SCPCache = {}
-	local SCPCacheTimer = 0
+	--------------------------------------------------
+	-- UTIL
+	--------------------------------------------------
 
-	local function TOF_GetCharacter() return Players.LocalPlayer.Character end
-
-	local function TOF_RootOf(body)
-		if not body then return nil end
-		local char = body.Parent
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		return hrp or body
+	local function GetCharacter()
+		return PLAYER.Character
 	end
 
-	local function TOF_ResetTrack()
-		tracks = setmetatable({}, { __mode = "k" })
+	local function GetMuzzlePos(root)
+		return (root.CFrame * CFrame.new(MUZZLE_OFFSET)).Position
 	end
 
-	local function TOF_GetMuzzlePos(root)
-		return (root.CFrame * CFrame.new(TOF_CFG.MUZZLE_OFFSET)).Position
-	end
-
-	local function TOF_IsScoping()
-		local char = TOF_GetCharacter()
+	local function IsScoping()
+		local char = GetCharacter()
 		return char ~= nil and char:GetAttribute("Aiming") == true
 	end
 
-	local function TOF_RecordSample(body)
-		local root = TOF_RootOf(body)
-		if not root or not root.Parent then return end
-		local h = tracks[root]
-		if not h then h = {}; tracks[root] = h end
+	local cachedPing = 0
+	local lastPingAt = 0
+	local function GetPing()
 		local now = os.clock()
-		local pos = root.Position
-		local n = #h
-		if n > 0 then
-			local last = h[n]
-			local dt = now - last.t
-			if dt < 0.005 then return end
-			local speed = (pos - last.p).Magnitude / dt
-			if dt > 0.4 or speed > TOF_CFG.MAX_SPEED * 1.5 then
-				for i = n, 1, -1 do h[i] = nil end
-				n = 0
-			end
-		end
-		h[n + 1] = { t = now, p = pos }
-		while #h > 2 and now - h[1].t > SAMPLE_KEEP do table.remove(h, 1) end
-	end
-
-	local function TOF_WindowVel(h, tEnd, w)
-		local n = #h
-		local ei = nil
-		for i = n, 1, -1 do
-			if h[i].t <= tEnd then ei = i; break end
-		end
-		if not ei then return nil, nil end
-		local e = h[ei]
-		local si = ei
-		for i = ei - 1, 1, -1 do
-			if h[i].t >= e.t - w then si = i else break end
-		end
-		if si == ei and ei > 1 then si = ei - 1 end
-		if si == ei then return nil, nil end
-		local s = h[si]
-		local dt = e.t - s.t
-		if dt < 0.03 then return nil, nil end
-		return (e.p - s.p) / dt, e.t - dt / 2
-	end
-
-	local function TOF_EstimateMotion(body)
-		local root = TOF_RootOf(body)
-		local vel = ZERO
-		local acc = ZERO
-		local measured = nil
-		local h = tracks[root]
-		if h and #h >= 2 then
-			local now = h[#h].t
-			local v1, m1 = TOF_WindowVel(h, now, TOF_CFG.VELOCITY_WINDOW)
-			if v1 then
-				measured = v1
-				local v0, m0 = TOF_WindowVel(h, now - TOF_CFG.VELOCITY_WINDOW, TOF_CFG.VELOCITY_WINDOW)
-				if v0 and m1 and m0 and (m1 - m0) > 0.03 then
-					acc = (v1 - v0) / (m1 - m0)
-				end
-			end
-		end
-		local av = nil
-		local ok, r = pcall(function() return root.AssemblyLinearVelocity end)
-		if ok and typeof(r) == "Vector3" then av = r end
-		if measured and av and av.Magnitude > 1 then
-			vel = measured * 0.6 + av * 0.4
-		elseif measured then
-			vel = measured
-		elseif av then
-			vel = av
-		end
-		if vel.Magnitude > TOF_CFG.MAX_SPEED then vel = vel.Unit * TOF_CFG.MAX_SPEED end
-		local ah = Vector3.new(acc.X, 0, acc.Z)
-		if ah.Magnitude > 90 then ah = ah.Unit * 90 end
-		acc = Vector3.new(ah.X, 0, ah.Z)
-		return vel, acc
-	end
-
-	local pingCache = 0.08
-	local pingAt = 0
-	local function TOF_GetLatency()
-		local now = os.clock()
-		if now - pingAt > 0.5 then
-			pingAt = now
+		if now - lastPingAt >= 0.5 then
+			lastPingAt = now
 			local ok, v = pcall(function()
-				return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+				return PLAYER:GetNetworkPing()
 			end)
-			if ok and type(v) == "number" and v >= 0 then pingCache = v / 1000 end
+			if ok and type(v) == "number" then
+				cachedPing = math.clamp(v, 0, 0.5)
+			end
 		end
-		local l = pingCache * TOF_CFG.PING_FACTOR + TOF_CFG.EXTRA_LATENCY
-		if l < 0 then l = 0 elseif l > TOF_CFG.MAX_LATENCY then l = TOF_CFG.MAX_LATENCY end
-		return l
+		return cachedPing
 	end
 
-	local function TOF_BuildParams(targetChar)
-		local list = {}
-		local mine = TOF_GetCharacter()
-		if mine then list[#list + 1] = mine end
-		if targetChar then list[#list + 1] = targetChar end
-		for _, p in ipairs(Players:GetPlayers()) do
-			local c = p.Character
-			if c and c ~= mine and c ~= targetChar then list[#list + 1] = c end
+	--------------------------------------------------
+	-- PREDICTION: VELOCITY TRACKER
+	--------------------------------------------------
+
+	local track = {
+		body = nil,
+		hist = {},
+		vel = Vector3.new(0, 0, 0),
+	}
+
+	local function ResetTrack()
+		track.body = nil
+		track.hist = {}
+		track.vel = Vector3.new(0, 0, 0)
+	end
+
+	local function UpdateVelocity(body)
+		local now = os.clock()
+		local pos = body.Position
+
+		if track.body ~= body then
+			track.body = body
+			track.hist = { { t = now, p = pos } }
+			track.vel = Vector3.new(0, 0, 0)
+			return track.vel
 		end
-		local laser = workspace:FindFirstChild("TOF_AimLaser")
-		if laser then list[#list + 1] = laser end
+
+		local hist = track.hist
+		local last = hist[#hist]
+
+		if last and (pos - last.p).Magnitude > 25 then
+			track.hist = { { t = now, p = pos } }
+			track.vel = Vector3.new(0, 0, 0)
+			return track.vel
+		end
+
+		if not last or now - last.t >= 0.01 then
+			table.insert(hist, { t = now, p = pos })
+		end
+
+		while #hist > 2 and now - hist[1].t > HIST_WINDOW do
+			table.remove(hist, 1)
+		end
+
+		local first = hist[1]
+		local dt = now - first.t
+		if #hist >= 2 and dt >= 0.1 then
+			track.vel = (pos - first.p) / dt
+		else
+			track.vel = Vector3.new(0, 0, 0)
+		end
+
+		return track.vel
+	end
+
+	local function GetVelocity(body)
+		local hv = Vector3.new(0, 0, 0)
+		if track.body == body then
+			hv = track.vel
+		end
+
+		local av = Vector3.new(0, 0, 0)
+		local ok, v = pcall(function()
+			return body.AssemblyLinearVelocity
+		end)
+		if ok and typeof(v) == "Vector3" then
+			av = v
+		end
+
+		local vel
+		if av.Magnitude >= 1 then
+			if hv.Magnitude >= 1 then
+				vel = (hv + av) / 2
+			else
+				vel = av
+			end
+		else
+			if hv.Magnitude >= 1 then
+				vel = hv * 0.5
+			else
+				vel = Vector3.new(0, 0, 0)
+			end
+		end
+
+		vel = Vector3.new(vel.X, math.clamp(vel.Y * 0.5, -30, 30), vel.Z)
+
+		if vel.Magnitude > MAX_TARGET_SPEED then
+			vel = vel.Unit * MAX_TARGET_SPEED
+		end
+
+		return vel
+	end
+
+	local function PredictPoint(fromPos, point, body)
+		local vel = GetVelocity(body)
+		local lead = PREDICT_BIAS + GetPing() * PING_MULT
+
+		local flight = (point - fromPos).Magnitude / PROJECTILE_SPEED
+		for _ = 1, 6 do
+			local predicted = point + vel * (flight + lead)
+			flight = (predicted - fromPos).Magnitude / PROJECTILE_SPEED
+		end
+
+		local offset = vel * (flight + lead)
+		if offset.Magnitude > MAX_LEAD then
+			offset = offset.Unit * MAX_LEAD
+		end
+
+		local finalPos = point + offset
+
+		if PROJECTILE_GRAVITY > 0 then
+			finalPos = finalPos + Vector3.new(0, 0.5 * PROJECTILE_GRAVITY * flight * flight, 0)
+		end
+
+		return finalPos, vel
+	end
+
+	--------------------------------------------------
+	-- PILIH TITIK BIDIK
+	--------------------------------------------------
+
+	local function CastToChar(origin, direction, char)
+		if direction.Magnitude < 0.001 then
+			return nil
+		end
+
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
-		params.FilterDescendantsInstances = list
-		params.IgnoreWater = true
-		return params
-	end
 
-	local function TOF_CastSolid(params, origin, vec)
-		local dist = vec.Magnitude
-		if dist < 0.01 then return nil end
-		local unit = vec / dist
-		local cur = origin
-		local remaining = dist
+		local ignore = {}
+		local mine = GetCharacter()
+		if mine then
+			table.insert(ignore, mine)
+		end
+
+		local dirVec = direction.Unit * RAY_RANGE
+
 		for _ = 1, 8 do
-			local res = workspace:Raycast(cur, unit * remaining, params)
-			if not res then return nil end
+			params.FilterDescendantsInstances = ignore
+			local res = workspace:Raycast(origin, dirVec, params)
+			if not res then
+				return nil
+			end
 			local inst = res.Instance
-			if inst and (inst.CanCollide or (TOF_CFG.BLOCK_BY_VISIBLE_PARTS and inst.CanQuery and inst.Transparency < 0.5)) then
+			if inst:IsDescendantOf(char) then
 				return res
 			end
-			local travelled = (res.Position - origin).Magnitude + 0.05
-			remaining = dist - travelled
-			if remaining <= 0 then return nil end
-			cur = origin + unit * travelled
+			if inst.CanCollide == false or inst.Transparency >= 0.95 then
+				table.insert(ignore, inst)
+			else
+				return nil
+			end
 		end
+
 		return nil
 	end
 
-	local function TOF_IsAirborne(root, params)
-		local char = root.Parent
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if not hum then return false end
-		local limit = hum.HipHeight + root.Size.Y / 2 + 3
-		local res = TOF_CastSolid(params, root.Position, Vector3.new(0, -limit, 0))
-		return res == nil
+	local function Visible(origin, point, char)
+		return CastToChar(origin, point - origin, char) ~= nil
 	end
 
-	local function TOF_Displacement(vel, acc, airborne, t)
-		local vh = Vector3.new(vel.X, 0, vel.Z)
-		local d = ZERO
-		if vh.Magnitude >= 0.8 then
-			d = vh * t
-			local accTerm = acc * (0.5 * t * t * TOF_CFG.ACCEL_FACTOR)
-			local lim = vh.Magnitude * t * 0.5
-			if accTerm.Magnitude > lim and accTerm.Magnitude > 0 then
-				accTerm = accTerm.Unit * lim
+	local function PartPriority(part)
+		return BODY_PRIORITY[part.Name] or DEFAULT_PRIORITY
+	end
+
+	local function SamplePoints(part)
+		local sx = part.Size.X * SAMPLE_FRACTION
+		local sy = part.Size.Y * SAMPLE_FRACTION
+		local sz = part.Size.Z * SAMPLE_FRACTION
+		local cf = part.CFrame
+		return {
+			part.Position,
+			cf:PointToWorldSpace(Vector3.new(sx, 0, 0)),
+			cf:PointToWorldSpace(Vector3.new(-sx, 0, 0)),
+			cf:PointToWorldSpace(Vector3.new(0, sy, 0)),
+			cf:PointToWorldSpace(Vector3.new(0, -sy, 0)),
+			cf:PointToWorldSpace(Vector3.new(0, 0, sz)),
+			cf:PointToWorldSpace(Vector3.new(0, 0, -sz)),
+		}
+	end
+
+	local function GetAimPoint(fromPos, body)
+		local char = body.Parent
+		local fallback = body.Position
+
+		if not char then
+			return fallback
+		end
+
+		local cam = workspace.CurrentCamera
+		local camPos = cam and cam.CFrame.Position or nil
+
+		local parts = {}
+		for _, part in ipairs(char:GetChildren()) do
+			if part:IsA("BasePart") and part.Transparency < 0.95 then
+				table.insert(parts, part)
 			end
-			d = d + accTerm
 		end
-		if airborne then
-			d = d + Vector3.new(0, vel.Y * t - 0.5 * workspace.Gravity * t * t, 0)
+		table.sort(parts, function(a, b)
+			return PartPriority(a) < PartPriority(b)
+		end)
+
+		local muzzleOnly = nil
+
+		for _, part in ipairs(parts) do
+			for _, p in ipairs(SamplePoints(part)) do
+				if Visible(fromPos, p, char) then
+					if not camPos or Visible(camPos, p, char) then
+						return p
+					elseif not muzzleOnly then
+						muzzleOnly = p
+					end
+				end
+			end
 		end
-		return d
+
+		return muzzleOnly or fallback
 	end
 
-	local function TOF_SolveLead(fromPos, root, vel, acc, airborne)
-		local rp = root.Position
-		local latency = TOF_GetLatency()
-		local speed = TOF_CFG.PROJECTILE_SPEED
-		if speed < 1 then speed = 1 end
-		local T = (rp - fromPos).Magnitude / speed
-		local d = ZERO
-		for _ = 1, 6 do
-			local tt = T + latency
-			if tt > TOF_CFG.MAX_LEAD_TIME then tt = TOF_CFG.MAX_LEAD_TIME end
-			d = TOF_Displacement(vel, acc, airborne, tt)
-			T = (rp + d - fromPos).Magnitude / speed
+	--------------------------------------------------
+	-- BAGIAN BADAN TARGET
+	--------------------------------------------------
+
+	local function GetBody(character)
+		if not character then
+			return nil
 		end
-		return d
-	end
 
-	local function TOF_ClampToWorld(rootPos, d, params)
-		if d.Magnitude < 0.5 then return d end
-		local res = TOF_CastSolid(params, rootPos, d)
-		if res then return (res.Position + res.Normal * 1.2) - rootPos end
-		return d
-	end
-
-	local function TOF_GetBody(character)
-		if not character then return nil end
 		return character:FindFirstChild("UpperTorso")
 			or character:FindFirstChild("Torso")
 			or character:FindFirstChild("LowerTorso")
 			or character:FindFirstChild("HumanoidRootPart")
 	end
 
-	local function TOF_GetSCPs()
-		if tick() - SCPCacheTimer < 0.5 then return SCPCache end
+	--------------------------------------------------
+	-- PEMILIHAN TARGET
+	--------------------------------------------------
+
+	local targetMode = DEFAULT_TARGET_MODE
+
+	local SCPCache = {}
+	local SCPCacheTimer = 0
+
+	local function GetSCPs()
+		if tick() - SCPCacheTimer < 0.5 then
+			return SCPCache
+		end
+
 		local newTargets = {}
 		local mapFolder = workspace:FindFirstChild("Map")
+
 		if mapFolder then
 			for _, container in ipairs(mapFolder:GetDescendants()) do
 				if container:IsA("Model") and not Players:GetPlayerFromCharacter(container) then
 					local attributes = container:GetAttributes()
 					if container:GetAttribute("CorpseCreated0492") or next(attributes) ~= nil then
 						local root = container:FindFirstChild("HumanoidRootPart")
-						if root then table.insert(newTargets, root) end
+						if root then
+							table.insert(newTargets, root)
+						end
 					end
 				end
 			end
 		end
-		SCPCache = newTargets; SCPCacheTimer = tick()
+
+		SCPCache = newTargets
+		SCPCacheTimer = tick()
 		return SCPCache
 	end
 
-	local function TOF_GetTarget()
-		local myChar = TOF_GetCharacter()
+	local function IsKillerChar(player, char)
+		if char:FindFirstChild(KILLER_MARKER_NAME, true) then
+			return true
+		end
+		local okTag, hasTag = pcall(function()
+			return char:HasTag("Killer")
+		end)
+		if okTag and hasTag then
+			return true
+		end
+		if player.Team and player.Team.Name == "Killer" then
+			return true
+		end
+		return false
+	end
+
+	local function GetTarget()
+		local myChar = GetCharacter()
 		local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-		if not myHRP then return nil, nil end
-		if TOF.TargetMode == "Killer" then
-			local nearestBody, nearestName, nearestDistance = nil, nil, math.huge
+
+		if not myHRP then
+			return nil, nil
+		end
+
+		if targetMode == "Killer" then
+			local nearestBody, nearestName = nil, nil
+			local nearestDistance = math.huge
+
 			for _, player in ipairs(Players:GetPlayers()) do
-				if player ~= Players.LocalPlayer then
+				if player ~= PLAYER then
 					local char = player.Character
-					if char and char:FindFirstChild(TOF_CFG.KILLER_MARKER_NAME, true) then
-						local body = TOF_GetBody(char)
-						if body then
+					if char and IsKillerChar(player, char) then
+						local hum = char:FindFirstChildOfClass("Humanoid")
+						local body = GetBody(char)
+						if body and (not hum or hum.Health > 0) then
 							local distance = (body.Position - myHRP.Position).Magnitude
 							if distance < nearestDistance then
-								nearestDistance = distance; nearestBody = body; nearestName = player.Name
+								nearestDistance = distance
+								nearestBody = body
+								nearestName = player.Name
 							end
 						end
 					end
 				end
 			end
+
 			return nearestBody, nearestName
 		end
+
 		local cam = workspace.CurrentCamera
-		if not cam then return nil, nil end
+		if not cam then
+			return nil, nil
+		end
+
 		local camPos = cam.CFrame.Position
 		local camLook = cam.CFrame.LookVector
 		local bestBody, bestName, bestDot = nil, nil, -math.huge
-		for _, root in ipairs(TOF_GetSCPs()) do
+
+		for _, root in ipairs(GetSCPs()) do
 			if root and root.Parent then
 				local dir = root.Position - camPos
 				if dir.Magnitude > 0.001 then
 					local dot = camLook:Dot(dir.Unit)
 					if dot > 0.5 and dot > bestDot then
-						bestDot = dot; bestBody = root; bestName = root.Parent.Name
+						bestDot = dot
+						bestBody = root
+						bestName = root.Parent.Name
 					end
 				end
 			end
 		end
+
 		return bestBody, bestName
 	end
 
-	local function TOF_RefreshTarget()
-		local char = TOF_GetCharacter()
+	local targetBody = nil
+	local targetName = nil
+	local myRootRef = nil
+
+	local function RefreshTarget()
+		local char = GetCharacter()
 		local root = char and char:FindFirstChild("HumanoidRootPart")
-		TOF.MyRoot = root
+		myRootRef = root
 		if root then
-			local body, name = TOF_GetTarget()
-			TOF.TargetBody = body; TOF.TargetName = name
-			if body then TOF_RecordSample(body) end
+			local body, name = GetTarget()
+			targetBody = body
+			targetName = name
+			if body then
+				UpdateVelocity(body)
+			end
 		else
-			TOF.TargetBody = nil; TOF.TargetName = nil
+			targetBody = nil
+			targetName = nil
 		end
 	end
 
-	local function TOF_PlayHitSound(force)
-		if not force and not TOF.SoundEnabled then return end
-		local entry = TOF_SOUNDS[TOF.SoundIndex]
-		if not entry then return end
+	--------------------------------------------------
+	-- SUARA HIT / STUN
+	--------------------------------------------------
+
+	local hitWatch = nil
+	local lastHitAt = 0
+
+	local function PlayHitSound(force)
+		if not force and not HIT_SOUND_ENABLED then
+			return
+		end
+		local entry = HIT_SOUNDS[hitSoundIndex]
+		if not entry then
+			return
+		end
 		pcall(function()
 			local snd = Instance.new("Sound")
 			snd.Name = "TOF_HitSound"
 			snd.SoundId = "rbxassetid://" .. tostring(entry.id)
-			snd.Volume = TOF_CFG.HIT_SOUND_VOLUME
-			snd.Parent = TOF_SoundService
+			snd.Volume = HIT_SOUND_VOLUME
+			snd.Parent = SoundService
 			snd:Play()
-			TOF_Debris:AddItem(snd, 8)
+			Debris:AddItem(snd, 8)
 		end)
 	end
 
-	local function TOF_StunActive(char)
-		local ok, attrs = pcall(function() return char:GetAttributes() end)
-		if not ok or type(attrs) ~= "table" then return false end
+	local function StunAttributeActive(char)
+		local ok, attrs = pcall(function()
+			return char:GetAttributes()
+		end)
+		if not ok or type(attrs) ~= "table" then
+			return false
+		end
 		for name, value in pairs(attrs) do
 			if string.find(string.lower(tostring(name)), "stun", 1, true) then
-				if value ~= nil and value ~= false and value ~= 0 then return true end
+				if value ~= nil and value ~= false and value ~= 0 then
+					return true
+				end
 			end
 		end
 		return false
 	end
 
-	local function TOF_MarkShot(body)
-		if not body or not body.Parent then return end
+	local function MarkShot(body)
+		if not body or not body.Parent then
+			return
+		end
 		local char = body.Parent
 		local hum = char:FindFirstChildOfClass("Humanoid")
-		if not hum then TOF.HitWatch = nil; return end
-		TOF.HitWatch = {
-			char = char, hum = hum, t0 = os.clock(),
-			hp = hum.Health, ws = hum.WalkSpeed, stun = TOF_StunActive(char),
+		if not hum then
+			hitWatch = nil
+			return
+		end
+		hitWatch = {
+			char = char,
+			hum = hum,
+			t0 = os.clock(),
+			hp = hum.Health,
+			ws = hum.WalkSpeed,
+			stun = StunAttributeActive(char),
 		}
 	end
 
-	local function TOF_StepHit()
-		local w = TOF.HitWatch
-		if not w then return end
+	local function StepHit()
+		local w = hitWatch
+		if not w then
+			return
+		end
 		local now = os.clock()
-		if now - w.t0 > TOF_CFG.HIT_WATCH_TIME or not w.char.Parent or not w.hum.Parent then
-			TOF.HitWatch = nil; return
+		if now - w.t0 > HIT_WATCH_TIME or not w.char.Parent or not w.hum.Parent then
+			hitWatch = nil
+			return
 		end
 		local hum = w.hum
 		local why = nil
-		if hum.Health < w.hp - 0.01 then why = "damage"
-		elseif w.ws > 0 and hum.WalkSpeed <= w.ws * TOF_CFG.STUN_SPEED_RATIO then why = "stun"
-		elseif not w.stun and TOF_StunActive(w.char) then why = "stun" end
-		if hum.Health > w.hp then w.hp = hum.Health end
-		if hum.WalkSpeed > w.ws then w.ws = hum.WalkSpeed end
+		if hum.Health < w.hp - 0.01 then
+			why = "damage"
+		elseif w.ws > 0 and hum.WalkSpeed <= w.ws * STUN_SPEED_RATIO then
+			why = "stun"
+		elseif not w.stun and StunAttributeActive(w.char) then
+			why = "stun"
+		end
+		if hum.Health > w.hp then
+			w.hp = hum.Health
+		end
+		if hum.WalkSpeed > w.ws then
+			w.ws = hum.WalkSpeed
+		end
 		if why then
-			TOF.HitWatch = nil
-			if now - TOF.LastHitAt >= TOF_CFG.HIT_DEBOUNCE then
-				TOF.LastHitAt = now; TOF_PlayHitSound(false)
+			hitWatch = nil
+			if now - lastHitAt >= HIT_DEBOUNCE then
+				lastHitAt = now
+				PlayHitSound(false)
 			end
 		end
 	end
 
-	local R15_PARTS = {
-		"UpperTorso", "Torso", "Head", "LowerTorso", "HumanoidRootPart",
-		"LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm",
-		"LeftHand", "RightHand", "Left Arm", "Right Arm",
-		"LeftUpperLeg", "RightUpperLeg", "LeftLowerLeg", "RightLowerLeg",
-		"LeftFoot", "RightFoot", "Left Leg", "Right Leg",
-	}
-
-	local lastAimPart = nil
-	local lastScanHeavy = false
-
-	local function TOF_GetCandidateParts(char, body)
-		local parts = {}
-		local seen = {}
-		local function add(p)
-			if p and p:IsA("BasePart") and not seen[p] then
-				seen[p] = true; parts[#parts + 1] = p
-			end
+	task.spawn(function()
+		while SHARED.gen == MY_GEN do
+			pcall(StepHit)
+			task.wait(0.03)
 		end
-		add(body)
-		for _, name in ipairs(R15_PARTS) do add(char:FindFirstChild(name)) end
-		local count = 0
-		for _, inst in ipairs(char:GetDescendants()) do
-			if #parts >= 32 or count >= 24 then break end
-			if inst:IsA("BasePart") and inst.Size.Magnitude > 0.4 and not seen[inst] then
-				local par = inst.Parent
-				if not (par and (par:IsA("Accessory") or par:IsA("Tool"))) then
-					add(inst); count = count + 1
-				end
-			end
+	end)
+
+	--------------------------------------------------
+	-- SILENT AIM
+	--------------------------------------------------
+
+	local function SilentDirection()
+		if not AUTO_AIM_ENABLED then
+			return nil
 		end
-		return parts
-	end
 
-	local function TOF_SamplePoints(part, d)
-		local c = part.Position + d
-		local sz = part.Size
-		local cf = part.CFrame
-		local axes = {
-			{ v = cf.RightVector, s = sz.X },
-			{ v = cf.UpVector, s = sz.Y },
-			{ v = cf.LookVector, s = sz.Z },
-		}
-		table.sort(axes, function(a, b) return a.s > b.s end)
-		local a1 = axes[1].v * (axes[1].s * 0.4)
-		local a2 = axes[2].v * (axes[2].s * 0.4)
-		return {
-			c,
-			c + a1, c - a1, c + a2, c - a2,
-			c + a1 + a2, c + a1 - a2, c - a1 + a2, c - a1 - a2,
-		}
-	end
-
-	local function TOF_ClearWithMargin(params, fromPos, p, margin)
-		local dir = p - fromPos
-		local m = dir.Magnitude
-		if m < 0.5 then return true end
-		local unit = dir / m
-		local ref = Vector3.new(0, 1, 0)
-		if math.abs(unit.Y) > 0.95 then ref = Vector3.new(1, 0, 0) end
-		local right = unit:Cross(ref)
-		if right.Magnitude < 0.001 then return true end
-		right = right.Unit
-		local up = right:Cross(unit)
-		local offs = { right * margin, right * -margin, up * margin, up * -margin }
-		for _, o in ipairs(offs) do
-			local q = p + o
-			if TOF_CastSolid(params, fromPos, q - fromPos) then return false end
-		end
-		return true
-	end
-
-	local function TOF_PickAimPoint(fromPos, char, body, d, params, gap, deadline)
-		local fallback = body.Position + d
-		if not gap then return fallback end
-		local parts = TOF_GetCandidateParts(char, body)
-		local bestPoint, bestScore, bestName = nil, -math.huge, nil
-		lastScanHeavy = true
-		for index, part in ipairs(parts) do
-			if part.Parent then
-				local pts = TOF_SamplePoints(part, d)
-				local vis = {}
-				for _, p in ipairs(pts) do
-					if not TOF_CastSolid(params, fromPos, p - fromPos) then vis[#vis + 1] = p end
-				end
-				if #vis > 0 then
-					local sum = ZERO
-					for _, p in ipairs(vis) do sum = sum + p end
-					local centroid = sum / #vis
-					local pick = vis[1]
-					local pd = math.huge
-					for _, p in ipairs(vis) do
-						local dd = (p - centroid).Magnitude
-						if dd < pd then pd = dd; pick = p end
-					end
-					local roomy = TOF_ClearWithMargin(params, fromPos, pick, TOF_CFG.AIM_MARGIN)
-					if #vis >= 5 and roomy then
-						lastAimPart = part.Name
-						lastScanHeavy = (index > 1)
-						return pick
-					end
-					local score = #vis * 10 - index * 0.5
-					if roomy then score = score + 15 end
-					if part.Name == lastAimPart then score = score + 6 end
-					if score > bestScore then
-						bestScore = score; bestPoint = pick; bestName = part.Name
-					end
-				end
-				if deadline and os.clock() > deadline then break end
-			end
-		end
-		if bestPoint then
-			lastAimPart = bestName
-			return bestPoint
-		end
-		lastAimPart = nil
-		return fallback
-	end
-
-	local function TOF_ComputeAim(body, root, gap, deadline)
-		if not body or body.Parent == nil or not root or root.Parent == nil then return nil end
-		local targetChar = body.Parent
-		local troot = TOF_RootOf(body)
-		if not troot or troot.Parent == nil then return nil end
-		local fromPos = TOF_GetMuzzlePos(root)
-		local params = TOF_BuildParams(targetChar)
-		local vel, acc = ZERO, ZERO
-		local okM, v, a = pcall(TOF_EstimateMotion, body)
-		if okM and typeof(v) == "Vector3" and typeof(a) == "Vector3" then vel, acc = v, a end
-		local airborne = false
-		local okA, air = pcall(TOF_IsAirborne, troot, params)
-		if okA and air == true then airborne = true end
-		local d = ZERO
-		local okL, lead = pcall(TOF_SolveLead, fromPos, troot, vel, acc, airborne)
-		if okL and typeof(lead) == "Vector3" then d = lead end
-		local okC, clamped = pcall(TOF_ClampToWorld, troot.Position, d, params)
-		if okC and typeof(clamped) == "Vector3" then d = clamped end
-		local aimPoint = body.Position + d
-		local okP, picked = pcall(TOF_PickAimPoint, fromPos, targetChar, body, d, params, gap and TOF_CFG.GAP_AIM_ENABLED, deadline)
-		if okP and typeof(picked) == "Vector3" then aimPoint = picked end
-		local dir = aimPoint - fromPos
-		local m = dir.Magnitude
-		if m < 0.001 then return nil end
-		return dir / m
-	end
-
-	local aimCache = { dir = nil, body = nil, t = 0 }
-	local lastCacheAt = 0
-	local function TOF_UpdateAimCache()
-		local now = os.clock()
-		local interval = lastScanHeavy and 0.05 or 0.03
-		if now - lastCacheAt < interval then return end
-		lastCacheAt = now
-		local body = TOF.TargetBody
-		local root = TOF.MyRoot
-		if not TOF.Enabled or not body or body.Parent == nil or not root or root.Parent == nil then
-			aimCache.dir = nil; aimCache.body = nil
-			return
-		end
-		local dir = TOF_ComputeAim(body, root, true, now + 0.008)
-		aimCache.dir = dir; aimCache.body = body; aimCache.t = os.clock()
-	end
-
-	local function TOF_SilentDirection()
-		if not TOF.Enabled then return nil end
-		local root = TOF.MyRoot
+		local root = myRootRef
 		if not root or root.Parent == nil then
-			local char = TOF_GetCharacter()
+			local char = GetCharacter()
 			root = char and char:FindFirstChild("HumanoidRootPart")
 		end
-		local body = TOF.TargetBody
-		if not body or body.Parent == nil then body = TOF_GetTarget() end
-		if not body or not root then return nil end
-		if body.Parent == nil or root.Parent == nil then return nil end
-		local dir = nil
-		if aimCache.dir and aimCache.body == body and os.clock() - aimCache.t <= 0.12 then
-			dir = aimCache.dir
-		else
-			pcall(TOF_RecordSample, body)
-			local ok, r = pcall(TOF_ComputeAim, body, root, false, os.clock() + 0.003)
-			if ok then dir = r end
+
+		local body = GetTarget()
+		if not body or body.Parent == nil then
+			body = targetBody
 		end
-		if typeof(dir) ~= "Vector3" then return nil end
-		pcall(TOF_MarkShot, body)
-		return dir
+
+		if not body or not root then
+			return nil
+		end
+
+		if body.Parent == nil or root.Parent == nil then
+			return nil
+		end
+
+		pcall(UpdateVelocity, body)
+
+		local fromPos = GetMuzzlePos(root)
+
+		local okPoint, point = pcall(GetAimPoint, fromPos, body)
+		if not okPoint or typeof(point) ~= "Vector3" then
+			point = body.Position
+		end
+
+		local predicted = PredictPoint(fromPos, point, body)
+
+		pcall(MarkShot, body)
+
+		local d = predicted - fromPos
+		local m = d.Magnitude
+
+		if m < 0.001 then
+			return nil
+		end
+
+		return d / m
 	end
 
-	local function TOF_InstallHook()
-		if TOF.Hooked then return true end
-		RegisterHookHandler(FireRemote, function(args, self)
-			if not TOF.Enabled then return args end
-			local tool, dir = args[1], args[2]
-			if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
-				local okAim, newDir = pcall(TOF_SilentDirection)
-				if okAim and typeof(newDir) == "Vector3" then
-					args[2] = newDir
+	SHARED.remote = FireRemote
+	SHARED.aim = SilentDirection
+
+	local function InstallHook()
+		if SHARED.hooked then
+			return true
+		end
+
+		if not (hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure) then
+			return false
+		end
+
+		local ok = pcall(function()
+			local old
+			old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+				local method = getnamecallmethod()
+
+				if method == "FireServer" and self == SHARED.remote then
+					local mine = false
+					if checkcaller then
+						mine = checkcaller()
+					end
+
+					if not mine then
+						local fn = SHARED.aim
+						if fn then
+							local tool, dir = ...
+							if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
+								local okAim, newDir = pcall(fn)
+								if okAim and typeof(newDir) == "Vector3" then
+									setnamecallmethod("FireServer")
+									return old(self, tool, newDir, select(3, ...))
+								end
+							end
+						end
+					end
+
+					setnamecallmethod("FireServer")
+					return old(self, ...)
 				end
-			end
-			return args
+
+				return old(self, ...)
+			end))
 		end)
-		EnsureNamecallHook()
-		TOF.Hooked = true
-		return true
+
+		if ok then
+			SHARED.hooked = true
+		end
+
+		return ok
+	end
+
+	local hookOk = InstallHook()
+
+	--------------------------------------------------
+	-- LOOP TARGET
+	--------------------------------------------------
+
+	task.spawn(function()
+		while SHARED.gen == MY_GEN do
+			pcall(RefreshTarget)
+			task.wait(0.1)
+		end
+	end)
+
+	--------------------------------------------------
+	-- LASER 3D (VISUAL)
+	--------------------------------------------------
+
+	do
+		local oldLaser = workspace:FindFirstChild("AimLaser")
+		if oldLaser then
+			oldLaser:Destroy()
+		end
 	end
 
 	local LaserBeam = nil
-	local function TOF_UpdateLaser(originPos, targetPos)
+	local laserCalcAt = 0
+	local laserTarget = nil
+
+	local function updateLaser(originPos, targetPos)
 		if not LaserBeam or not LaserBeam.Parent then
 			LaserBeam = Instance.new("Part")
-			LaserBeam.Name = "TOF_AimLaser"
-			LaserBeam.Anchored = true; LaserBeam.CanCollide = false
+			LaserBeam.Name = "AimLaser"
+			LaserBeam.Anchored = true
+			LaserBeam.CanCollide = false
 			pcall(function() LaserBeam.CanTouch = false end)
 			pcall(function() LaserBeam.CanQuery = false end)
 			pcall(function() LaserBeam.Massless = true end)
 			LaserBeam.CastShadow = false
 			LaserBeam.Material = Enum.Material.Neon
-			LaserBeam.Color = TOF.LaserColor
+			LaserBeam.Color = LASER_COLOR
 			LaserBeam.Transparency = 1
 			LaserBeam.Size = Vector3.new(0.05, 0.05, 0.05)
 			LaserBeam.Parent = workspace
 		end
-		LaserBeam.Color = TOF.LaserColor
+
 		local dist = (targetPos - originPos).Magnitude
-		if dist < 0.01 then LaserBeam.Transparency = 1; return end
+		if dist < 0.01 then
+			LaserBeam.Transparency = 1
+			return
+		end
+
 		LaserBeam.Size = Vector3.new(0.05, 0.05, dist)
 		LaserBeam.CFrame = CFrame.new((originPos + targetPos) / 2, targetPos)
 		LaserBeam.Transparency = 0
 	end
-	local function TOF_HideLaser() if LaserBeam then LaserBeam.Transparency = 1 end end
-	local function TOF_ClearLaser() if LaserBeam then LaserBeam:Destroy(); LaserBeam = nil end end
-	local function TOF_UpdateLaserTick()
-		if not TOF_CFG.LASER_ENABLED or not TOF.Enabled or not TOF_IsScoping() then TOF_HideLaser(); return end
-		local char = TOF_GetCharacter()
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		local body = TOF.TargetBody
-		if not root or not body or body.Parent == nil then TOF_HideLaser(); return end
-		local originPos = TOF_GetMuzzlePos(root)
-		TOF_UpdateLaser(originPos, body.Position)
+
+	local function hideLaser()
+		if LaserBeam then
+			LaserBeam.Transparency = 1
+		end
 	end
 
-	local heartbeatConn = RunService.Heartbeat:Connect(function()
-		if not gui.Parent then
-			if heartbeatConn then heartbeatConn:Disconnect() end
-			pcall(TOF_ClearLaser)
+	local function clearLaser()
+		if LaserBeam then
+			LaserBeam:Destroy()
+			LaserBeam = nil
+		end
+	end
+
+	local function UpdateLaser()
+		if not LASER_ENABLED or not AUTO_AIM_ENABLED or not IsScoping() then
+			hideLaser()
 			return
 		end
-		local body = TOF.TargetBody
-		if body and body.Parent then pcall(TOF_RecordSample, body) end
-		pcall(TOF_UpdateAimCache)
-		pcall(TOF_UpdateLaserTick)
-	end)
-	table.insert(TOF.Conns, heartbeatConn)
 
-	table.insert(TOF.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
-		TOF_HideLaser(); SCPCache = {}; SCPCacheTimer = 0
-		TOF.TargetBody = nil; TOF.MyRoot = nil
-		TOF_ResetTrack()
-	end))
+		local char = GetCharacter()
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local body = targetBody
+
+		if not root or not body or body.Parent == nil then
+			hideLaser()
+			return
+		end
+
+		local originPos = GetMuzzlePos(root)
+
+		local now = os.clock()
+		if now - laserCalcAt >= 0.08 or not laserTarget then
+			laserCalcAt = now
+			local okPoint, point = pcall(GetAimPoint, originPos, body)
+			if not okPoint or typeof(point) ~= "Vector3" then
+				point = body.Position
+			end
+			laserTarget = PredictPoint(originPos, point, body)
+		end
+
+		updateLaser(originPos, laserTarget)
+	end
+
+	local heartbeatConn
+	heartbeatConn = RunService.Heartbeat:Connect(function()
+		if SHARED.gen ~= MY_GEN then
+			if heartbeatConn then
+				heartbeatConn:Disconnect()
+			end
+			pcall(clearLaser)
+			return
+		end
+
+		local body = targetBody
+		if body and body.Parent then
+			pcall(UpdateVelocity, body)
+		end
+
+		pcall(UpdateLaser)
+	end)
+
+	--------------------------------------------------
+	-- RESPAWN
+	--------------------------------------------------
+
+	PLAYER.CharacterAdded:Connect(function()
+		hideLaser()
+		SCPCache = {}
+		SCPCacheTimer = 0
+		targetBody = nil
+		myRootRef = nil
+		laserTarget = nil
+		ResetTrack()
+	end)
+
+	--------------------------------------------------
+	-- UI: ROW FLUX HUB
+	--------------------------------------------------
 
 	local TOF_Row = Add("Silent Aim [ TOF ]")
 	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
-		TOF.Enabled = state
-		if state then
-			TOF_InstallHook()
-			task.spawn(function()
-				while TOF.Enabled and gui.Parent do
-					pcall(TOF_RefreshTarget)
-					pcall(TOF_StepHit)
-					task.wait(0.1)
-				end
-			end)
-		else
-			TOF_HideLaser()
-			TOF.TargetBody = nil
-			aimCache.dir = nil; aimCache.body = nil
+		AUTO_AIM_ENABLED = state
+		if not state then
+			hideLaser()
+			laserTarget = nil
 		end
 	end)
-	TOF_Toggle.Color = TOF_Row:Color(TOF.LaserColor, function(c)
-		TOF.LaserColor = c
-		if LaserBeam and LaserBeam.Parent then LaserBeam.Color = c end
+	TOF_Toggle.Color = TOF_Row:Color(LASER_COLOR, function(c)
+		LASER_COLOR = c
+		if LaserBeam and LaserBeam.Parent then
+			LaserBeam.Color = c
+		end
 	end)
+
 	TOF_Toggle.Extras = TOF_Toggle.Extras or {}
 	TOF_Toggle.Extras[1] = TOF_Row:Dropdown({ "Killer", "SCP" }, "Killer", function(v)
-		TOF.TargetMode = v
-		SCPCache = {}; SCPCacheTimer = 0
-		TOF_ResetTrack()
-		pcall(TOF_RefreshTarget)
+		targetMode = v
+		SCPCacheTimer = 0
+		ResetTrack()
+		pcall(RefreshTarget)
 	end)
-	TOF_Toggle.Extras[2] = TOF_Row:Dropdown(TOF_SOUND_NAMES, "Hit", function(v)
-		for i, s in ipairs(TOF_SOUNDS) do
-			if s.name == v then TOF.SoundIndex = i; break end
+	TOF_Toggle.Extras[2] = TOF_Row:Dropdown(HIT_SOUND_NAMES, "Hit", function(v)
+		for i, s in ipairs(HIT_SOUNDS) do
+			if s.name == v then
+				hitSoundIndex = i
+				break
+			end
 		end
 	end)
+
+	if not hookOk then
+		warn("[Silent Aim TOF] hookmetamethod tidak tersedia, silent aim tidak bisa jalan")
+	end
 end
 
 	-- ============================================================
