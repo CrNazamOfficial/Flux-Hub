@@ -4435,410 +4435,781 @@ do
 	end)
 end
 
-	-- ============================================================
-	-- 1. SILENT AIM VEIL (logic asli + hook global fix crash)
-	-- ============================================================
-	local CONFIG = {
-	DEFAULT_SILENT = true, DEFAULT_VISUAL = true, DEFAULT_FOV = 35,
-	MIN_FOV = 10, MAX_FOV = 90, FOV_STEP = 5,
-	PROJECTILE_GRAVITY = 96, DEFAULT_SPEED = 185, AIM_OFFSET_Y = 0,
-	PREDICT_MOVEMENT = true, PREDICT_MAX_TIME = 1.4, MAX_PREDICT_SPEED = 60,
-	MAX_TARGET_DISTANCE = 600, TARGET_STALE_TIME = 0.3, TARGET_HYSTERESIS = 3,
-	LEAD_PING_MULT = 2.2, EXTRA_LEAD = 0.12, VELOCITY_SMOOTH = 0.25,
-	ZIGZAG_WINDOW = 0.5, ZIGZAG_DEADZONE = 0.35, ZIGZAG_FULL = 1.2, ZIGZAG_LEAD_MIN = 0.4,
-	AUTO_CALIBRATE = false, HOLD_VALID = 0.6, JOB_TIMEOUT = 2.0,
-	PICK_RADIUS = 90, PICK_WINDOW = 0.8, PICK_MIN_RATIO = 0.15,
-	STEER_DELAY = 0.3, STEER_MAX_TIME = 5, STEER_MAX_TIME_CAP = 14,
-	STEER_TURN_RATE = 40, STEER_NEAR_DIST = 60, STEER_STOP_DIST = 2.5,
-	MIN_SPEED_RATIO = 0.4, MIN_STEER_SPEED = 30, MAX_SNAP_DISTANCE = 260,
-	TARGET_TEXT = "[ TARGET ]", TARGET_TEXT_SIZE = 12, TARGET_TEXT_OFFSET_Y = 2.2,
-	TARGET_TEXT_COLOR = Color3.fromRGB(255, 255, 255), TARGET_TEXT_STROKE = true,
-}
-local calib = { ver = 2, g = nil, speed = nil, bySpeed = {}, count = 0 }
-local SAV = { Conns = {} }
-local state = { silent = false, visual = CONFIG.DEFAULT_VISUAL, fov = CONFIG.DEFAULT_FOV }
-local aim = {
-	target = nil, prevRoot = nil, updatedAt = 0, list = {}, holding = false,
-	holdStart = nil, lastHold = 0, lastHoldEnd = nil, pendingLog = nil,
-	job = nil, steer = nil, thrownRoot = nil, thrownName = nil, armedUntil = 0,
-}
-local killerCache = setmetatable({}, { __mode = "k" })
-local tracker = setmetatable({}, { __mode = "k" })
-local usedParts = setmetatable({}, { __mode = "k" })
-local recent = {}
-local ping = 0
-local spearRemote = nil
-local vfxRemote = nil
-local SAV_TargetLabel = nil
+-- ============================================================
+-- 1. SILENT AIM VEIL — HALLOWEEN 🎃
+-- Logic 100% utuh dari file asli. UI bawaan diganti row Flux Hub.
+-- ============================================================
+do
+	local Env = (getgenv and getgenv()) or _G
 
-local function SAV_RefreshPing()
-	local ok, v = pcall(function() return Players.LocalPlayer:GetNetworkPing() end)
-	if ok and type(v) == "number" then ping = math.clamp(v, 0, 0.4) end
-end
-local function SAV_FindRemotes()
-	local r = ReplicatedStorage:FindFirstChild("Remotes")
-	local k = r and r:FindFirstChild("Killers")
-	local v = k and k:FindFirstChild("Veil")
-	if v then spearRemote = v:FindFirstChild("Spearthrow"); vfxRemote = v:FindFirstChild("vfx") end
-end
-local function SAV_IsKillerChar(char, now)
-	local c = killerCache[char]
-	if c then if c.isKiller then return true end; if now - c.t < 2 then return false end end
-	local found = char:FindFirstChild("Lookscriptkiller", true) ~= nil
-	killerCache[char] = { isKiller = found, t = now }
-	return found
-end
-local function SAV_IsCharacterPart(p)
-	local m = p:FindFirstAncestorOfClass("Model")
-	return m ~= nil and m:FindFirstChildOfClass("Humanoid") ~= nil
-end
-local function SAV_CurrentGravity()
-	if CONFIG.PROJECTILE_GRAVITY ~= nil then return CONFIG.PROJECTILE_GRAVITY end
-	if calib.g ~= nil then return calib.g end
-	return workspace.Gravity
-end
-local function SAV_SpeedFor(charge) return CONFIG.DEFAULT_SPEED end
-local function SAV_CurrentCharge(now)
-	if aim.holding and aim.holdStart then return math.clamp(now - aim.holdStart, 0, 10) end
-	if aim.lastHoldEnd and now - aim.lastHoldEnd <= CONFIG.HOLD_VALID then return math.clamp(aim.lastHold or 0, 0, 10) end
-	return 0
-end
-local function SAV_ResolveOrigin(origin)
-	if typeof(origin) ~= "Vector3" then return nil end
-	local c = Players.LocalPlayer.Character
-	local mr = c and c:FindFirstChild("HumanoidRootPart")
-	if mr and (origin - mr.Position).Magnitude > 25 then return mr.Position + Vector3.new(0, 1.5, 0) end
-	return origin
-end
-local function SAV_AnalyzeMotion(tr, now)
-	local h = tr.hist
-	local cutoff = now - CONFIG.ZIGZAG_WINDOW
-	while #h > 0 and h[1].t < cutoff do table.remove(h, 1) end
-	local n = #h
-	if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
-	local t0, x0, z0 = h[1].t, h[1].x, h[1].z
-	local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
-	for i = 1, n do
-		local t = h[i].t - t0; local x = h[i].x - x0; local z = h[i].z - z0
-		st = st + t; stt = stt + t * t; sx = sx + x; stx = stx + t * x; sz = sz + z; stz = stz + t * z
+	if Env.VDSilent and type(Env.VDSilent.Unload) == "function" then
+		pcall(Env.VDSilent.Unload)
+		task.wait(0.2)
 	end
-	local D = n * stt - st * st
-	if math.abs(D) < 1e-9 then return nil, 1 end
-	local bx = (n * stx - st * sx) / D; local ax = (sx - bx * st) / n
-	local bz = (n * stz - st * sz) / D; local az = (sz - bz * st) / n
-	local sq = 0
-	for i = 1, n do
-		local t = h[i].t - t0
-		local ex = (h[i].x - x0) - (ax + bx * t); local ez = (h[i].z - z0) - (az + bz * t)
-		sq = sq + ex * ex + ez * ez
+
+	local Players = game:GetService("Players")
+	local RunService = game:GetService("RunService")
+	local Workspace = game:GetService("Workspace")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local UserInputService = game:GetService("UserInputService")
+	local CollectionService = game:GetService("CollectionService")
+
+	local LP = Players.LocalPlayer
+	while not LP do
+		task.wait(0.1)
+		LP = Players.LocalPlayer
 	end
-	local rms = math.sqrt(sq / n)
-	local span = math.max(CONFIG.ZIGZAG_FULL - CONFIG.ZIGZAG_DEADZONE, 0.01)
-	local stable = math.clamp(1 - (rms - CONFIG.ZIGZAG_DEADZONE) / span, 0, 1)
-	return Vector3.new(bx, 0, bz), stable
-end
-local function SAV_TrackVelocity(root, now)
-	local pos = root.Position
-	local tr = tracker[root]
-	if not tr then tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1 }; tracker[root] = tr end
-	local jump = (pos - tr.pos).Magnitude
-	if jump > 15 then tr.hist = { { t = now, x = pos.X, z = pos.Z } }; tr.vel = Vector3.new(); tr.pred = nil; tr.stable = 1; tr.pos = pos; tr.t = now; return tr.vel end
-	table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
-	tr.pred, tr.stable = SAV_AnalyzeMotion(tr, now)
-	if jump < 0.001 then if now - tr.t > 0.15 then tr.vel = Vector3.new() end; return tr.vel end
-	local dt = now - tr.t
-	if dt <= 0 or dt > 0.35 then tr.vel = Vector3.new()
-	else local raw = (pos - tr.pos) / dt; if raw.Magnitude > 180 then tr.vel = Vector3.new() else tr.vel = tr.vel:Lerp(raw, CONFIG.VELOCITY_SMOOTH) end end
-	tr.pos = pos; tr.t = now
-	return tr.vel
-end
-local function SAV_SolveDirection(origin, speed, base, hv, g, lead)
-	local t = (base - origin).Magnitude / speed
-	local dirOut, aimPos = nil, base
-	for _ = 1, 8 do
-		aimPos = base + hv * (math.min(t, CONFIG.PREDICT_MAX_TIME) + lead)
-		local d = aimPos - origin
-		local hd = Vector3.new(d.X, 0, d.Z)
-		local x = hd.Magnitude; local y = d.Y
-		if x < 0.01 then dirOut = Vector3.new(0, y >= 0 and 1 or -1, 0); t = math.abs(y) / speed
-		elseif g <= 0 then dirOut = d.Unit; t = d.Magnitude / speed
+
+	local Config = {
+		FOV = 100,
+		FovMin = 30,
+		FovMax = 350,
+		FovStep = 10,
+		MaxDistance = 600,
+		TargetStale = 0.3,
+		Hysteresis = 12,
+		AimOffsetY = 0,
+		PredictMaxTime = 1.4,
+		MaxPredictSpeed = 60,
+		LeadPingMult = 2.2,
+		ExtraLead = 0.12,
+		VelocitySmooth = 0.25,
+		ZigzagWindow = 0.5,
+		ZigzagDeadzone = 0.35,
+		ZigzagFull = 1.2,
+		ZigzagLeadMin = 0.4,
+		PowerFresh = 1.5,
+		WallCheck = false,
+		FovColor = Color3.fromRGB(255, 255, 255),
+		TrailColor = Color3.fromRGB(255, 255, 255),
+		TrailLifetime = 1.2,
+		TrailWidth = 0.3,
+		TrailMaxTime = 3,
+	}
+
+	local State = {
+		Enabled = false,
+		ShowFov = true,
+	}
+
+	local Aim = {
+		Target = nil,
+		PrevRoot = nil,
+		UpdatedAt = 0,
+		IsKiller = false,
+		MyRoot = nil,
+		Ping = 0,
+	}
+
+	local Reg = Env.__VDHookReg
+	if not Reg then
+		Reg = { Installed = false, Old = nil, Handlers = {} }
+		Env.__VDHookReg = Reg
+	end
+
+	local Unloaded = false
+	local Connections = {}
+	local Guis = {}
+	local Tracker = setmetatable({}, { __mode = "k" })
+	local ThrowRemote = nil
+	local SpearMath = nil
+	local OriginalPower = nil
+	local LastPower = nil
+	local LastPowerAt = 0
+	local HookOk = false
+	local Fov = nil
+	local TrailParts = {}
+
+	local function track(conn)
+		table.insert(Connections, conn)
+		return conn
+	end
+
+	local function attach(gui)
+		local candidates = {
+			function()
+				if gethui then return gethui() end
+				return nil
+			end,
+			function() return game:GetService("CoreGui") end,
+			function() return LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui", 10) end,
+		}
+		for _, getParent in ipairs(candidates) do
+			local ok, parent = pcall(getParent)
+			if ok and parent then
+				local set = pcall(function() gui.Parent = parent end)
+				if set and gui.Parent ~= nil then
+					return true
+				end
+			end
+		end
+		return false
+	end
+
+	local function newGui(name, order)
+		local gui = Instance.new("ScreenGui")
+		gui.Name = name
+		gui.ResetOnSpawn = false
+		gui.IgnoreGuiInset = true
+		gui.DisplayOrder = order
+		pcall(function()
+			if syn and syn.protect_gui then syn.protect_gui(gui) end
+		end)
+		if not attach(gui) then
+			return nil
+		end
+		table.insert(Guis, gui)
+		return gui
+	end
+
+	local function isKillerNow()
+		if LP.Team and LP.Team.Name == "Killer" then return true end
+		local c = LP.Character
+		if c then
+			local ok, res = pcall(function() return c:HasTag("Killer") end)
+			if ok and res then return true end
+		end
+		return false
+	end
+
+	local function isSurvivorChar(char)
+		if not char or char == LP.Character then return false end
+		if not char:IsDescendantOf(Workspace) then return false end
+		local okK, isK = pcall(function() return char:HasTag("Killer") end)
+		if okK and isK then return false end
+		local okS, isS = pcall(function() return char:HasTag("Survivor") or char:HasTag("SurvivorBot") end)
+		if okS and isS then return true end
+		local p = Players:GetPlayerFromCharacter(char)
+		return p ~= nil and p.Team ~= nil and p.Team.Name == "Survivors"
+	end
+
+	local function survivorList()
+		local list = {}
+		local seen = {}
+		for _, p in ipairs(Players:GetPlayers()) do
+			local c = p.Character
+			if c and not seen[c] and isSurvivorChar(c) and not p:GetAttribute("IsDead") then
+				seen[c] = true
+				table.insert(list, c)
+			end
+		end
+		local okT, bots = pcall(function() return CollectionService:GetTagged("SurvivorBot") end)
+		if okT and type(bots) == "table" then
+			for _, c in ipairs(bots) do
+				if c:IsA("Model") and not seen[c] and isSurvivorChar(c) then
+					seen[c] = true
+					table.insert(list, c)
+				end
+			end
+		end
+		return list
+	end
+
+	local function validTarget(char)
+		if char:GetAttribute("Knocked") or char:GetAttribute("IsHooked") or char:GetAttribute("IsCarried") then return false end
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 or hum.Health ~= hum.Health then return false end
+		return true
+	end
+
+	local function bodyCenter(char, root)
+		local head = char:FindFirstChild("Head")
+		local torso = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+		if head and torso then
+			return (head.Position + torso.Position) / 2
+		end
+		return root.Position
+	end
+
+	local function analyzeMotion(tr, now)
+		local h = tr.hist
+		local cutoff = now - Config.ZigzagWindow
+		while #h > 0 and h[1].t < cutoff do
+			table.remove(h, 1)
+		end
+		local n = #h
+		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
+		local t0, x0, z0 = h[1].t, h[1].x, h[1].z
+		local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
+		for i = 1, n do
+			local t = h[i].t - t0
+			local x = h[i].x - x0
+			local z = h[i].z - z0
+			st = st + t
+			stt = stt + t * t
+			sx = sx + x
+			stx = stx + t * x
+			sz = sz + z
+			stz = stz + t * z
+		end
+		local D = n * stt - st * st
+		if math.abs(D) < 1e-9 then return nil, 1 end
+		local bx = (n * stx - st * sx) / D
+		local ax = (sx - bx * st) / n
+		local bz = (n * stz - st * sz) / D
+		local az = (sz - bz * st) / n
+		local sq = 0
+		for i = 1, n do
+			local t = h[i].t - t0
+			local ex = (h[i].x - x0) - (ax + bx * t)
+			local ez = (h[i].z - z0) - (az + bz * t)
+			sq = sq + ex * ex + ez * ez
+		end
+		local rms = math.sqrt(sq / n)
+		local span = math.max(Config.ZigzagFull - Config.ZigzagDeadzone, 0.01)
+		local stable = math.clamp(1 - (rms - Config.ZigzagDeadzone) / span, 0, 1)
+		return Vector3.new(bx, 0, bz), stable
+	end
+
+	local function trackVelocity(root, now)
+		local pos = root.Position
+		local tr = Tracker[root]
+		if not tr then
+			tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1 }
+			Tracker[root] = tr
+		end
+		local jump = (pos - tr.pos).Magnitude
+		if jump > 15 then
+			tr.hist = { { t = now, x = pos.X, z = pos.Z } }
+			tr.vel = Vector3.new()
+			tr.pred = nil
+			tr.stable = 1
+			tr.pos = pos
+			tr.t = now
+			return tr.vel
+		end
+		table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
+		tr.pred, tr.stable = analyzeMotion(tr, now)
+		if jump < 0.001 then
+			if now - tr.t > 0.15 then tr.vel = Vector3.new() end
+			return tr.vel
+		end
+		local dt = now - tr.t
+		if dt <= 0 or dt > 0.35 then
+			tr.vel = Vector3.new()
 		else
-			local v2 = speed * speed
-			local disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
-			if disc >= 0 then
-				local theta = math.atan((v2 - math.sqrt(disc)) / (g * x))
-				local hdir = hd / x
-				dirOut = hdir * math.cos(theta) + Vector3.new(0, math.sin(theta), 0)
-				local vx = speed * math.cos(theta)
-				if vx > 0.01 then t = x / vx end
-			else dirOut = d.Unit; t = d.Magnitude / speed end
+			local raw = (pos - tr.pos) / dt
+			if raw.Magnitude > 180 then
+				tr.vel = Vector3.new()
+			else
+				tr.vel = tr.vel:Lerp(raw, Config.VelocitySmooth)
+			end
 		end
+		tr.pos = pos
+		tr.t = now
+		return tr.vel
 	end
-	if not dirOut or dirOut.X ~= dirOut.X or dirOut.Y ~= dirOut.Y or dirOut.Z ~= dirOut.Z then return nil end
-	return dirOut, aimPos
-end
-local function SAV_ParseThrow(args)
-	local first = args[1]
-	if type(first) == "table" then
-		local d, o = first.Direction, first.Origin
-		if typeof(d) ~= "Vector3" or typeof(o) ~= "Vector3" then return nil end
-		local sp = first.Speed
-		if type(sp) ~= "number" or sp <= 1 then sp = nil end
-		return { tbl = true, dir = d, origin = o, speed = sp }
-	elseif typeof(first) == "Vector3" then
-		local sp = args[2]
-		if type(sp) ~= "number" or sp <= 1 then return nil end
-		return { tbl = false, dir = first, origin = args[3], speed = sp }
-	end
-	return nil
-end
-local function SAV_ApplyDirection(args, info, newDir)
-	if info.tbl then
-		local copy = {}; for k, v in pairs(args[1]) do copy[k] = v end
-		copy.Direction = newDir; args[1] = copy
-	else args[1] = newDir end
-end
-local function SAV_ComputeDir(info)
-	if not state.silent then return nil end
-	local t = aim.target
-	if not t then return nil end
-	if os.clock() - aim.updatedAt > CONFIG.TARGET_STALE_TIME then return nil end
-	local root = t.root
-	if not (root and root.Parent) then return nil end
-	local speed = info.speed
-	local origin = SAV_ResolveOrigin(info.origin)
-	if not origin or type(speed) ~= "number" or speed <= 1 then return nil end
-	local g = SAV_CurrentGravity()
-	local stable = t.stable or 1
-	local lead = (ping * CONFIG.LEAD_PING_MULT + CONFIG.EXTRA_LEAD) * (CONFIG.ZIGZAG_LEAD_MIN + (1 - CONFIG.ZIGZAG_LEAD_MIN) * stable)
-	local base = root.Position + Vector3.new(0, CONFIG.AIM_OFFSET_Y, 0)
-	local hv = t.hv or Vector3.new()
-	local dir, aimPos = SAV_SolveDirection(origin, speed, base, hv, g, lead)
-	if not dir then return nil end
-	local dist = (aimPos - origin).Magnitude
-	aim.thrownRoot = root; aim.thrownName = t.name
-	aim.pendingLog = string.format("throw target=%s dist=%.1f speed=%.0f", t.name, dist, speed)
-	return dir
-end
-local function SAV_BeginJob(info)
-	local origin = SAV_ResolveOrigin(info.origin)
-	local speed = info.speed
-	if not origin or type(speed) ~= "number" or speed <= 1 then return end
-	local wantHoming = state.silent and aim.thrownRoot ~= nil
-	if (not CONFIG.AUTO_CALIBRATE) and (not wantHoming) then return end
-	local now = os.clock()
-	aim.job = { t0 = now, origin = origin, speed = speed, charge = info.charge or 0, dir = info.dir, cands = {}, part = nil, firstT = 0, samples = {}, root = wantHoming and aim.thrownRoot or nil, name = aim.thrownName }
-	aim.steer = nil; aim.armedUntil = now + 3
-end
-local function SAV_FinishJob(job, now)
-	local s = job.samples; local n = #s; local avg = nil
-	if n >= 2 then local span = s[n].t - s[1].t; if span > 0.05 then avg = (s[n].pos - s[1].pos).Magnitude / span end end
-	if state.silent and job.root and job.root.Parent and job.part and job.part.Parent then
-		if avg and avg < CONFIG.MIN_STEER_SPEED then return end
-		local sp = avg or job.speed
-		local dist = (job.root.Position - job.part.Position).Magnitude
-		local maxT = math.clamp(dist / math.max(sp, 1) * 2 + 1.5, CONFIG.STEER_MAX_TIME, CONFIG.STEER_MAX_TIME_CAP)
-		aim.steer = { part = job.part, root = job.root, name = job.name, t0 = now, maxTime = maxT, speed = sp, minSpeed = sp * CONFIG.MIN_SPEED_RATIO, slow = 0 }
-	end
-end
-local function SAV_PickPart(job, now)
-	for i = 1, #recent do
-		local e = recent[i]; local p = e.part
-		if p and p.Parent and e.t >= job.t0 - CONFIG.PICK_WINDOW and not usedParts[p] and not job.cands[p] and not SAV_IsCharacterPart(p) then
-			if (p.Position - job.origin).Magnitude <= CONFIG.PICK_RADIUS then job.cands[p] = { pos = p.Position, t = now } end
+
+	local function wallBlocked(origin, pos, char)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local ignore = { char }
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Character then table.insert(ignore, p.Character) end
 		end
+		for _ = 1, 8 do
+			params.FilterDescendantsInstances = ignore
+			local res = Workspace:Raycast(origin, pos - origin, params)
+			if not res then return false end
+			local inst = res.Instance
+			if inst:IsA("BasePart") and (inst.Transparency >= 0.05 or not inst.CanCollide) then
+				table.insert(ignore, inst)
+			else
+				return true
+			end
+		end
+		return false
 	end
-	local best, bestSpeed = nil, 0
-	for p, c in pairs(job.cands) do
-		if not p.Parent then job.cands[p] = nil
-		else local age = now - c.t; if age >= 0.1 then local sp = (p.Position - c.pos).Magnitude / age; if sp > bestSpeed then bestSpeed = sp; best = p end end end
-	end
-	if best and bestSpeed >= math.max(10, job.speed * CONFIG.PICK_MIN_RATIO) then return best end
-	return nil
-end
-local function SAV_StepJob(now)
-	for i = #recent, 1, -1 do if now - recent[i].t > 4 then table.remove(recent, i) end end
-	local job = aim.job
-	if not job then return end
-	if not job.part then
-		if now - job.t0 > CONFIG.JOB_TIMEOUT then aim.job = nil; return end
-		local p = SAV_PickPart(job, now); if not p then return end
-		job.part = p; job.firstT = now; usedParts[p] = true; table.insert(job.samples, { t = 0, pos = p.Position }); return
-	end
-	local p = job.part
-	if not p.Parent then aim.job = nil; SAV_FinishJob(job, now); return end
-	local pos = p.Position; local last = job.samples[#job.samples]
-	if (pos - last.pos).Magnitude > 0.001 then table.insert(job.samples, { t = now - job.firstT, pos = pos }) end
-	if now - job.firstT >= CONFIG.STEER_DELAY then aim.job = nil; SAV_FinishJob(job, now) end
-end
-local function SAV_StepSteer(now, dt)
-	local st = aim.steer; if not st then return end
-	local p, root = st.part, st.root
-	if not (p and p.Parent and root and root.Parent) then aim.steer = nil; return end
-	if now - st.t0 > st.maxTime then aim.steer = nil; return end
-	if not state.silent then aim.steer = nil; return end
-	local pos = p.Position; local dist = (root.Position - pos).Magnitude
-	if dist <= CONFIG.STEER_STOP_DIST then aim.steer = nil; return end
-	local hv = Vector3.new(); local stable = 1
-	local tr = tracker[root]
-	if CONFIG.PREDICT_MOVEMENT and tr then
-		hv = Vector3.new(tr.vel.X, 0, tr.vel.Z); stable = tr.stable or 1
-		if tr.pred then hv = tr.pred:Lerp(hv, stable) end
-		if hv.Magnitude < 1.0 and stable > 0.6 then local ok, av = pcall(function() return root.AssemblyLinearVelocity end); if ok and typeof(av) == "Vector3" then hv = Vector3.new(av.X, 0, av.Z):Lerp(hv, 0.3) end end
-		if hv.Magnitude > CONFIG.MAX_PREDICT_SPEED then hv = hv.Unit * CONFIG.MAX_PREDICT_SPEED end
-	end
-	local anchored = p.Anchored; local cur, sp = nil, st.speed
-	if not anchored then
-		cur = p.AssemblyLinearVelocity; local mag = cur.Magnitude
-		if mag < st.minSpeed then st.slow = st.slow + dt; if st.slow > 0.25 then aim.steer = nil end; return end
-		st.slow = 0; sp = math.max(mag, st.speed * 0.9)
-	end
-	local lead = (ping * CONFIG.LEAD_PING_MULT + CONFIG.EXTRA_LEAD) * (CONFIG.ZIGZAG_LEAD_MIN + (1 - CONFIG.ZIGZAG_LEAD_MIN) * stable)
-	local flight = math.min(dist / math.max(sp, 1), CONFIG.PREDICT_MAX_TIME)
-	local aimPos = root.Position + Vector3.new(0, CONFIG.AIM_OFFSET_Y, 0) + hv * (flight + lead)
-	local want = aimPos - pos
-	if want.Magnitude < 0.001 then return end
-	want = want.Unit
-	local newDir = want
-	if cur then
-		local cd = cur.Unit; local ang = math.acos(math.clamp(cd:Dot(want), -1, 1)); local maxTurn = CONFIG.STEER_TURN_RATE * dt
-		if dist > CONFIG.STEER_NEAR_DIST and ang > maxTurn and ang > 0 then local mix = cd:Lerp(want, maxTurn / ang); if mix.Magnitude > 0.001 then newDir = mix.Unit end end
-	end
-	if anchored then local step = math.min(sp * dt, dist); local np = pos + newDir * step; p.CFrame = CFrame.new(np, np + newDir)
-	else p.AssemblyLinearVelocity = newDir * sp end
-end
-local function SAV_RefreshTargets(now)
-	for i = #aim.list, 1, -1 do aim.list[i] = nil end
-	local cam = workspace.CurrentCamera; if not cam then aim.target = nil; return end
-	local cp = cam.CFrame.Position; local look = cam.CFrame.LookVector
-	local best, bestAngle = nil, math.huge
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= Players.LocalPlayer then
-			local char = p.Character
-			if char then
-				local root = char:FindFirstChild("HumanoidRootPart")
-				local hum = char:FindFirstChildOfClass("Humanoid")
-				if root and hum and hum.Health > 0 and not SAV_IsKillerChar(char, now) then
-					if not p:GetAttribute("IsDead") and not char:GetAttribute("IsCarried") and not char:GetAttribute("IsHooked") then
-						local v = root.Position - cp; local dist = v.Magnitude
-						if dist > 0.5 and dist <= CONFIG.MAX_TARGET_DISTANCE then
-							local dot = look:Dot(v / dist)
-							local angle = math.deg(math.acos(math.clamp(dot, -1, 1)))
-							local vel = SAV_TrackVelocity(root, now)
-							local tr = tracker[root]; local stable = (tr and tr.stable) or 1
-							local hv = Vector3.new(vel.X, 0, vel.Z)
-							if tr and tr.pred then hv = tr.pred:Lerp(hv, stable) end
-							if not CONFIG.PREDICT_MOVEMENT then hv = Vector3.new()
-							elseif hv.Magnitude > CONFIG.MAX_PREDICT_SPEED then hv = hv.Unit * CONFIG.MAX_PREDICT_SPEED end
-							local entry = { root = root, name = p.Name, dist = dist, angle = angle, hv = hv, stable = stable }
-							table.insert(aim.list, entry)
-							if angle <= state.fov and angle < bestAngle then bestAngle = angle; best = entry end
+
+	local function refreshTargets(now)
+		local cam = Workspace.CurrentCamera
+		local myRoot = Aim.MyRoot
+		if not cam or not myRoot then
+			Aim.Target = nil
+			return
+		end
+		local vp = cam.ViewportSize
+		local center = Vector2.new(vp.X / 2, vp.Y / 2)
+		local origin = myRoot.Position
+		local list = {}
+		local best = nil
+		for _, char in ipairs(survivorList()) do
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if root and validTarget(char) then
+				local dist = (root.Position - origin).Magnitude
+				if dist > 0.5 and dist <= Config.MaxDistance then
+					local vel = trackVelocity(root, now)
+					local tr = Tracker[root]
+					local stable = (tr and tr.stable) or 1
+					local hv = Vector3.new(vel.X, 0, vel.Z)
+					if tr and tr.pred then
+						hv = tr.pred:Lerp(hv, stable)
+					end
+					if hv.Magnitude > Config.MaxPredictSpeed then
+						hv = hv.Unit * Config.MaxPredictSpeed
+					end
+					local sp, onScreen = cam:WorldToViewportPoint(root.Position)
+					if onScreen and sp.Z > 0 then
+						local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+						if sd <= Config.FOV and not (Config.WallCheck and wallBlocked(origin, root.Position, char)) then
+							local score = sd
+							local entry = { char = char, root = root, name = char.Name, dist = dist, hv = hv, stable = stable, score = score }
+							table.insert(list, entry)
+							if not best or score < best.score then
+								best = entry
+							end
 						end
 					end
 				end
 			end
 		end
-	end
-	if best and aim.prevRoot and best.root ~= aim.prevRoot then
-		for i = 1, #aim.list do local e = aim.list[i]; if e.root == aim.prevRoot and e.angle <= state.fov and (e.angle - bestAngle) < CONFIG.TARGET_HYSTERESIS then best = e; break end end
-	end
-	if best then aim.target = best; aim.prevRoot = best.root; aim.updatedAt = now else aim.target = nil end
-end
-local function SAV_BuildLabel()
-	if SAV_TargetLabel then return end
-	local sg = make("ScreenGui", { Name = "SAV_Label", ResetOnSpawn = false, IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, nil)
-	pcall(function() if syn and syn.protect_gui then syn.protect_gui(sg) end end)
-	sg.Parent = getParent()
-	SAV_TargetLabel = make("TextLabel", {
-		Name = "TargetLabel", AnchorPoint = Vector2.new(0.5, 1),
-		Size = UDim2.fromOffset(200, CONFIG.TARGET_TEXT_SIZE + 4),
-		BackgroundTransparency = 1, BorderSizePixel = 0,
-		Text = CONFIG.TARGET_TEXT, TextColor3 = CONFIG.TARGET_TEXT_COLOR,
-		TextSize = CONFIG.TARGET_TEXT_SIZE, Font = Enum.Font.GothamBold,
-		TextStrokeTransparency = CONFIG.TARGET_TEXT_STROKE and 0.4 or 1,
-		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
-		TextXAlignment = Enum.TextXAlignment.Center,
-		TextYAlignment = Enum.TextYAlignment.Bottom,
-		Visible = false, ZIndex = 2,
-	}, sg)
-end
-local function SAV_UpdateLabel()
-	if not SAV_TargetLabel then return end
-	local t = aim.target
-	local cam = workspace.CurrentCamera
-	local show = state.visual and state.silent and t and t.root and t.root.Parent and cam and t.dist <= CONFIG.MAX_SNAP_DISTANCE
-	if show then
-		local wp = t.root.Position + Vector3.new(0, CONFIG.TARGET_TEXT_OFFSET_Y, 0)
-		local pos = cam:WorldToViewportPoint(wp)
-		if pos.Z > 0 then SAV_TargetLabel.Position = UDim2.fromOffset(pos.X, pos.Y); SAV_TargetLabel.Visible = true; return end
-	end
-	SAV_TargetLabel.Visible = false
-end
-local function SAV_InstallHook()
-	if not spearRemote then SAV_FindRemotes() end
-	if spearRemote then
-		RegisterHookHandler(spearRemote, function(args, self)
-			if not state.silent then return args end
-			aim.thrownRoot = nil; aim.thrownName = nil
-			local okP, info = pcall(SAV_ParseThrow, args)
-			if okP and info then
-				info.charge = SAV_CurrentCharge(os.clock())
-				if not info.speed then info.speed = SAV_SpeedFor(info.charge) end
-				local ok, newDir = pcall(SAV_ComputeDir, info)
-				if ok and newDir then pcall(SAV_ApplyDirection, args, info, newDir); info.dir = newDir end
-				pcall(SAV_BeginJob, info)
+		if best and Aim.PrevRoot and best.root ~= Aim.PrevRoot then
+			for _, e in ipairs(list) do
+				if e.root == Aim.PrevRoot and (e.score - best.score) < Config.Hysteresis then
+					best = e
+					break
+				end
 			end
-			return args
-		end)
+		end
+		if best then
+			Aim.Target = best
+			Aim.PrevRoot = best.root
+			Aim.UpdatedAt = now
+		else
+			Aim.Target = nil
+		end
 	end
-	if vfxRemote then
-		RegisterHookHandler(vfxRemote, function(args, self)
-			if not state.silent then return args end
-			local a3 = args[3]
-			if type(a3) == "boolean" then
-				local nowc = os.clock()
-				if a3 and not aim.holding then aim.holdStart = nowc
-				elseif (not a3) and aim.holding and aim.holdStart then aim.lastHold = nowc - aim.holdStart; aim.lastHoldEnd = nowc end
-				aim.holding = a3; aim.armedUntil = nowc + 3
+
+	local function cleanTargetTables()
+		for root in pairs(Tracker) do
+			if not root.Parent then
+				Tracker[root] = nil
 			end
-			return args
+		end
+	end
+
+	local function maxSpeed()
+		if SpearMath and type(SpearMath.Speed) == "number" then return SpearMath.Speed end
+		return 165
+	end
+
+	local function gravity()
+		if SpearMath and typeof(SpearMath.Gravity) == "Vector3" then
+			return math.abs(SpearMath.Gravity.Y)
+		end
+		return 98.1
+	end
+
+	local function currentSpeed()
+		local s = maxSpeed()
+		if LastPower and os.clock() - LastPowerAt <= Config.PowerFresh then
+			s = LastPower
+		end
+		return math.clamp(s, 1, maxSpeed())
+	end
+
+	local function solveDirection(origin, speed, base, hv, g, lead)
+		local t = (base - origin).Magnitude / speed
+		local dirOut = nil
+		for _ = 1, 8 do
+			local aimPos = base + hv * (math.min(t, Config.PredictMaxTime) + lead)
+			local d = aimPos - origin
+			local hd = Vector3.new(d.X, 0, d.Z)
+			local x = hd.Magnitude
+			local y = d.Y
+			if x < 0.01 then
+				dirOut = Vector3.new(0, y >= 0 and 1 or -1, 0)
+				t = math.abs(y) / speed
+			elseif g <= 0 then
+				dirOut = d.Unit
+				t = d.Magnitude / speed
+			else
+				local v2 = speed * speed
+				local disc = v2 * v2 - g * (g * x * x + 2 * y * v2)
+				local tanT
+				if disc >= 0 then
+					tanT = (v2 - math.sqrt(disc)) / (g * x)
+				else
+					tanT = v2 / (g * x)
+				end
+				local theta = math.atan(tanT)
+				local hdir = hd / x
+				dirOut = hdir * math.cos(theta) + Vector3.new(0, math.sin(theta), 0)
+				local vx = speed * math.cos(theta)
+				if vx > 0.01 then
+					t = x / vx
+				end
+			end
+		end
+		if not dirOut or dirOut.X ~= dirOut.X or dirOut.Y ~= dirOut.Y or dirOut.Z ~= dirOut.Z then
+			return nil
+		end
+		return dirOut
+	end
+
+	local function resolveOrigin(origin)
+		local mr = Aim.MyRoot
+		if mr and mr.Parent and (origin - mr.Position).Magnitude > 25 then
+			return mr.Position + Vector3.new(0, 1.5, 0)
+		end
+		return origin
+	end
+
+	local function spawnTrail(origin, dir)
+		local speed = currentSpeed()
+		local g = gravity()
+
+		local part = Instance.new("Part")
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Transparency = 1
+		part.Size = Vector3.new(0.2, 0.2, 0.2)
+		part.CFrame = CFrame.new(origin)
+
+		local a0 = Instance.new("Attachment")
+		a0.Position = Vector3.new(0, Config.TrailWidth / 2, 0)
+		a0.Parent = part
+		local a1 = Instance.new("Attachment")
+		a1.Position = Vector3.new(0, -Config.TrailWidth / 2, 0)
+		a1.Parent = part
+
+		local trail = Instance.new("Trail")
+		trail.Attachment0 = a0
+		trail.Attachment1 = a1
+		trail.Color = ColorSequence.new(Config.TrailColor)
+		trail.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.1),
+			NumberSequenceKeypoint.new(0.5, 0.5),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		trail.WidthScale = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(1, 0.2),
+		})
+		trail.Lifetime = Config.TrailLifetime
+		trail.MinLength = 0
+		trail.LightEmission = 1
+		trail.LightInfluence = 0
+		trail.FaceCamera = true
+		trail.Parent = part
+
+		part.Parent = Workspace
+		table.insert(TrailParts, part)
+
+		local pos = origin
+		local vel = dir.Unit * speed
+		local elapsed = 0
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+
+		while not Unloaded and elapsed < Config.TrailMaxTime do
+			local dt = math.min(RunService.Heartbeat:Wait(), 0.05)
+			local newPos = pos + vel * dt
+			local newVel = vel + Vector3.new(0, -g, 0) * dt
+
+			local ignore = { part }
+			if LP.Character then table.insert(ignore, LP.Character) end
+			params.FilterDescendantsInstances = ignore
+
+			local hit = Workspace:Raycast(pos, newPos - pos, params)
+			if hit then
+				part.CFrame = CFrame.new(hit.Position)
+				break
+			end
+
+			part.CFrame = CFrame.new(newPos)
+			pos = newPos
+			vel = newVel
+			elapsed = elapsed + dt
+		end
+
+		trail.Enabled = false
+		task.wait(Config.TrailLifetime + 0.2)
+		local idx = table.find(TrailParts, part)
+		if idx then table.remove(TrailParts, idx) end
+		pcall(function() part:Destroy() end)
+	end
+
+	local function throwHandler(args, self)
+		if Unloaded or not Aim.IsKiller then return nil end
+		local first = args[1]
+		if type(first) ~= "table" then return nil end
+		local dir = first.Direction
+		local origin = first.Origin
+		if typeof(dir) ~= "Vector3" or typeof(origin) ~= "Vector3" then return nil end
+
+		origin = resolveOrigin(origin)
+		local finalDir = dir
+		local out = nil
+
+		local t = Aim.Target
+		if State.Enabled and t and t.root and t.root.Parent
+			and os.clock() - Aim.UpdatedAt <= Config.TargetStale then
+			local stable = t.stable or 1
+			local lead = (Aim.Ping * Config.LeadPingMult + Config.ExtraLead) * (Config.ZigzagLeadMin + (1 - Config.ZigzagLeadMin) * stable)
+			local base = bodyCenter(t.char, t.root) + Vector3.new(0, Config.AimOffsetY, 0)
+			local newDir = solveDirection(origin, currentSpeed(), base, t.hv or Vector3.new(), gravity(), lead)
+			if newDir then
+				local copy = {}
+				for k, v in pairs(first) do
+					copy[k] = v
+				end
+				copy.Direction = newDir
+				out = table.pack(table.unpack(args, 1, args.n))
+				out[1] = copy
+				finalDir = newDir
+			end
+		end
+
+		task.spawn(spawnTrail, origin, finalDir)
+		return out
+	end
+
+	local function ensureHook()
+		if Reg.Installed then return true end
+		local wrap = newcclosure or function(f) return f end
+		if hookmetamethod and getnamecallmethod then
+			local ok = pcall(function()
+				local old
+				old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "FireServer" then
+						local fn = Reg.Handlers[self]
+						if fn then
+							local mine = false
+							if checkcaller then mine = checkcaller() end
+							if not mine then
+								local args = table.pack(...)
+								local okH, result = pcall(fn, args, self)
+								if setnamecallmethod then
+									pcall(setnamecallmethod, method)
+								end
+								if okH and type(result) == "table" then
+									return old(self, table.unpack(result, 1, result.n or #result))
+								end
+							end
+						end
+					end
+					return old(self, ...)
+				end))
+				Reg.Old = old
+				Reg.Installed = true
+			end)
+			if ok and Reg.Installed then return true end
+		end
+		if hookfunction then
+			local ok = pcall(function()
+				local fs = Instance.new("RemoteEvent").FireServer
+				local old
+				old = hookfunction(fs, wrap(function(self, ...)
+					local fn = Reg.Handlers[self]
+					if fn then
+						local mine = false
+						if checkcaller then mine = checkcaller() end
+						if not mine then
+							local args = table.pack(...)
+							local okH, result = pcall(fn, args, self)
+							if okH and type(result) == "table" then
+								return old(self, table.unpack(result, 1, result.n or #result))
+							end
+						end
+					end
+					return old(self, ...)
+				end))
+				Reg.Old = old
+				Reg.Installed = true
+			end)
+			if ok and Reg.Installed then return true end
+		end
+		return false
+	end
+
+	local function resolveRemote()
+		local r = ReplicatedStorage:FindFirstChild("Remotes")
+		r = r and r:FindFirstChild("Killers")
+		r = r and r:FindFirstChild("Veil")
+		r = r and r:FindFirstChild("Spearthrow")
+		return r
+	end
+
+	local function registerRemote()
+		if ThrowRemote and ThrowRemote.Parent then
+			Reg.Handlers[ThrowRemote] = throwHandler
+		end
+	end
+
+	local function loadSpearMath()
+		local ok, mod = pcall(function()
+			local m = ReplicatedStorage:WaitForChild("Modules", 5)
+				:WaitForChild("Killers", 5)
+				:WaitForChild("Veil", 5)
+				:WaitForChild("SpearMath", 5)
+			return require(m)
 		end)
+		if ok and type(mod) == "table" then
+			SpearMath = mod
+			if type(mod.power) == "function" then
+				local orig = mod.power
+				local set = pcall(function()
+					mod.power = function(...)
+						local r = orig(...)
+						if type(r) == "number" then
+							LastPower = r
+							LastPowerAt = os.clock()
+						end
+						return r
+					end
+				end)
+				if set then
+					OriginalPower = orig
+				end
+			end
+		end
 	end
-	EnsureNamecallHook()
+
+	local function unload()
+		if Unloaded then return end
+		Unloaded = true
+		State.Enabled = false
+		for _, conn in ipairs(Connections) do
+			pcall(function() conn:Disconnect() end)
+		end
+		Connections = {}
+		if ThrowRemote then
+			Reg.Handlers[ThrowRemote] = nil
+		end
+		if SpearMath and OriginalPower then
+			pcall(function() SpearMath.power = OriginalPower end)
+		end
+		for _, p in ipairs(TrailParts) do
+			pcall(function() p:Destroy() end)
+		end
+		TrailParts = {}
+		for _, gui in ipairs(Guis) do
+			pcall(function() gui:Destroy() end)
+		end
+		Guis = {}
+		if Env.VDSilent then
+			Env.VDSilent = nil
+		end
+	end
+
+	local function corner(inst, r)
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, r)
+		c.Parent = inst
+	end
+
+	local function createFov()
+		local gui = newGui("VDSilentFov", 998)
+		if not gui then return nil end
+		local ring = Instance.new("Frame")
+		ring.Name = "Ring"
+		ring.AnchorPoint = Vector2.new(0.5, 0.5)
+		ring.Position = UDim2.new(0.5, 0, 0.5, 0)
+		ring.BackgroundTransparency = 1
+		ring.BorderSizePixel = 0
+		ring.Active = false
+		ring.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
+		ring.Visible = State.ShowFov
+		ring.Parent = gui
+		corner(ring, 9999)
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = 1.5
+		stroke.Color = Config.FovColor
+		stroke.Parent = ring
+		return ring
+	end
+
+	local function refreshFov()
+		if Fov then
+			Fov.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
+			Fov.Visible = State.ShowFov
+		end
+	end
+
+	HookOk = ensureHook()
+
+	ThrowRemote = resolveRemote()
+	registerRemote()
+	task.spawn(function()
+		local waited = 0
+		while not Unloaded and not ThrowRemote and waited < 30 do
+			task.wait(0.5)
+			waited = waited + 0.5
+			ThrowRemote = resolveRemote()
+			registerRemote()
+		end
+	end)
+	task.spawn(loadSpearMath)
+
+	Fov = createFov()
+
+	local lastPing = 0
+	local lastClean = 0
+	track(RunService.Heartbeat:Connect(function()
+		if Unloaded then return end
+		local now = os.clock()
+		pcall(function()
+			local char = LP.Character
+			Aim.MyRoot = char and char:FindFirstChild("HumanoidRootPart")
+			Aim.IsKiller = isKillerNow()
+			if now - lastPing >= 0.5 then
+				lastPing = now
+				local ok, v = pcall(function() return LP:GetNetworkPing() end)
+				if ok and type(v) == "number" then
+					Aim.Ping = math.clamp(v, 0, 0.4)
+				end
+			end
+			if now - lastClean >= 3 then
+				lastClean = now
+				cleanTargetTables()
+			end
+			if State.Enabled and Aim.IsKiller and Aim.MyRoot then
+				refreshTargets(now)
+			else
+				Aim.Target = nil
+			end
+		end)
+	end))
+
+	Env.VDSilent = { Unload = unload, State = State, Config = Config }
+
+	--------------------------------------------------
+	-- UI: ROW FLUX HUB
+	--------------------------------------------------
+
+	local VEIL_Row = Add("Silent Aim Veil")
+	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
+		State.Enabled = s
+		if not s then
+			Aim.Target = nil
+		end
+	end)
+
+	VEIL_Row:Check("Fov Circle", true, function(v)
+		State.ShowFov = v
+		refreshFov()
+	end)
+
+	VEIL_Row:Stepper({ Min = Config.FovMin, Max = Config.FovMax, Step = Config.FovStep, Default = Config.FOV }, function(v)
+		Config.FOV = v
+		refreshFov()
+	end)
+
+	VEIL_Toggle.Color = VEIL_Row:Color(Config.FovColor, function(c)
+		Config.FovColor = c
+		Config.TrailColor = c
+		if Fov then
+			pcall(function()
+				local st = Fov:FindFirstChildOfClass("UIStroke")
+				if st then st.Color = c end
+			end)
+		end
+	end)
 end
-local SAV_Row = Add("Silent Aim Veil")
-local SAV_Toggle = SAV_Row:Toggle(false, function(enabled)
-	state.silent = enabled
-	if enabled then
-		SAV_FindRemotes(); SAV_InstallHook(); SAV_BuildLabel(); SAV_RefreshPing()
-		local lastPing, lastRemote = 0, 0
-		table.insert(SAV.Conns, RunService.Heartbeat:Connect(function(dt)
-			local now = os.clock()
-			if now - lastPing >= 0.5 then lastPing = now; SAV_RefreshPing() end
-			if now - lastRemote >= 1 then lastRemote = now; if not (spearRemote and spearRemote.Parent) or not (vfxRemote and vfxRemote.Parent) then SAV_FindRemotes() end end
-			if aim.holding then aim.armedUntil = now + 2 end
-			if state.silent then SAV_RefreshTargets(now) else aim.target = nil end
-			pcall(SAV_StepJob, now); pcall(SAV_StepSteer, now, dt); SAV_UpdateLabel()
-			if aim.pendingLog then local m = aim.pendingLog; aim.pendingLog = nil; warn("[SilentAim] " .. m) end
-		end))
-		table.insert(SAV.Conns, workspace.DescendantAdded:Connect(function(inst)
-			local now = os.clock()
-			if now > aim.armedUntil then return end
-			if inst:IsA("BasePart") then table.insert(recent, { part = inst, t = now }); if #recent > 200 then table.remove(recent, 1) end end
-		end))
-		table.insert(SAV.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
-			aim.holding = false; aim.holdStart = nil; aim.lastHoldEnd = nil; aim.job = nil; aim.steer = nil
-		end))
-	else
-		for _, c in ipairs(SAV.Conns) do pcall(function() c:Disconnect() end) end
-		SAV.Conns = {}
-		aim.target = nil; aim.job = nil; aim.steer = nil
-		if SAV_TargetLabel then SAV_TargetLabel.Visible = false end
-	end
-end)
-SAV_Toggle.Extras = SAV_Toggle.Extras or {}
-SAV_Toggle.Extras[1] = SAV_Row:Stepper({ Min = CONFIG.MIN_FOV, Max = CONFIG.MAX_FOV, Step = CONFIG.FOV_STEP, Default = CONFIG.DEFAULT_FOV }, function(v) state.fov = v end)
-SAV_Toggle.Extras[2] = SAV_Row:Check("Target Label", true, function(v) state.visual = v; if not v and SAV_TargetLabel then SAV_TargetLabel.Visible = false end end)
 
 	-- ============================================================
 	-- 3. MASKED [ BETA ] (logic asli)
@@ -5244,110 +5615,231 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		end
 	end)
 
-	-- ============================================================
-	-- 4. HOOK ESP
-	-- ============================================================
-	local HE = { Enabled = false, Highlights = {}, Labels = {}, Tracked = {}, Conns = {}, Color = Color3.fromRGB(255, 80, 80) }
-	local function HE_GetRoot(inst)
-		local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
-		while m do
-			if m.Name:lower() == "hook" then return m end
-			local par = m.Parent
-			m = (par and par:IsA("Model")) and par or nil
-		end
-		return nil
-	end
-	local function HE_Setup(root)
-		if HE.Tracked[root] then return end
-		local attach = nil
-		if root.PrimaryPart and root.PrimaryPart:IsA("BasePart") then attach = root.PrimaryPart
-		else
-			local hb = root:FindFirstChild("HitBox", true)
-			if hb and hb:IsA("BasePart") then attach = hb else attach = root:FindFirstChildWhichIsA("BasePart", true) end
-		end
-		if not attach then return end
-		local cam = workspace.CurrentCamera
-		local hl = Instance.new("Highlight")
-		hl.Parent = cam; hl.Adornee = root; hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		hl.FillTransparency = 0.6; hl.FillColor = HE.Color; hl.OutlineColor = Color3.fromRGB(255, 0, 0)
-		HE.Highlights[root] = hl
-		local bill = Instance.new("BillboardGui")
-		bill.Parent = cam; bill.Adornee = attach; bill.Size = UDim2.new(0, 120, 0, 28)
-		bill.StudsOffset = Vector3.new(0, 4, 0); bill.AlwaysOnTop = true
-		local txt = Instance.new("TextLabel")
-		txt.Parent = bill; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1		txt.TextScaled = false; txt.TextSize = 14; txt.Font = Enum.Font.SourceSansSemibold
-		txt.TextStrokeTransparency = 0.4; txt.TextStrokeColor3 = Color3.new(0, 0, 0)
-		txt.TextColor3 = Color3.fromRGB(255, 100, 100); txt.Text = " "
-		HE.Labels[root] = txt; HE.Tracked[root] = true
-	end
-	local function HE_Cleanup(root)
-		if HE.Highlights[root] then HE.Highlights[root]:Destroy(); HE.Highlights[root] = nil end
-		if HE.Labels[root] then local b = HE.Labels[root].Parent; if b then b:Destroy() end; HE.Labels[root] = nil end
-		HE.Tracked[root] = nil
-	end
-	local HE_Row = Add("Hook Esp")
-	local HE_Toggle = HE_Row:Toggle(false, function(state)
-		HE.Enabled = state
-		local map = workspace:FindFirstChild("Map")
-		if state and map then
-			for _, inst in ipairs(map:GetDescendants()) do local root = HE_GetRoot(inst); if root then HE_Setup(root) end end
-			table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst) local root = HE_GetRoot(inst); if root then HE_Setup(root) end end))
-			table.insert(HE.Conns, map.DescendantRemoving:Connect(function(child) local root = HE_GetRoot(child); if root and HE.Tracked[root] then HE_Cleanup(root) end end))
-		else
-			for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
-			HE.Conns = {}
-			for root in pairs(HE.Tracked) do HE_Cleanup(root) end
-		end
-	end)
-	HE_Toggle.Color = HE_Row:Color(HE.Color, function(c) HE.Color = c; for _, hl in pairs(HE.Highlights) do pcall(function() hl.FillColor = c end) end end)
+-- ============================================================
+-- 4. HOOK ESP
+-- ============================================================
+local HE = {
+	Enabled = false,
+	Conns = {},
+	Color = Color3.fromRGB(255, 0, 0),
+	Objs = setmetatable({}, { __mode = "k" }),
+}
 
-	-- ============================================================
-	-- 5. KILLER ESP
-	-- ============================================================
-	local KE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(30, 0, 0) }
-	local KE_Outline = Color3.fromRGB(51, 51, 51)
-	local function KE_IsKiller(p)
-		if p == Players.LocalPlayer then return false end
-		if p:GetAttribute("Role") == "Killer" or p:GetAttribute("IsKiller") == true then return true end
-		if p.Character then
-			local tool = p.Character:FindFirstChildWhichIsA("Tool")
-			if tool and (tool:FindFirstChild("Hitbox") or tool:FindFirstChild("Attack") or tool:FindFirstChild("KnifeScript")) then return true end
-		end
-		if p.Team and string.find(string.lower(p.Team.Name), "killer") then return true end
-		return false
+local function HE_GetRoot(inst)
+	local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
+	while m do
+		if m.Name:lower() == "hook" then return m end
+		local par = m.Parent
+		m = (par and par:IsA("Model")) and par or nil
 	end
-	local function KE_Apply(p)
-		if p == Players.LocalPlayer then return end
-		local function upd()
-			local c = p.Character; if not c or not c.Parent then return end
-			if KE_IsKiller(p) then
-				local hl = c:FindFirstChild("KillerESP_Chams") or Instance.new("Highlight")
-				hl.Name = "KillerESP_Chams"; hl.FillColor = KE.Color; hl.FillTransparency = 0.65
-				hl.OutlineColor = KE_Outline; hl.OutlineTransparency = 0
-				hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Parent = c
-			else
-				local h = c:FindFirstChild("KillerESP_Chams"); if h then h:Destroy() end
-			end
-		end
-		table.insert(KE.Conns, p.CharacterAdded:Connect(function(ch) table.insert(KE.Conns, ch.ChildAdded:Connect(function() task.wait(0.1); upd() end)); task.wait(0.5); upd() end))
-		if p.Character then table.insert(KE.Conns, p.Character.ChildAdded:Connect(function() task.wait(0.1); upd() end)); upd() end
-		table.insert(KE.Conns, p:GetAttributeChangedSignal("Role"):Connect(upd))
-		table.insert(KE.Conns, p:GetAttributeChangedSignal("IsKiller"):Connect(upd))
-	end
-	local KE_Row = Add("Killer Esp")
-	local KE_Toggle = KE_Row:Toggle(false, function(state)
-		KE.Enabled = state
-		if state then
-			for _, p in ipairs(Players:GetPlayers()) do KE_Apply(p) end
-			table.insert(KE.Conns, Players.PlayerAdded:Connect(KE_Apply))
+	return nil
+end
+
+local function HE_Cleanup(root)
+	local o = HE.Objs[root]
+	if not o then return end
+	HE.Objs[root] = nil
+	pcall(function() o.box:Destroy() end)
+end
+
+local function HE_Setup(root)
+	if HE.Objs[root] then return end
+
+	local attach = nil
+	if root.PrimaryPart and root.PrimaryPart:IsA("BasePart") then
+		attach = root.PrimaryPart
+	else
+		local hb = root:FindFirstChild("HitBox", true)
+		if hb and hb:IsA("BasePart") then
+			attach = hb
 		else
-			for _, c in ipairs(KE.Conns) do pcall(function() c:Disconnect() end) end
-			KE.Conns = {}
-			for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("KillerESP_Chams"); if h then h:Destroy() end end end
+			attach = root:FindFirstChildWhichIsA("BasePart", true)
 		end
-	end)
-	KE_Toggle.Color = KE_Row:Color(KE.Color, function(c) KE.Color = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("KillerESP_Chams"); if h then h.FillColor = c end end end end)
-    KE_Toggle.OutlineColor = KE_Row:Color(KE_Outline, function(c) KE_Outline = c; for _, p in ipairs(Players:GetPlayers()) do if p.Character then local h = p.Character:FindFirstChild("KillerESP_Chams"); if h then h.OutlineColor = c end end end end)
+	end
+	if not attach then return end
+
+	local box = Instance.new("BoxHandleAdornment")
+	box.Name = "HookESP_Box"
+	box.Adornee = attach
+	box.AlwaysOnTop = true
+	box.ZIndex = 5
+	box.Size = attach.Size
+	box.Color3 = HE.Color
+	box.Transparency = 0
+	box.Parent = attach
+
+	HE.Objs[root] = { box = box, attach = attach }
+end
+
+local HE_Row = Add("Hook Esp")
+local HE_Toggle = HE_Row:Toggle(false, function(state)
+	HE.Enabled = state
+	local map = workspace:FindFirstChild("Map")
+	if state and map then
+		for _, inst in ipairs(map:GetDescendants()) do
+			local root = HE_GetRoot(inst)
+			if root then HE_Setup(root) end
+		end
+		table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst)
+			local root = HE_GetRoot(inst)
+			if root then HE_Setup(root) end
+		end))
+		table.insert(HE.Conns, map.DescendantRemoving:Connect(function(child)
+			local root = HE_GetRoot(child)
+			if root and HE.Objs[root] then HE_Cleanup(root) end
+		end))
+	else
+		for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
+		HE.Conns = {}
+		for root in pairs(HE.Objs) do HE_Cleanup(root) end
+	end
+end)
+HE_Toggle.Color = HE_Row:Color(HE.Color, function(c)
+	HE.Color = c
+	for _, o in pairs(HE.Objs) do
+		pcall(function() if o.box and o.box.Parent then o.box.Color3 = c end end)
+	end
+end)
+
+-- ============================================================
+-- 5. KILLER ESP
+-- ============================================================
+local KE = {
+	Enabled = false,
+	Conns = {},
+	Color = Color3.fromRGB(255, 0, 0),
+	Objs = setmetatable({}, { __mode = "k" }),
+}
+
+local function KE_IsKiller(p)
+	if p == Players.LocalPlayer then return false end
+	if p:GetAttribute("Role") == "Killer" or p:GetAttribute("IsKiller") == true then return true end
+	if p.Character then
+		if p.Character:FindFirstChild("Lookscriptkiller", true) then return true end
+		local tool = p.Character:FindFirstChildWhichIsA("Tool")
+		if tool and (tool:FindFirstChild("Hitbox") or tool:FindFirstChild("Attack") or tool:FindFirstChild("KnifeScript")) then return true end
+	end
+	if p.Team then
+		local tn = string.lower(p.Team.Name)
+		if string.find(tn, "killer", 1, true) or string.find(tn, "murder", 1, true) then return true end
+	end
+	return false
+end
+
+local function KE_Clear(p)
+	local o = KE.Objs[p]
+	if not o then return end
+	KE.Objs[p] = nil
+	for _, b in ipairs(o.boxes) do pcall(function() b:Destroy() end) end
+end
+
+local function KE_Refresh(p)
+	if p == Players.LocalPlayer then return end
+	local char = p.Character
+	if not char or not char.Parent then KE_Clear(p); return end
+	if not KE_IsKiller(p) then KE_Clear(p); return end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum or hum.Health <= 0 then KE_Clear(p); return end
+
+	local o = KE.Objs[p]
+	if o and o.char == char and o.boxes[1] and o.boxes[1].Parent then
+		for _, b in ipairs(o.boxes) do
+			pcall(function()
+				b.Adornee = root
+				b.Size = Vector3.new(3, 5.5, 3)
+				b.Color3 = KE.Color
+			end)
+		end
+		return
+	end
+
+	KE_Clear(p)
+	local box = Instance.new("BoxHandleAdornment")
+	box.Name = "KillerESP_Box"
+	box.Adornee = root
+	box.AlwaysOnTop = true
+	box.ZIndex = 5
+	box.Size = Vector3.new(3, 5.5, 3)
+	box.Color3 = KE.Color
+	box.Transparency = 0
+	box.Parent = root
+
+	KE.Objs[p] = { boxes = { box }, char = char }
+end
+
+local function KE_Apply(p)
+	if p == Players.LocalPlayer then return end
+	if p:GetAttribute("_KESP_Hooked") then return end
+	p:SetAttribute("_KESP_Hooked", true)
+	table.insert(KE.Conns, p.CharacterAdded:Connect(function(char)
+		for i = 1, 6 do
+			task.wait(i == 1 and 0.1 or 0.4)
+			if not char.Parent then return end
+			KE_Refresh(p)
+		end
+	end))
+	if p.Character then
+		task.spawn(function()
+			for i = 1, 6 do
+				task.wait(i == 1 and 0.1 or 0.4)
+				if not p.Character or not p.Character.Parent then return end
+				KE_Refresh(p)
+			end
+		end)
+	end
+	table.insert(KE.Conns, p:GetAttributeChangedSignal("Role"):Connect(function() KE_Refresh(p) end))
+	table.insert(KE.Conns, p:GetAttributeChangedSignal("IsKiller"):Connect(function() KE_Refresh(p) end))
+	table.insert(KE.Conns, p.Changed:Connect(function(prop)
+		if prop == "Team" then KE_Refresh(p) end
+	end))
+	table.insert(KE.Conns, p.CharacterAdded:Connect(function(char)
+		char.ChildAdded:Connect(function(c)
+			if c:IsA("Tool") then task.wait(0.2); KE_Refresh(p) end
+		end)
+	end))
+end
+
+local KE_Row = Add("Killer Esp")
+local KE_Toggle = KE_Row:Toggle(false, function(state)
+	KE.Enabled = state
+	if state then
+		for _, p in ipairs(Players:GetPlayers()) do KE_Apply(p) end
+		table.insert(KE.Conns, Players.PlayerAdded:Connect(KE_Apply))
+		KE.Watchdog = task.spawn(function()
+			while KE.Enabled do
+				task.wait(1)
+				for _, p in ipairs(Players:GetPlayers()) do
+					if p ~= Players.LocalPlayer and p.Character and p.Character.Parent then
+						local o = KE.Objs[p]
+						local has = o and o.boxes[1] and o.boxes[1].Parent
+						if KE_IsKiller(p) and not has then
+							KE_Refresh(p)
+						elseif not KE_IsKiller(p) and has then
+							KE_Clear(p)
+						end
+					end
+				end
+			end
+		end)
+	else
+		if KE.Watchdog then pcall(function() task.cancel(KE.Watchdog) end); KE.Watchdog = nil end
+		for _, c in ipairs(KE.Conns) do pcall(function() c:Disconnect() end) end
+		KE.Conns = {}
+		for _, p in ipairs(Players:GetPlayers()) do
+			KE_Clear(p)
+			p:SetAttribute("_KESP_Hooked", nil)
+		end
+	end
+end)
+KE_Toggle.Color = KE_Row:Color(KE.Color, function(c)
+	KE.Color = c
+	for _, o in pairs(KE.Objs) do
+		for _, b in ipairs(o.boxes) do
+			pcall(function() if b.Parent then b.Color3 = c end end)
+		end
+	end
+end)
 
 	-- ============================================================
 	-- 6. LOCK FOV
@@ -5374,9 +5866,18 @@ RunTab("Visual", function(Add, Title, AddFeature)
 -- ============================================================
 -- 2. GENERATOR ESP + PROGRESS
 -- ============================================================
-local GE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(180, 110, 50) }
-local GE_CFG = { OUTLINE = Color3.fromRGB(139, 69, 19), BG = Color3.fromRGB(15, 15, 15), BORDER = Color3.fromRGB(60, 60, 60), TEXT = Color3.fromRGB(255, 255, 255), COL_START = Color3.fromRGB(235, 94, 40), COL_MID = Color3.fromRGB(247, 197, 65), COL_END = Color3.fromRGB(38, 194, 129) }
-local function GE_Color(p) if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end; return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2) end
+local GE = { Enabled = false, Conns = {}, Objs = setmetatable({}, { __mode = "k" }) }
+local GE_CFG = {
+	OUTLINE = Color3.fromRGB(0, 0, 0),
+	TEXT = Color3.fromRGB(255, 255, 255),
+	COL_START = Color3.fromRGB(235, 94, 40),
+	COL_MID = Color3.fromRGB(247, 197, 65),
+	COL_END = Color3.fromRGB(38, 194, 129),
+}
+local function GE_Color(p)
+	if p < 0.5 then return GE_CFG.COL_START:Lerp(GE_CFG.COL_MID, p * 2) end
+	return GE_CFG.COL_MID:Lerp(GE_CFG.COL_END, (p - 0.5) * 2)
+end
 local function GE_Progress(gen)
 	local v = gen:FindFirstChild("Progress", true) or gen:FindFirstChild("Repair", true) or gen:FindFirstChild("Charge", true)
 	if v and (v:IsA("NumberValue") or v:IsA("IntValue")) then return math.clamp(v.Value, 0, 100) end
@@ -5414,68 +5915,79 @@ local function GE_Adornee(model)
 	return top
 end
 local function GE_Cleanup(obj)
-	local old = obj:FindFirstChild("GenESP_Outline"); if old then old:Destroy() end
-	local oldTag = obj:FindFirstChild("GenESP_Tag"); if oldTag then oldTag:Destroy() end
+	local o = GE.Objs[obj]
+	if not o then return end
+	GE.Objs[obj] = nil
+	pcall(function() o.box:Destroy() end)
+	pcall(function() o.tag:Destroy() end)
 end
 local function GE_Apply(obj)
 	if not GE_IsGeneratorModel(obj) then return end
 	GE_Cleanup(obj)
-	local hl = Instance.new("Highlight")
-	hl.Name = "GenESP_Outline"
-	hl.FillColor = GE.Color
-	hl.FillTransparency = 0.7
-	hl.OutlineColor = GE_CFG.OUTLINE
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = obj
-	local adornee = GE_Adornee(obj)
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "GenESP_Tag"
-	bb.Size = UDim2.new(0, 40, 0, 10)
-	bb.SizeOffset = Vector2.new(0, 0)
-	bb.AlwaysOnTop = true
-	bb.ResetOnSpawn = false
-	bb.LightInfluence = 0
-	bb.DistanceLowerLimit = 0
-	bb.DistanceUpperLimit = 500
-	bb.MaxDistance = 500
-	bb.ClipsDescendants = false
-	bb.Active = false
-	if adornee then
-		bb.Adornee = adornee
-		bb.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0)
-	else
-		bb.Adornee = obj
-		bb.StudsOffset = Vector3.new(0, 3, 0)
-	end
-	bb.Parent = obj
-	local bg = Instance.new("Frame"); bg.Name = "MainFrame"; bg.Size = UDim2.new(1, 0, 1, 0); bg.BackgroundColor3 = GE_CFG.BG; bg.BorderSizePixel = 1; bg.BorderColor3 = GE_CFG.BORDER; bg.Parent = bb
-	local barC = Instance.new("Frame"); barC.Name = "BarContainer"; barC.Size = UDim2.new(1, 0, 1, 0); barC.BackgroundTransparency = 1; barC.ClipsDescendants = true; barC.Parent = bg
-	local bar = Instance.new("Frame"); bar.Name = "ProgressBar"; bar.Size = UDim2.new(0, 0, 1, 0); bar.BorderSizePixel = 0; bar.BackgroundColor3 = GE_CFG.COL_START; bar.Parent = barC
-	local txt = Instance.new("TextLabel"); txt.Name = "ProgressText"; txt.Size = UDim2.new(1, 0, 1, 0); txt.BackgroundTransparency = 1; txt.ZIndex = 3; txt.Font = Enum.Font.GothamBold; txt.TextSize = 10; txt.TextColor3 = GE_CFG.TEXT; txt.TextStrokeColor3 = Color3.fromRGB(0, 0, 0); txt.TextStrokeTransparency = 0.3; txt.Parent = bg
+
+	local adornee = GE_Adornee(obj) or obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+	if not adornee then return end
+
+	local box = Instance.new("BoxHandleAdornment")
+	box.Name = "GenESP_Box"
+	box.Adornee = adornee
+	box.AlwaysOnTop = true
+	box.ZIndex = 5
+	box.Size = adornee.Size
+	box.Color3 = GE_CFG.OUTLINE
+	box.Transparency = 0
+	box.Parent = adornee
+
+	local tag = Instance.new("BillboardGui")
+	tag.Name = "GenESP_Tag"
+	tag.Size = UDim2.new(0, 100, 0, 12)
+	tag.SizeOffset = Vector2.new(0, 0)
+	tag.AlwaysOnTop = true
+	tag.ResetOnSpawn = false
+	tag.LightInfluence = 0
+	tag.DistanceLowerLimit = 0
+	tag.DistanceUpperLimit = 500
+	tag.MaxDistance = 500
+	tag.Adornee = adornee
+	tag.StudsOffset = Vector3.new(0, (adornee.Size.Y / 2) + 0.5, 0)
+	tag.Parent = adornee
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Text"
+	lbl.Size = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.RichText = true
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = 10
+	lbl.TextColor3 = GE_CFG.TEXT
+	lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	lbl.TextStrokeTransparency = 0.4
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.Text = "Generator | 0%"
+	lbl.Parent = tag
+
+	GE.Objs[obj] = { box = box, tag = tag, lbl = lbl }
+
 	task.spawn(function()
-		local ti = TweenInfo.new(0.2, Enum.EasingStyle.Linear)
-		local done = false
-		while GE.Enabled and obj and obj.Parent and not done do
+		local lastPct = -1
+		while GE.Enabled and obj and obj.Parent do
+			local o = GE.Objs[obj]
+			if not o or o.box ~= box or not box.Parent then return end
 			if not GE_IsGeneratorModel(obj) then GE_Cleanup(obj); return end
-			local p = GE_Progress(obj) or 0
-			local cp = math.clamp(p, 0, 100)
-			if cp >= 100 then
-				done = true
-				bar.BackgroundColor3 = GE_CFG.COL_END
-				txt.Text = "100%"
-				TweenService:Create(bar, ti, { Size = UDim2.new(1, 0, 1, 0) }):Play()
-				task.wait(0.3)
-				bg.Visible = false
-				hl.Enabled = false
-			else
-				bg.Visible = true
-				hl.Enabled = true
-				txt.Text = string.format("%d%%", cp)
-				TweenService:Create(bar, ti, { Size = UDim2.new(cp / 100, 0, 1, 0), BackgroundColor3 = GE_Color(cp / 100) }):Play()
+			local p = math.clamp(GE_Progress(obj) or 0, 0, 100)
+			local pct = math.floor(p + 0.5)
+			if pct ~= lastPct then
+				lastPct = pct
+				local c = GE_Color(p / 100)
+				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
+				lbl.Text = string.format('Generator | <font color="#%s">%d%%</font>', hex, pct)
+				box.Transparency = (pct >= 100) and 1 or 0
+				tag.Enabled = (pct < 100)
 			end
 			task.wait(0.15)
 		end
+		GE_Cleanup(obj)
 	end)
 end
 local function GE_ScanAll()
@@ -5484,9 +5996,11 @@ local function GE_ScanAll()
 	end
 end
 local function GE_ClearAll()
+	for obj in pairs(GE.Objs) do GE_Cleanup(obj) end
 	for _, o in ipairs(workspace:GetDescendants()) do
-		local h = o:FindFirstChild("GenESP_Outline"); if h then h:Destroy() end
-		local t = o:FindFirstChild("GenESP_Tag"); if t then t:Destroy() end
+		if o.Name == "GenESP_Box" or o.Name == "GenESP_Tag" then
+			pcall(function() o:Destroy() end)
+		end
 	end
 end
 local GE_Row = Add("Generator Esp + Progress")
@@ -5504,18 +6018,10 @@ local GE_Toggle = GE_Row:Toggle(false, function(state)
 		GE_ClearAll()
 	end
 end)
-GE_Toggle.Color = GE_Row:Color(GE.Color, function(c)
-	GE.Color = c
-	for _, o in ipairs(workspace:GetDescendants()) do
-		local h = o:FindFirstChild("GenESP_Outline")
-		if h and h:IsA("Highlight") then h.FillColor = c end
-	end
-end)
-GE_Toggle.OutlineColor = GE_Row:Color(GE_CFG.OUTLINE, function(c)
+GE_Toggle.Color = GE_Row:Color(GE_CFG.OUTLINE, function(c)
 	GE_CFG.OUTLINE = c
-	for _, o in ipairs(workspace:GetDescendants()) do
-		local h = o:FindFirstChild("GenESP_Outline")
-		if h and h:IsA("Highlight") then h.OutlineColor = c end
+	for _, o in pairs(GE.Objs) do
+		pcall(function() if o.box and o.box.Parent then o.box.Color3 = c end end)
 	end
 end)
 
@@ -6093,9 +6599,9 @@ end)
 local SE = {
 	Enabled = false,
 	Conns = {},
-	Color = Color3.fromRGB(240, 240, 240),
-	Outline = Color3.fromRGB(255, 255, 255),
+	Color = Color3.fromRGB(255, 255, 255),
 	Watchdog = nil,
+	Objs = setmetatable({}, { __mode = "k" }),
 }
 
 local function SE_IsKiller(p)
@@ -6114,26 +6620,46 @@ local function SE_IsKiller(p)
 	return false
 end
 
+local function SE_Clear(p)
+	local o = SE.Objs[p]
+	if not o then return end
+	SE.Objs[p] = nil
+	for _, b in ipairs(o.boxes) do pcall(function() b:Destroy() end) end
+end
+
 local function SE_RefreshHighlight(p)
 	if p == Players.LocalPlayer then return end
 	local char = p.Character
-	if not char or not char.Parent then return end
-	local existing = char:FindFirstChild("SurvivorESP_Chams")
-	if SE_IsKiller(p) then
-		if existing then existing:Destroy() end
+	if not char or not char.Parent then SE_Clear(p); return end
+	if SE_IsKiller(p) then SE_Clear(p); return end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum or hum.Health <= 0 then SE_Clear(p); return end
+
+	local o = SE.Objs[p]
+	if o and o.char == char and o.boxes[1] and o.boxes[1].Parent then
+		for _, b in ipairs(o.boxes) do
+			pcall(function()
+				b.Adornee = root
+				b.Size = Vector3.new(3, 5.5, 3)
+				b.Color3 = SE.Color
+			end)
+		end
 		return
 	end
-	local hl = existing
-	if not hl then
-		hl = Instance.new("Highlight")
-		hl.Name = "SurvivorESP_Chams"
-		hl.Parent = char
-	end
-	hl.FillColor = SE.Color
-	hl.FillTransparency = 0.75
-	hl.OutlineColor = SE.Outline
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
+	SE_Clear(p)
+	local box = Instance.new("BoxHandleAdornment")
+	box.Name = "SurvivorESP_Box"
+	box.Adornee = root
+	box.AlwaysOnTop = true
+	box.ZIndex = 5
+	box.Size = Vector3.new(3, 5.5, 3)
+	box.Color3 = SE.Color
+	box.Transparency = 0
+	box.Parent = root
+
+	SE.Objs[p] = { boxes = { box }, char = char }
 end
 
 local function SE_Apply(p)
@@ -6179,11 +6705,12 @@ local SE_Toggle = SE_Row:Toggle(false, function(state)
 				task.wait(1)
 				for _, p in ipairs(Players:GetPlayers()) do
 					if p ~= Players.LocalPlayer and p.Character and p.Character.Parent then
-						local has = p.Character:FindFirstChild("SurvivorESP_Chams")
+						local o = SE.Objs[p]
+						local has = o and o.boxes[1] and o.boxes[1].Parent
 						if not SE_IsKiller(p) and not has then
 							SE_RefreshHighlight(p)
 						elseif SE_IsKiller(p) and has then
-							has:Destroy()
+							SE_Clear(p)
 						end
 					end
 				end
@@ -6194,29 +6721,16 @@ local SE_Toggle = SE_Row:Toggle(false, function(state)
 		for _, c in ipairs(SE.Conns) do pcall(function() c:Disconnect() end) end
 		SE.Conns = {}
 		for _, p in ipairs(Players:GetPlayers()) do
-			if p.Character then
-				local h = p.Character:FindFirstChild("SurvivorESP_Chams")
-				if h then h:Destroy() end
-			end
+			SE_Clear(p)
 			p:SetAttribute("_ESP_Hooked", nil)
 		end
 	end
 end)
 SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 	SE.Color = c
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Character then
-			local h = p.Character:FindFirstChild("SurvivorESP_Chams")
-			if h then h.FillColor = c end
-		end
-	end
-end)
-SE_Toggle.OutlineColor = SE_Row:Color(SE.Outline, function(c)
-	SE.Outline = c
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Character then
-			local h = p.Character:FindFirstChild("SurvivorESP_Chams")
-			if h then h.OutlineColor = c end
+	for _, o in pairs(SE.Objs) do
+		for _, b in ipairs(o.boxes) do
+			pcall(function() if b.Parent then b.Color3 = c end end)
 		end
 	end
 end)
