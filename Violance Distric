@@ -2134,7 +2134,8 @@ end)
 
 -- ============================================================
 -- SILENT AIM [ TOF ] — HALLOWEEN 🎃
--- Logic 100% utuh dari file asli. UI bawaan diganti row Flux Hub.
+-- v2: prediction pistol diperbaiki (regresi velocity, deteksi belok/rem/akselerasi, blend assembly,
+-- air ballistic, clip lead ke tembok, ping EMA). UI row/urutan kontrol sama persis.
 -- ============================================================
 do
 	local Players = game:GetService("Players")
@@ -2187,7 +2188,16 @@ do
 	local PING_MULT = 1.0
 	local MAX_LEAD = 80
 	local MAX_TARGET_SPEED = 90
-	local HIST_WINDOW = 0.35
+	local HIST_WINDOW = 0.4
+	local SHORT_WINDOW = 0.15
+	local BRAKE_MIN = 0.35
+	local ASM_BLEND = 0.35
+	local TURN_LEAD_MIN = 0.6
+	local AIR_MAX_UP = 6
+	local AIR_MAX_DOWN = 10
+	local LEAD_WALL_PAD = 1
+	local LEAD_WALL_MIN_SIZE = 8
+	local PING_SMOOTH = 0.5
 
 	local RAY_RANGE = 2500
 	local SAMPLE_FRACTION = 0.35
@@ -2248,7 +2258,7 @@ do
 				return PLAYER:GetNetworkPing()
 			end)
 			if ok and type(v) == "number" then
-				cachedPing = math.clamp(v, 0, 0.5)
+				cachedPing = cachedPing + (math.clamp(v, 0, 0.5) - cachedPing) * PING_SMOOTH
 			end
 		end
 		return cachedPing
@@ -2258,16 +2268,56 @@ do
 	-- PREDICTION: VELOCITY TRACKER
 	--------------------------------------------------
 
+	local ZERO = Vector3.new(0, 0, 0)
+
 	local track = {
 		body = nil,
 		hist = {},
-		vel = Vector3.new(0, 0, 0),
+		vel = ZERO,
+		stable = 1,
 	}
 
 	local function ResetTrack()
 		track.body = nil
 		track.hist = {}
-		track.vel = Vector3.new(0, 0, 0)
+		track.vel = ZERO
+		track.stable = 1
+	end
+
+	-- regresi linear posisi terhadap waktu (lebih halus dari titik awal-akhir)
+	local function FitVelocity(hist, now, window)
+		local first, tFirst, tLast = nil, nil, nil
+		local n, st, stt = 0, 0, 0
+		local sx, sy, sz, stx, sty, stz = 0, 0, 0, 0, 0, 0
+		for i = 1, #hist do
+			local h = hist[i]
+			if now - h.t <= window then
+				if not first then
+					first = h.p
+					tFirst = h.t
+				end
+				local t = h.t - tFirst
+				local dx, dy, dz = h.p.X - first.X, h.p.Y - first.Y, h.p.Z - first.Z
+				n = n + 1
+				st = st + t
+				stt = stt + t * t
+				sx = sx + dx
+				sy = sy + dy
+				sz = sz + dz
+				stx = stx + t * dx
+				sty = sty + t * dy
+				stz = stz + t * dz
+				tLast = h.t
+			end
+		end
+		if n < 3 or not tLast or (tLast - tFirst) < 0.06 then
+			return nil
+		end
+		local D = n * stt - st * st
+		if math.abs(D) < 1e-9 then
+			return nil
+		end
+		return Vector3.new((n * stx - st * sx) / D, (n * sty - st * sy) / D, (n * stz - st * sz) / D)
 	end
 
 	local function UpdateVelocity(body)
@@ -2277,7 +2327,8 @@ do
 		if track.body ~= body then
 			track.body = body
 			track.hist = { { t = now, p = pos } }
-			track.vel = Vector3.new(0, 0, 0)
+			track.vel = ZERO
+			track.stable = 1
 			return track.vel
 		end
 
@@ -2286,7 +2337,8 @@ do
 
 		if last and (pos - last.p).Magnitude > 25 then
 			track.hist = { { t = now, p = pos } }
-			track.vel = Vector3.new(0, 0, 0)
+			track.vel = ZERO
+			track.stable = 1
 			return track.vel
 		end
 
@@ -2298,24 +2350,53 @@ do
 			table.remove(hist, 1)
 		end
 
-		local first = hist[1]
-		local dt = now - first.t
-		if #hist >= 2 and dt >= 0.1 then
-			track.vel = (pos - first.p) / dt
-		else
-			track.vel = Vector3.new(0, 0, 0)
+		local vLong = FitVelocity(hist, now, HIST_WINDOW)
+		local vShort = FitVelocity(hist, now, SHORT_WINDOW)
+
+		local vel = ZERO
+		local stable = 1
+
+		if vLong then
+			vel = vLong
+			if vShort then
+				local lm, sm = vLong.Magnitude, vShort.Magnitude
+				if lm > 2 and sm > 2 then
+					local c = vLong:Dot(vShort) / (lm * sm)
+					stable = math.clamp((c - 0.2) / 0.8, 0, 1)
+					if stable < 1 then
+						-- target sedang belok / zigzag: percaya sampel terbaru
+						vel = vLong:Lerp(vShort, 1 - stable)
+					elseif sm > lm * 1.1 then
+						-- baru mulai lari / akselerasi
+						vel = vLong:Lerp(vShort, 0.6)
+					elseif sm < lm then
+						-- mengerem
+						vel = vLong * math.clamp(sm / lm, BRAKE_MIN, 1)
+					end
+				elseif lm > 2 and sm < 1 then
+					-- sudah berhenti
+					vel = ZERO
+				end
+			end
+			if vel.Magnitude < 1 then
+				vel = ZERO
+			end
 		end
 
+		track.vel = vel
+		track.stable = stable
 		return track.vel
 	end
 
 	local function GetVelocity(body)
-		local hv = Vector3.new(0, 0, 0)
+		local hv = ZERO
+		local stable = 1
 		if track.body == body then
 			hv = track.vel
+			stable = track.stable
 		end
 
-		local av = Vector3.new(0, 0, 0)
+		local av = ZERO
 		local ok, v = pcall(function()
 			return body.AssemblyLinearVelocity
 		end)
@@ -2324,45 +2405,123 @@ do
 		end
 
 		local vel
-		if av.Magnitude >= 1 then
-			if hv.Magnitude >= 1 then
-				vel = (hv + av) / 2
+		local hm, am = hv.Magnitude, av.Magnitude
+		if am >= 1 and hm >= 1 then
+			local cosA = av:Dot(hv) / (am * hm)
+			local ratio = am / hm
+			if cosA > 0.7 and ratio > 0.5 and ratio < 2 then
+				vel = hv:Lerp(av, ASM_BLEND)
 			else
-				vel = av
+				vel = hv
 			end
+		elseif hm >= 1 then
+			vel = hv * 0.8
+		elseif am >= 1 then
+			vel = av
 		else
-			if hv.Magnitude >= 1 then
-				vel = hv * 0.5
-			else
-				vel = Vector3.new(0, 0, 0)
+			vel = ZERO
+		end
+
+		local air = false
+		local char = body.Parent
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			local hs = hum:GetState()
+			if hs == Enum.HumanoidStateType.Freefall or hs == Enum.HumanoidStateType.Jumping then
+				air = true
 			end
 		end
 
-		vel = Vector3.new(vel.X, math.clamp(vel.Y * 0.5, -30, 30), vel.Z)
-
-		if vel.Magnitude > MAX_TARGET_SPEED then
-			vel = vel.Unit * MAX_TARGET_SPEED
+		local vy
+		if air then
+			vy = math.clamp(vel.Y, -60, 60)
+		else
+			vy = math.clamp(vel.Y * 0.5, -15, 15)
 		end
 
-		return vel
+		local horiz = Vector3.new(vel.X, 0, vel.Z)
+		if horiz.Magnitude > MAX_TARGET_SPEED then
+			horiz = horiz.Unit * MAX_TARGET_SPEED
+		end
+
+		return Vector3.new(horiz.X, vy, horiz.Z), stable, air
+	end
+
+	-- potong titik lead supaya tidak membidik menembus tembok besar
+	local function ClipLead(point, finalPos, targetChar)
+		local d = finalPos - point
+		if d.Magnitude < 1 then
+			return finalPos
+		end
+
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+
+		local ignore = {}
+		local mine = GetCharacter()
+		if mine then
+			table.insert(ignore, mine)
+		end
+		if targetChar then
+			table.insert(ignore, targetChar)
+		end
+		for _, pl in ipairs(Players:GetPlayers()) do
+			if pl.Character then
+				table.insert(ignore, pl.Character)
+			end
+		end
+
+		for _ = 1, 4 do
+			params.FilterDescendantsInstances = ignore
+			local res = workspace:Raycast(point, d, params)
+			if not res then
+				return finalPos
+			end
+			local inst = res.Instance
+			local small = inst:IsA("BasePart") and inst.Size.Magnitude < LEAD_WALL_MIN_SIZE
+			if inst.CanCollide == false or inst.Transparency >= 0.95 or small then
+				table.insert(ignore, inst)
+			else
+				local dist = (res.Position - point).Magnitude
+				return point + d.Unit * math.max(dist - LEAD_WALL_PAD, 0)
+			end
+		end
+
+		return finalPos
 	end
 
 	local function PredictPoint(fromPos, point, body)
-		local vel = GetVelocity(body)
+		local vel, stable, air = GetVelocity(body)
 		local lead = PREDICT_BIAS + GetPing() * PING_MULT
+		local wg = workspace.Gravity
+
+		local hvel = Vector3.new(vel.X, air and 0 or vel.Y, vel.Z)
+		local vy = vel.Y
+
+		local function offsetAt(tt)
+			local o = hvel * tt
+			if air then
+				o = o + Vector3.new(0, math.clamp(vy * tt - 0.5 * wg * tt * tt, -AIR_MAX_DOWN, AIR_MAX_UP), 0)
+			end
+			return o
+		end
 
 		local flight = (point - fromPos).Magnitude / PROJECTILE_SPEED
 		for _ = 1, 6 do
-			local predicted = point + vel * (flight + lead)
+			local predicted = point + offsetAt(flight + lead)
 			flight = (predicted - fromPos).Magnitude / PROJECTILE_SPEED
 		end
 
-		local offset = vel * (flight + lead)
+		local offset = offsetAt(flight + lead)
 		if offset.Magnitude > MAX_LEAD then
 			offset = offset.Unit * MAX_LEAD
 		end
 
+		-- target zigzag / belok: kurangi lead supaya tidak overshoot
+		offset = offset * (TURN_LEAD_MIN + (1 - TURN_LEAD_MIN) * stable)
+
 		local finalPos = point + offset
+		finalPos = ClipLead(point, finalPos, body.Parent)
 
 		if PROJECTILE_GRAVITY > 0 then
 			finalPos = finalPos + Vector3.new(0, 0.5 * PROJECTILE_GRAVITY * flight * flight, 0)
@@ -4437,7 +4596,8 @@ end
 
 -- ============================================================
 -- 1. SILENT AIM VEIL — HALLOWEEN 🎃
--- Logic improve tipis prediksi. UI tetap sama. FovMax 350.
+-- v2: prediction diperbaiki (dt-smoothing, braking, assembly blend, airborne, wall clip, ping EMA).
+-- UI row/label/urutan kontrol sama persis seperti sebelumnya (kompatibel save config + panel).
 -- ============================================================
 do
 	local Env = (getgenv and getgenv()) or _G
@@ -4479,6 +4639,13 @@ do
 		ZigzagFull = 1.2,
 		ZigzagLeadMin = 0.4,
 		PowerFresh = 1.5,
+		AsmBlend = 0.3,
+		BrakeMin = 0.35,
+		AirMaxUp = 6,
+		AirMaxDown = 10,
+		PingSmooth = 0.4,
+		WallPad = 1,
+		SolveIter = 6,
 		WallCheck = false,
 		FovColor = Color3.fromRGB(255, 255, 255),
 		TrailColor = Color3.fromRGB(255, 255, 255),
@@ -4490,6 +4657,7 @@ do
 	local State = {
 		Enabled = false,
 		ShowFov = false,
+		FovCheck = true,
 	}
 
 	local Aim = {
@@ -4614,9 +4782,7 @@ do
 
 	local function bodyCenter(char, root)
 		local head = char:FindFirstChild("Head")
-		local torso = char:FindFirstChild("LowerTorso")
-			or char:FindFirstChild("Torso")
-			or char:FindFirstChild("UpperTorso")
+		local torso = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
 		if head and torso then
 			return (head.Position + torso.Position) / 2
 		end
@@ -4630,7 +4796,7 @@ do
 			table.remove(h, 1)
 		end
 		local n = #h
-		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1, Vector3.new() end
+		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
 		local t0, x0, z0 = h[1].t, h[1].x, h[1].z
 		local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
 		for i = 1, n do
@@ -4645,7 +4811,7 @@ do
 			stz = stz + t * z
 		end
 		local D = n * stt - st * st
-		if math.abs(D) < 1e-9 then return nil, 1, Vector3.new() end
+		if math.abs(D) < 1e-9 then return nil, 1 end
 		local bx = (n * stx - st * sx) / D
 		local ax = (sx - bx * st) / n
 		local bz = (n * stz - st * sz) / D
@@ -4660,93 +4826,69 @@ do
 		local rms = math.sqrt(sq / n)
 		local span = math.max(Config.ZigzagFull - Config.ZigzagDeadzone, 0.01)
 		local stable = math.clamp(1 - (rms - Config.ZigzagDeadzone) / span, 0, 1)
-
-		local acc = Vector3.new()
-		if n >= 6 then
-			local mid = math.floor(n / 2)
-			local function fitVel(i0, i1)
-				local m = i1 - i0 + 1
-				if m < 2 then return nil end
-				local tt0 = h[i0].t
-				local sumT, sumX, sumZ, sumTT, sumTX, sumTZ = 0, 0, 0, 0, 0, 0
-				for i = i0, i1 do
-					local tt = h[i].t - tt0
-					local xx = h[i].x - h[i0].x
-					local zz = h[i].z - h[i0].z
-					sumT = sumT + tt
-					sumTT = sumTT + tt * tt
-					sumX = sumX + xx
-					sumTX = sumTX + tt * xx
-					sumZ = sumZ + zz
-					sumTZ = sumTZ + tt * zz
-				end
-				local DD = m * sumTT - sumT * sumT
-				if math.abs(DD) < 1e-9 then return nil end
-				local vx = (m * sumTX - sumT * sumX) / DD
-				local vz = (m * sumTZ - sumT * sumZ) / DD
-				local tMid = (h[i0].t + h[i1].t) / 2 - tt0
-				return Vector3.new(vx, 0, vz), tMid
-			end
-			local v0, tm0 = fitVel(1, mid)
-			local v1, tm1 = fitVel(mid + 1, n)
-			if v0 and v1 and tm1 and tm0 and (tm1 - tm0) > 0.05 then
-				acc = (v1 - v0) / (tm1 - tm0)
-				local mag = acc.Magnitude
-				if mag > 80 then acc = acc.Unit * 80 end
-			end
-		end
-
-		return Vector3.new(bx, 0, bz), stable, acc
+		return Vector3.new(bx, 0, bz), stable
 	end
 
 	local function trackVelocity(root, now)
 		local pos = root.Position
 		local tr = Tracker[root]
 		if not tr then
-			tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1, acc = Vector3.new() }
+			tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1, sp = {}, brake = 1 }
 			Tracker[root] = tr
 		end
 		local jump = (pos - tr.pos).Magnitude
-		if jump > 8 then
+		if jump > 15 then
 			tr.hist = { { t = now, x = pos.X, z = pos.Z } }
+			tr.sp = {}
 			tr.vel = Vector3.new()
 			tr.pred = nil
 			tr.stable = 1
-			tr.acc = Vector3.new()
+			tr.brake = 1
 			tr.pos = pos
 			tr.t = now
 			return tr.vel
 		end
 		table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
-		tr.pred, tr.stable, tr.acc = analyzeMotion(tr, now)
+		tr.pred, tr.stable = analyzeMotion(tr, now)
 		if jump < 0.001 then
-			if now - tr.t > 0.15 then tr.vel = Vector3.new() end
+			if now - tr.t > 0.15 then
+				tr.vel = Vector3.new()
+				tr.brake = 1
+			end
 			return tr.vel
 		end
 		local dt = now - tr.t
 		if dt <= 0 or dt > 0.35 then
 			tr.vel = Vector3.new()
+			tr.brake = 1
 		else
-			local h = tr.hist
-			local hn = #h
-			local instVel = nil
-			if hn >= 3 then
-				local s1 = h[hn - 2]
-				local s2 = h[hn]
-				local ddt = s2.t - s1.t
-				if ddt > 0.02 then
-					instVel = Vector3.new(s2.x - s1.x, 0, s2.z - s1.z) / ddt
-				end
-			end
 			local raw = (pos - tr.pos) / dt
 			if raw.Magnitude > 180 then
 				tr.vel = Vector3.new()
-			elseif instVel and instVel.Magnitude <= 180 then
-				local smoothVel = tr.vel:Lerp(raw, Config.VelocitySmooth)
-				tr.vel = instVel * 0.6 + smoothVel * 0.4
 			else
-				tr.vel = tr.vel:Lerp(raw, Config.VelocitySmooth)
+				local a = 1 - (1 - Config.VelocitySmooth) ^ (dt * 60)
+				tr.vel = tr.vel:Lerp(raw, math.clamp(a, 0.05, 1))
 			end
+			local spd = Vector3.new(tr.vel.X, 0, tr.vel.Z).Magnitude
+			table.insert(tr.sp, { t = now, s = spd })
+			while #tr.sp > 0 and tr.sp[1].t < now - 0.7 do
+				table.remove(tr.sp, 1)
+			end
+			local sum, n = 0, 0
+			for i = 1, #tr.sp do
+				if tr.sp[i].t <= now - 0.25 then
+					sum = sum + tr.sp[i].s
+					n = n + 1
+				end
+			end
+			local brake = 1
+			if n > 0 then
+				local ref = sum / n
+				if ref > 3 and spd < ref then
+					brake = math.clamp(spd / ref, Config.BrakeMin, 1)
+				end
+			end
+			tr.brake = brake
 		end
 		tr.pos = pos
 		tr.t = now
@@ -4794,20 +4936,41 @@ do
 					local vel = trackVelocity(root, now)
 					local tr = Tracker[root]
 					local stable = (tr and tr.stable) or 1
-					local acc = (tr and tr.acc) or Vector3.new()
 					local hv = Vector3.new(vel.X, 0, vel.Z)
 					if tr and tr.pred then
 						hv = tr.pred:Lerp(hv, stable)
 					end
+					local av = root.AssemblyLinearVelocity
+					local asm = Vector3.new(av.X, 0, av.Z)
+					local am, hm = asm.Magnitude, hv.Magnitude
+					if am > 1 and am <= Config.MaxPredictSpeed and hm > 1 then
+						local cosA = asm:Dot(hv) / (am * hm)
+						local ratio = am / hm
+						if cosA > 0.8 and ratio > 0.5 and ratio < 2 then
+							hv = hv:Lerp(asm, Config.AsmBlend)
+						end
+					end
+					if tr and tr.brake and tr.brake < 1 then
+						hv = hv * tr.brake
+					end
 					if hv.Magnitude > Config.MaxPredictSpeed then
 						hv = hv.Unit * Config.MaxPredictSpeed
+					end
+					local air, vy = false, 0
+					local tHum = char:FindFirstChildOfClass("Humanoid")
+					if tHum then
+						local hs = tHum:GetState()
+						if hs == Enum.HumanoidStateType.Freefall or hs == Enum.HumanoidStateType.Jumping then
+							air = true
+							vy = math.clamp(av.Y, -80, 80)
+						end
 					end
 					local sp, onScreen = cam:WorldToViewportPoint(root.Position)
 					if onScreen and sp.Z > 0 then
 						local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
 						if sd <= Config.FOV and not (Config.WallCheck and wallBlocked(origin, root.Position, char)) then
 							local score = sd
-							local entry = { char = char, root = root, name = char.Name, dist = dist, hv = hv, stable = stable, acc = acc, score = score }
+							local entry = { char = char, root = root, name = char.Name, dist = dist, hv = hv, stable = stable, score = score, air = air, vy = vy }
 							table.insert(list, entry)
 							if not best or score < best.score then
 								best = entry
@@ -4862,11 +5025,46 @@ do
 		return math.clamp(s, 1, maxSpeed())
 	end
 
-	local function solveDirection(origin, speed, base, hv, g, lead)
+	local function clipToWorld(from, to)
+		local d = to - from
+		if d.Magnitude < 1 then return to end
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local ignore = {}
+		if LP.Character then table.insert(ignore, LP.Character) end
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Character then table.insert(ignore, p.Character) end
+		end
+		for _, c in ipairs(survivorList()) do
+			table.insert(ignore, c)
+		end
+		for _ = 1, 4 do
+			params.FilterDescendantsInstances = ignore
+			local res = Workspace:Raycast(from, d, params)
+			if not res then return to end
+			local inst = res.Instance
+			if inst:IsA("BasePart") and (inst.Transparency >= 0.05 or not inst.CanCollide) then
+				table.insert(ignore, inst)
+			else
+				local dist = (res.Position - from).Magnitude
+				return from + d.Unit * math.max(dist - Config.WallPad, 0)
+			end
+		end
+		return to
+	end
+
+	local function solveDirection(origin, speed, base, hv, g, lead, air, vy)
+		local wg = Workspace.Gravity
 		local t = (base - origin).Magnitude / speed
 		local dirOut = nil
-		for _ = 1, 8 do
-			local aimPos = base + hv * (math.min(t, Config.PredictMaxTime) + lead)
+		for _ = 1, Config.SolveIter do
+			local tt = math.min(t, Config.PredictMaxTime) + lead
+			local target = base + hv * tt
+			if air then
+				local yOff = math.clamp((vy or 0) * tt - 0.5 * wg * tt * tt, -Config.AirMaxDown, Config.AirMaxUp)
+				target = target + Vector3.new(0, yOff, 0)
+			end
+			local aimPos = clipToWorld(base, target)
 			local d = aimPos - origin
 			local hd = Vector3.new(d.X, 0, d.Z)
 			local x = hd.Magnitude
@@ -5004,17 +5202,7 @@ do
 			local stable = t.stable or 1
 			local lead = (Aim.Ping * Config.LeadPingMult + Config.ExtraLead) * (Config.ZigzagLeadMin + (1 - Config.ZigzagLeadMin) * stable)
 			local base = bodyCenter(t.char, t.root) + Vector3.new(0, Config.AimOffsetY, 0)
-			local hv = t.hv or Vector3.new()
-			local acc = t.acc or Vector3.new()
-
-			if acc.Magnitude > 5 then
-				hv = hv + acc * 0.08
-				if hv.Magnitude > Config.MaxPredictSpeed then
-					hv = hv.Unit * Config.MaxPredictSpeed
-				end
-			end
-
-			local newDir = solveDirection(origin, currentSpeed(), base, hv, gravity(), lead)
+			local newDir = solveDirection(origin, currentSpeed(), base, t.hv or Vector3.new(), gravity(), lead, t.air, t.vy)
 			if newDir then
 				local copy = {}
 				for k, v in pairs(first) do
@@ -5188,6 +5376,7 @@ do
 	end
 
 	local function refreshFov()
+		State.ShowFov = (State.Enabled and State.FovCheck) and true or false
 		if Fov then
 			Fov.Size = UDim2.fromOffset(Config.FOV * 2, Config.FOV * 2)
 			Fov.Visible = State.ShowFov
@@ -5224,7 +5413,7 @@ do
 				lastPing = now
 				local ok, v = pcall(function() return LP:GetNetworkPing() end)
 				if ok and type(v) == "number" then
-					Aim.Ping = math.clamp(v, 0, 0.4)
+					Aim.Ping = Aim.Ping + (math.clamp(v, 0, 0.4) - Aim.Ping) * Config.PingSmooth
 				end
 			end
 			if now - lastClean >= 3 then
@@ -5242,26 +5431,26 @@ do
 	Env.VDSilent = { Unload = unload, State = State, Config = Config }
 
 	--------------------------------------------------
-	-- UI: ROW FLUX HUB (TIDAK DIUBAH)
+	-- UI: ROW FLUX HUB
 	--------------------------------------------------
 
 	local VEIL_Row = Add("Silent Aim Veil")
 	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
 		State.Enabled = s
-		State.ShowFov = s
 		refreshFov()
 		if not s then
 			Aim.Target = nil
 		end
 	end)
 
-	VEIL_Row:Check("Fov Circle", false, function(v)
-		State.ShowFov = v
+	VEIL_Row:Check("Fov Circle", true, function(v)
+		State.FovCheck = v
 		refreshFov()
 	end)
 
-	local VEIL_Fov = VEIL_Row:Stepper({ Min = Config.FovMin, Max = Config.FovMax, Step = Config.FovStep, Default = Config.FOV }, function(v)
-		Config.FOV = v
+	-- FOV: min 30, max 350, step 10. Input manual bebas (mis. 67 -> + = 77, - 2x = 57).
+	VEIL_Row:Stepper({ Min = 30, Max = 350, Step = 10, Decimals = 0, Default = 100 }, function(v)
+		Config.FOV = math.clamp(math.floor((tonumber(v) or Config.FOV) + 0.5), 30, 350)
 		refreshFov()
 	end)
 
@@ -5682,14 +5871,13 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	end)
 
 -- ============================================================
--- 4. HOOK ESP (fix: tahan re-parent / hapus oleh game)
+-- 4. HOOK ESP
 -- ============================================================
 local HE = {
 	Enabled = false,
 	Conns = {},
 	Color = Color3.fromRGB(255, 0, 0),
 	Objs = setmetatable({}, { __mode = "k" }),
-	Watchdog = nil,
 }
 
 local function HE_GetRoot(inst)
@@ -5706,18 +5894,11 @@ local function HE_Cleanup(root)
 	local o = HE.Objs[root]
 	if not o then return end
 	HE.Objs[root] = nil
-	pcall(function() if o.hl then o.hl:Destroy() end end)
+	pcall(function() o.hl:Destroy() end)
 end
 
 local function HE_Setup(root)
-	if not root or not root.Parent then return end
-	local o = HE.Objs[root]
-	if o and o.hl and o.hl.Parent and o.hl.Adornee == root then
-		return
-	end
-	if o then
-		pcall(function() if o.hl then o.hl:Destroy() end end)
-	end
+	if HE.Objs[root] then return end
 	local hl = Instance.new("Highlight")
 	hl.Name = "HookESP_Chams"
 	hl.Adornee = root
@@ -5727,63 +5908,28 @@ local function HE_Setup(root)
 	hl.OutlineTransparency = 0
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Parent = root
-	HE.Objs[root] = { hl = hl }
-end
 
-local function HE_ScanAll()
-	for _, inst in ipairs(workspace:GetDescendants()) do
-		if inst:IsA("Model") and inst.Name:lower() == "hook" then
-			HE_Setup(inst)
-		end
-	end
+	HE.Objs[root] = { hl = hl }
 end
 
 local HE_Row = Add("Hook Esp")
 local HE_Toggle = HE_Row:Toggle(false, function(state)
 	HE.Enabled = state
-	if state then
-		HE_ScanAll()
-		table.insert(HE.Conns, workspace.DescendantAdded:Connect(function(inst)
-			task.wait(0.15)
-			if not HE.Enabled then return end
+	local map = workspace:FindFirstChild("Map")
+	if state and map then
+		for _, inst in ipairs(map:GetDescendants()) do
+			local root = HE_GetRoot(inst)
+			if root then HE_Setup(root) end
+		end
+		table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst)
 			local root = HE_GetRoot(inst)
 			if root then HE_Setup(root) end
 		end))
-		table.insert(HE.Conns, workspace.DescendantRemoving:Connect(function(inst)
-			if not HE.Enabled then return end
-			local root = HE_GetRoot(inst)
-			if root and HE.Objs[root] then
-				local o = HE.Objs[root]
-				if not o.hl or not o.hl.Parent or o.hl.Adornee ~= root then
-					HE_Cleanup(root)
-				end
-			end
+		table.insert(HE.Conns, map.DescendantRemoving:Connect(function(child)
+			local root = HE_GetRoot(child)
+			if root and HE.Objs[root] then HE_Cleanup(root) end
 		end))
-		HE.Watchdog = task.spawn(function()
-			while HE.Enabled do
-				task.wait(1)
-				-- 1) refresh semua yang stale / hilang
-				for root, o in pairs(HE.Objs) do
-					if not root.Parent or not o.hl or not o.hl.Parent then
-						HE_Cleanup(root)
-						if root.Parent then HE_Setup(root) end
-					else
-						pcall(function()
-							o.hl.FillColor = HE.Color
-							o.hl.OutlineColor = HE.Color
-						end)
-					end
-				end
-				-- 2) scan ulang seluruh workspace (bukan cuma Map)
-				for _, inst in ipairs(workspace:GetDescendants()) do
-					if inst:IsA("Model") and inst.Name:lower() == "hook" then
-						if not HE.Objs[inst] then HE_Setup(inst) end
-					end
-				end
-			end
-		end)
 	else
-		if HE.Watchdog then pcall(function() task.cancel(HE.Watchdog) end); HE.Watchdog = nil end
 		for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
 		HE.Conns = {}
 		for root in pairs(HE.Objs) do HE_Cleanup(root) end
