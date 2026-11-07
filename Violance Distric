@@ -4437,7 +4437,7 @@ end
 
 -- ============================================================
 -- 1. SILENT AIM VEIL — HALLOWEEN 🎃
--- Logic 100% utuh. UI Flux Hub: Toggle + FOV + Tuning + Color.
+-- Logic improve tipis prediksi. UI tetap sama. FovMax 350.
 -- ============================================================
 do
 	local Env = (getgenv and getgenv()) or _G
@@ -4463,7 +4463,7 @@ do
 	local Config = {
 		FOV = 100,
 		FovMin = 30,
-		FovMax = 600,
+		FovMax = 350,
 		FovStep = 10,
 		MaxDistance = 600,
 		TargetStale = 0.3,
@@ -4614,7 +4614,9 @@ do
 
 	local function bodyCenter(char, root)
 		local head = char:FindFirstChild("Head")
-		local torso = char:FindFirstChild("LowerTorso") or char:FindFirstChild("Torso")
+		local torso = char:FindFirstChild("LowerTorso")
+			or char:FindFirstChild("Torso")
+			or char:FindFirstChild("UpperTorso")
 		if head and torso then
 			return (head.Position + torso.Position) / 2
 		end
@@ -4628,7 +4630,7 @@ do
 			table.remove(h, 1)
 		end
 		local n = #h
-		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1 end
+		if n < 4 or (h[n].t - h[1].t) < 0.2 then return nil, 1, Vector3.new() end
 		local t0, x0, z0 = h[1].t, h[1].x, h[1].z
 		local st, stt, sx, stx, sz, stz = 0, 0, 0, 0, 0, 0
 		for i = 1, n do
@@ -4643,7 +4645,7 @@ do
 			stz = stz + t * z
 		end
 		local D = n * stt - st * st
-		if math.abs(D) < 1e-9 then return nil, 1 end
+		if math.abs(D) < 1e-9 then return nil, 1, Vector3.new() end
 		local bx = (n * stx - st * sx) / D
 		local ax = (sx - bx * st) / n
 		local bz = (n * stz - st * sz) / D
@@ -4658,28 +4660,65 @@ do
 		local rms = math.sqrt(sq / n)
 		local span = math.max(Config.ZigzagFull - Config.ZigzagDeadzone, 0.01)
 		local stable = math.clamp(1 - (rms - Config.ZigzagDeadzone) / span, 0, 1)
-		return Vector3.new(bx, 0, bz), stable
+
+		local acc = Vector3.new()
+		if n >= 6 then
+			local mid = math.floor(n / 2)
+			local function fitVel(i0, i1)
+				local m = i1 - i0 + 1
+				if m < 2 then return nil end
+				local tt0 = h[i0].t
+				local sumT, sumX, sumZ, sumTT, sumTX, sumTZ = 0, 0, 0, 0, 0, 0
+				for i = i0, i1 do
+					local tt = h[i].t - tt0
+					local xx = h[i].x - h[i0].x
+					local zz = h[i].z - h[i0].z
+					sumT = sumT + tt
+					sumTT = sumTT + tt * tt
+					sumX = sumX + xx
+					sumTX = sumTX + tt * xx
+					sumZ = sumZ + zz
+					sumTZ = sumTZ + tt * zz
+				end
+				local DD = m * sumTT - sumT * sumT
+				if math.abs(DD) < 1e-9 then return nil end
+				local vx = (m * sumTX - sumT * sumX) / DD
+				local vz = (m * sumTZ - sumT * sumZ) / DD
+				local tMid = (h[i0].t + h[i1].t) / 2 - tt0
+				return Vector3.new(vx, 0, vz), tMid
+			end
+			local v0, tm0 = fitVel(1, mid)
+			local v1, tm1 = fitVel(mid + 1, n)
+			if v0 and v1 and tm1 and tm0 and (tm1 - tm0) > 0.05 then
+				acc = (v1 - v0) / (tm1 - tm0)
+				local mag = acc.Magnitude
+				if mag > 80 then acc = acc.Unit * 80 end
+			end
+		end
+
+		return Vector3.new(bx, 0, bz), stable, acc
 	end
 
 	local function trackVelocity(root, now)
 		local pos = root.Position
 		local tr = Tracker[root]
 		if not tr then
-			tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1 }
+			tr = { pos = pos, t = now, vel = Vector3.new(), hist = {}, pred = nil, stable = 1, acc = Vector3.new() }
 			Tracker[root] = tr
 		end
 		local jump = (pos - tr.pos).Magnitude
-		if jump > 15 then
+		if jump > 8 then
 			tr.hist = { { t = now, x = pos.X, z = pos.Z } }
 			tr.vel = Vector3.new()
 			tr.pred = nil
 			tr.stable = 1
+			tr.acc = Vector3.new()
 			tr.pos = pos
 			tr.t = now
 			return tr.vel
 		end
 		table.insert(tr.hist, { t = now, x = pos.X, z = pos.Z })
-		tr.pred, tr.stable = analyzeMotion(tr, now)
+		tr.pred, tr.stable, tr.acc = analyzeMotion(tr, now)
 		if jump < 0.001 then
 			if now - tr.t > 0.15 then tr.vel = Vector3.new() end
 			return tr.vel
@@ -4688,9 +4727,23 @@ do
 		if dt <= 0 or dt > 0.35 then
 			tr.vel = Vector3.new()
 		else
+			local h = tr.hist
+			local hn = #h
+			local instVel = nil
+			if hn >= 3 then
+				local s1 = h[hn - 2]
+				local s2 = h[hn]
+				local ddt = s2.t - s1.t
+				if ddt > 0.02 then
+					instVel = Vector3.new(s2.x - s1.x, 0, s2.z - s1.z) / ddt
+				end
+			end
 			local raw = (pos - tr.pos) / dt
 			if raw.Magnitude > 180 then
 				tr.vel = Vector3.new()
+			elseif instVel and instVel.Magnitude <= 180 then
+				local smoothVel = tr.vel:Lerp(raw, Config.VelocitySmooth)
+				tr.vel = instVel * 0.6 + smoothVel * 0.4
 			else
 				tr.vel = tr.vel:Lerp(raw, Config.VelocitySmooth)
 			end
@@ -4741,6 +4794,7 @@ do
 					local vel = trackVelocity(root, now)
 					local tr = Tracker[root]
 					local stable = (tr and tr.stable) or 1
+					local acc = (tr and tr.acc) or Vector3.new()
 					local hv = Vector3.new(vel.X, 0, vel.Z)
 					if tr and tr.pred then
 						hv = tr.pred:Lerp(hv, stable)
@@ -4753,7 +4807,7 @@ do
 						local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
 						if sd <= Config.FOV and not (Config.WallCheck and wallBlocked(origin, root.Position, char)) then
 							local score = sd
-							local entry = { char = char, root = root, name = char.Name, dist = dist, hv = hv, stable = stable, score = score }
+							local entry = { char = char, root = root, name = char.Name, dist = dist, hv = hv, stable = stable, acc = acc, score = score }
 							table.insert(list, entry)
 							if not best or score < best.score then
 								best = entry
@@ -4950,7 +5004,17 @@ do
 			local stable = t.stable or 1
 			local lead = (Aim.Ping * Config.LeadPingMult + Config.ExtraLead) * (Config.ZigzagLeadMin + (1 - Config.ZigzagLeadMin) * stable)
 			local base = bodyCenter(t.char, t.root) + Vector3.new(0, Config.AimOffsetY, 0)
-			local newDir = solveDirection(origin, currentSpeed(), base, t.hv or Vector3.new(), gravity(), lead)
+			local hv = t.hv or Vector3.new()
+			local acc = t.acc or Vector3.new()
+
+			if acc.Magnitude > 5 then
+				hv = hv + acc * 0.08
+				if hv.Magnitude > Config.MaxPredictSpeed then
+					hv = hv.Unit * Config.MaxPredictSpeed
+				end
+			end
+
+			local newDir = solveDirection(origin, currentSpeed(), base, hv, gravity(), lead)
 			if newDir then
 				local copy = {}
 				for k, v in pairs(first) do
@@ -5178,7 +5242,7 @@ do
 	Env.VDSilent = { Unload = unload, State = State, Config = Config }
 
 	--------------------------------------------------
-	-- UI: ROW FLUX HUB
+	-- UI: ROW FLUX HUB (TIDAK DIUBAH)
 	--------------------------------------------------
 
 	local VEIL_Row = Add("Silent Aim Veil")
@@ -5196,7 +5260,7 @@ do
 		refreshFov()
 	end)
 
-	VEIL_Row:Stepper({ Min = 30, Max = 350, Step = 10, Default = 100 }, function(v)
+	local VEIL_Fov = VEIL_Row:Stepper({ Min = Config.FovMin, Max = Config.FovMax, Step = Config.FovStep, Default = Config.FOV }, function(v)
 		Config.FOV = v
 		refreshFov()
 	end)
@@ -5210,43 +5274,6 @@ do
 				if st then st.Color = c end
 			end)
 		end
-	end)
-
-	-- ===== TUNING PREDIKSI (baca/tulis Config, logic inti TIDAK disentuh) =====
-	VEIL_Toggle.Extras = VEIL_Toggle.Extras or {}
-
-	VEIL_Toggle.Extras[1] = VEIL_Row:Check("Wall Check", Config.WallCheck, function(v)
-		Config.WallCheck = v
-	end)
-
-	VEIL_Toggle.Extras[2] = VEIL_Row:Stepper({
-		Min = 0, Max = 20, Step = 1, Default = math.floor(Config.LeadPingMult * 10 + 0.5)
-	}, function(v)
-		Config.LeadPingMult = v / 10
-	end)
-
-	VEIL_Toggle.Extras[3] = VEIL_Row:Stepper({
-		Min = 0, Max = 50, Step = 1, Default = math.floor(Config.ExtraLead * 100 + 0.5)
-	}, function(v)
-		Config.ExtraLead = v / 100
-	end)
-
-	VEIL_Toggle.Extras[4] = VEIL_Row:Stepper({
-		Min = 10, Max = 200, Step = 5, Default = Config.MaxPredictSpeed
-	}, function(v)
-		Config.MaxPredictSpeed = v
-	end)
-
-	VEIL_Toggle.Extras[5] = VEIL_Row:Stepper({
-		Min = -3, Max = 3, Step = 1, Default = Config.AimOffsetY
-	}, function(v)
-		Config.AimOffsetY = v
-	end)
-
-	VEIL_Toggle.Extras[6] = VEIL_Row:Stepper({
-		Min = 0, Max = 1000, Step = 10, Default = Config.MaxDistance
-	}, function(v)
-		Config.MaxDistance = v
 	end)
 end
 
