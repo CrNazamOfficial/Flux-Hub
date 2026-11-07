@@ -4437,7 +4437,7 @@ end
 
 -- ============================================================
 -- 1. SILENT AIM VEIL — HALLOWEEN 🎃
--- Logic 100% utuh dari file asli. UI bawaan diganti row Flux Hub.
+-- Logic 100% utuh. UI Flux Hub: Toggle + FOV + Tuning + Color.
 -- ============================================================
 do
 	local Env = (getgenv and getgenv()) or _G
@@ -4463,7 +4463,7 @@ do
 	local Config = {
 		FOV = 100,
 		FovMin = 30,
-		FovMax = 350,
+		FovMax = 600,
 		FovStep = 10,
 		MaxDistance = 600,
 		TargetStale = 0.3,
@@ -5182,21 +5182,21 @@ do
 	--------------------------------------------------
 
 	local VEIL_Row = Add("Silent Aim Veil")
-    local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
-	State.Enabled = s
-	State.ShowFov = s
-	refreshFov()
-	if not s then
-		Aim.Target = nil
-	end
-end)
+	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
+		State.Enabled = s
+		State.ShowFov = s
+		refreshFov()
+		if not s then
+			Aim.Target = nil
+		end
+	end)
 
-	VEIL_Row:Check("Fov Circle", true, function(v)
+	VEIL_Row:Check("Fov Circle", false, function(v)
 		State.ShowFov = v
 		refreshFov()
 	end)
 
-	VEIL_Row:Stepper({ Min = Config.FovMin, Max = Config.FovMax, Step = Config.FovStep, Default = Config.FOV }, function(v)
+	VEIL_Row:Stepper({ Min = 30, Max = 350, Step = 10, Default = 100 }, function(v)
 		Config.FOV = v
 		refreshFov()
 	end)
@@ -5210,6 +5210,43 @@ end)
 				if st then st.Color = c end
 			end)
 		end
+	end)
+
+	-- ===== TUNING PREDIKSI (baca/tulis Config, logic inti TIDAK disentuh) =====
+	VEIL_Toggle.Extras = VEIL_Toggle.Extras or {}
+
+	VEIL_Toggle.Extras[1] = VEIL_Row:Check("Wall Check", Config.WallCheck, function(v)
+		Config.WallCheck = v
+	end)
+
+	VEIL_Toggle.Extras[2] = VEIL_Row:Stepper({
+		Min = 0, Max = 20, Step = 1, Default = math.floor(Config.LeadPingMult * 10 + 0.5)
+	}, function(v)
+		Config.LeadPingMult = v / 10
+	end)
+
+	VEIL_Toggle.Extras[3] = VEIL_Row:Stepper({
+		Min = 0, Max = 50, Step = 1, Default = math.floor(Config.ExtraLead * 100 + 0.5)
+	}, function(v)
+		Config.ExtraLead = v / 100
+	end)
+
+	VEIL_Toggle.Extras[4] = VEIL_Row:Stepper({
+		Min = 10, Max = 200, Step = 5, Default = Config.MaxPredictSpeed
+	}, function(v)
+		Config.MaxPredictSpeed = v
+	end)
+
+	VEIL_Toggle.Extras[5] = VEIL_Row:Stepper({
+		Min = -3, Max = 3, Step = 1, Default = Config.AimOffsetY
+	}, function(v)
+		Config.AimOffsetY = v
+	end)
+
+	VEIL_Toggle.Extras[6] = VEIL_Row:Stepper({
+		Min = 0, Max = 1000, Step = 10, Default = Config.MaxDistance
+	}, function(v)
+		Config.MaxDistance = v
 	end)
 end
 
@@ -5618,13 +5655,14 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	end)
 
 -- ============================================================
--- 4. HOOK ESP
+-- 4. HOOK ESP (fix: tahan re-parent / hapus oleh game)
 -- ============================================================
 local HE = {
 	Enabled = false,
 	Conns = {},
 	Color = Color3.fromRGB(255, 0, 0),
 	Objs = setmetatable({}, { __mode = "k" }),
+	Watchdog = nil,
 }
 
 local function HE_GetRoot(inst)
@@ -5641,11 +5679,18 @@ local function HE_Cleanup(root)
 	local o = HE.Objs[root]
 	if not o then return end
 	HE.Objs[root] = nil
-	pcall(function() o.hl:Destroy() end)
+	pcall(function() if o.hl then o.hl:Destroy() end end)
 end
 
 local function HE_Setup(root)
-	if HE.Objs[root] then return end
+	if not root or not root.Parent then return end
+	local o = HE.Objs[root]
+	if o and o.hl and o.hl.Parent and o.hl.Adornee == root then
+		return
+	end
+	if o then
+		pcall(function() if o.hl then o.hl:Destroy() end end)
+	end
 	local hl = Instance.new("Highlight")
 	hl.Name = "HookESP_Chams"
 	hl.Adornee = root
@@ -5655,28 +5700,63 @@ local function HE_Setup(root)
 	hl.OutlineTransparency = 0
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Parent = root
-
 	HE.Objs[root] = { hl = hl }
+end
+
+local function HE_ScanAll()
+	for _, inst in ipairs(workspace:GetDescendants()) do
+		if inst:IsA("Model") and inst.Name:lower() == "hook" then
+			HE_Setup(inst)
+		end
+	end
 end
 
 local HE_Row = Add("Hook Esp")
 local HE_Toggle = HE_Row:Toggle(false, function(state)
 	HE.Enabled = state
-	local map = workspace:FindFirstChild("Map")
-	if state and map then
-		for _, inst in ipairs(map:GetDescendants()) do
-			local root = HE_GetRoot(inst)
-			if root then HE_Setup(root) end
-		end
-		table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst)
+	if state then
+		HE_ScanAll()
+		table.insert(HE.Conns, workspace.DescendantAdded:Connect(function(inst)
+			task.wait(0.15)
+			if not HE.Enabled then return end
 			local root = HE_GetRoot(inst)
 			if root then HE_Setup(root) end
 		end))
-		table.insert(HE.Conns, map.DescendantRemoving:Connect(function(child)
-			local root = HE_GetRoot(child)
-			if root and HE.Objs[root] then HE_Cleanup(root) end
+		table.insert(HE.Conns, workspace.DescendantRemoving:Connect(function(inst)
+			if not HE.Enabled then return end
+			local root = HE_GetRoot(inst)
+			if root and HE.Objs[root] then
+				local o = HE.Objs[root]
+				if not o.hl or not o.hl.Parent or o.hl.Adornee ~= root then
+					HE_Cleanup(root)
+				end
+			end
 		end))
+		HE.Watchdog = task.spawn(function()
+			while HE.Enabled do
+				task.wait(1)
+				-- 1) refresh semua yang stale / hilang
+				for root, o in pairs(HE.Objs) do
+					if not root.Parent or not o.hl or not o.hl.Parent then
+						HE_Cleanup(root)
+						if root.Parent then HE_Setup(root) end
+					else
+						pcall(function()
+							o.hl.FillColor = HE.Color
+							o.hl.OutlineColor = HE.Color
+						end)
+					end
+				end
+				-- 2) scan ulang seluruh workspace (bukan cuma Map)
+				for _, inst in ipairs(workspace:GetDescendants()) do
+					if inst:IsA("Model") and inst.Name:lower() == "hook" then
+						if not HE.Objs[inst] then HE_Setup(inst) end
+					end
+				end
+			end
+		end)
 	else
+		if HE.Watchdog then pcall(function() task.cancel(HE.Watchdog) end); HE.Watchdog = nil end
 		for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
 		HE.Conns = {}
 		for root in pairs(HE.Objs) do HE_Cleanup(root) end
