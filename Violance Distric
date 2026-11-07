@@ -1317,65 +1317,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	Title("Features")
 
 	-- ============================================================
-	-- 1. SPEED BOOST (logic asli, warna Flux Hub)
-	-- ============================================================
-	local SB = { Enabled = false, Additional = 0.50, Conn = nil, CharConn = nil, LastBase = 0, LastApplied = 0 }
-	local function SB_Monitor(char)
-		local hum = char:WaitForChild("Humanoid", 5)
-		if not hum then return end
-		if SB.Conn then pcall(function() SB.Conn:Disconnect() end); SB.Conn = nil end
-		SB.LastBase = hum.WalkSpeed
-		SB.LastApplied = 0
-		SB.Conn = RunService.Heartbeat:Connect(function()
-			if not hum or not hum.Parent then return end
-			if SB.Additional < 0.50 then SB.Additional = 0.50 end
-			local st = hum:GetState()
-			if st == Enum.HumanoidStateType.Climbing or st == Enum.HumanoidStateType.Jumping or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.Ragdoll then
-				if SB.LastApplied > 0 then hum.WalkSpeed = SB.LastBase; SB.LastApplied = 0 end
-				return
-			end
-			local cur = hum.WalkSpeed
-			if not SB.Enabled then
-				if SB.LastApplied > 0 then hum.WalkSpeed = SB.LastBase; SB.LastApplied = 0 end
-				return
-			end
-			if cur == SB.LastBase + SB.LastApplied then
-				if SB.Additional ~= SB.LastApplied then
-					SB.LastApplied = SB.Additional
-					if SB.LastBase >= 10.10 then hum.WalkSpeed = SB.LastBase + SB.Additional end
-				end
-			else
-				if cur >= 10.10 then
-					SB.LastBase = cur
-					SB.LastApplied = SB.Additional
-					hum.WalkSpeed = cur + SB.Additional
-				else
-					SB.LastBase = cur
-					SB.LastApplied = 0
-				end
-			end
-		end)
-	end
-	local SB_Row = Add("Speed Boost")
-	local SB_Toggle = SB_Row:Toggle(false, function(state)
-		SB.Enabled = state
-		if state then
-			local c = Players.LocalPlayer.Character
-			if c then SB_Monitor(c) end
-			if SB.CharConn then pcall(function() SB.CharConn:Disconnect() end) end
-			SB.CharConn = Players.LocalPlayer.CharacterAdded:Connect(function(ch) task.wait(1); SB_Monitor(ch) end)
-		else
-			if SB.Conn then pcall(function() SB.Conn:Disconnect() end); SB.Conn = nil end
-			if SB.CharConn then pcall(function() SB.CharConn:Disconnect() end); SB.CharConn = nil end
-			local c = Players.LocalPlayer.Character
-			local hum = c and c:FindFirstChildOfClass("Humanoid")
-			if hum and SB.LastApplied > 0 then pcall(function() hum.WalkSpeed = SB.LastBase end) end
-			SB.LastApplied = 0
-		end
-	end)
-	SB_Toggle.Extras = { SB_Row:Stepper({ Min = 0.50, Max = 100, Step = 0.05, Decimals = 2, Default = 0.50 }, function(v) SB.Additional = v end) }
-
-	-- ============================================================
 	-- 2. SELF HEAL (logic asli)
 	-- ============================================================
 	local SH = { Enabled = false, LoopId = 0, AnimConn = nil }
@@ -3310,734 +3251,6 @@ end
 AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
 AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
 
--- ============================================================
--- 10. BOOST GENERATOR (logic baru — hook via Flux Hub)
--- ============================================================
-local BG2 = {
-	Enabled = false, Alive = true, Conns = {}, ButtonConns = {},
-	IsBypassRunning = false, BypassStartTime = 0, UserMovedDuringBypass = false,
-	AutoRepairEnabled = false, AutoRepairThread = nil,
-	AutoCurrentPoint = nil, AutoCurrentGenModel = nil, LastFireTime = 0,
-	ProcessedGens = {}, GenCache = {}, GenCacheTimer = 0,
-	RepairAnimTrack = nil, BypassButton = nil, GenButtonUpdater = nil, VisualUpdater = nil,
-	Injected = {},
-	EventRemote = nil, EventConn = nil, ResultRemote = nil, ValidRemote = nil, ValidConn = nil,
-	ScourgeRemote = nil, ScourgeConn = nil, HitRemote = nil,
-	ScourgeActive = false, ScourgeToken = 0, LastScourgeTime = 0, ScourgeSent = 0,
-	Received = 0, Sent = 0, Valid = 0, Fallback = 0,
-	Saved = {}, LastEventTime = 0, PrevVisible = false, PrevGoal = nil,
-	ButtonLocked = false, Shared = { Active = false, Sending = false, Drop = false, Installed = false },
-	HookHandlerFn = nil, HookRemote = nil,
-}
-local BG2_CFG = {
-	BUTTON_IMAGE_ID = "85572190067914",
-	BUTTON_SIZE = 49, BUTTON_POSITION = UDim2.new(1, -69, 0.5, -25),
-	TP_DELAY = 0.12, SMOOTH_MOVE_DURATION = 0.18, SMOOTH_SETTLE_DELAY = 0.05,
-	CONFIRM_TIMEOUT = 1.2, CONFIRM_POLL = 0.05, RETRY_TIMEOUT = 0.8,
-	AUTO_FIRE_INTERVAL = 0.5, AUTO_SEARCH_RADIUS = 5,
-	GUARD_INTERVAL = 0.15, GUARD_GRACE = 1.0, INPUT_CHECK_INTERVAL = 0.1,
-	WATCHDOG_INTERVAL = 1.0, WATCHDOG_MAX_DURATION = 8.0,
-	MAX_TITIK = 4, MIN_TITIK_REPAIR = 1, STAND_UP_DELAY = 1.5,
-	AUTO_REPAIR_AFTER_BYPASS = true, RESULT_VALUE = 1, SEND_DELAY = 0,
-	INJECT_GRACE = 4.0, LINK_INTERVAL = 1, PRUNE_INTERVAL = 0.5, FALLBACK_WINDOW = 0.5,
-	RELEASE_SETTLE_DELAY = 0.3,
-	SCOURGE_PRE_DELAY = 0.028, SCOURGE_GAP = 0.042, SCOURGE_GAP_RANDOM = 7, SCOURGE_RETRIGGER = 0.3,
-	REPAIR_ANIM_ID = "rbxassetid://92960319113695",
-}
-local BG2_SKILL_GUI = { "SkillCheckPromptGui", "SkillCheckPromptGui-con" }
-
-local function BG2_getRepairEvent()
-	local r = ReplicatedStorage:FindFirstChild("Remotes")
-	local g = r and r:FindFirstChild("Generator")
-	return g and g:FindFirstChild("RepairEvent")
-end
-local function BG2_FindRemote(folder, name)
-	local result = nil
-	pcall(function()
-		local rem = ReplicatedStorage:FindFirstChild("Remotes")
-		local f = rem and rem:FindFirstChild(folder)
-		if f then result = f:FindFirstChild(name) end
-	end)
-	return result
-end
-local function BG2_FindDeep(...)
-	local path = {...}
-	local node = ReplicatedStorage:FindFirstChild("Remotes")
-	for _, n in ipairs(path) do if not node then return nil end; node = node:FindFirstChild(n) end
-	if node and node:IsA("RemoteEvent") then return node end
-	return nil
-end
-local function BG2_IsAutoActive() return BG2.IsBypassRunning or BG2.AutoRepairEnabled end
-local function BG2_GetRoot()
-	local c = Players.LocalPlayer.Character
-	return c and c:FindFirstChild("HumanoidRootPart")
-end
-local function BG2_IsPointName(n) return string.sub(n, 1, 14) == "GeneratorPoint" end
-
-local function BG2_GetAllGens()
-	local now = tick()
-	if now - BG2.GenCacheTimer < 5 then return BG2.GenCache end
-	BG2.GenCache = {}; BG2.GenCacheTimer = now
-	local map = workspace:FindFirstChild("Map")
-	if not map then return BG2.GenCache end
-	pcall(function()
-		for _, v in pairs(map:GetDescendants()) do
-			if v:IsA("Model") and v.Name == "Generator" then
-				if v:GetAttribute("RepairProgress") ~= nil or v:GetAttribute("kickcount") ~= nil or v:GetAttribute("ProgressRepair") ~= nil then
-					table.insert(BG2.GenCache, v)
-				end
-			end
-		end
-	end)
-	return BG2.GenCache
-end
-local function BG2_GetPoints(gen)
-	local pts = {}
-	pcall(function()
-		for _, o in pairs(gen:GetChildren()) do
-			if o.Name:find("GeneratorPoint") and o:IsA("BasePart") then table.insert(pts, o) end
-		end
-	end)
-	return pts
-end
-local function BG2_GetPointsDeep(gen)
-	local list = {}
-	pcall(function()
-		for _, o in ipairs(gen:GetDescendants()) do
-			if o:IsA("BasePart") and BG2_IsPointName(o.Name) then table.insert(list, o) end
-		end
-	end)
-	return list
-end
-local function BG2_CollectPoints()
-	local list, seen = {}, {}
-	pcall(function()
-		local cs = game:GetService("CollectionService")
-		for _, o in ipairs(cs:GetTagged("GeneratorPoint")) do
-			if o:IsA("BasePart") and o:IsDescendantOf(workspace) and not seen[o] then seen[o] = true; table.insert(list, o) end
-		end
-	end)
-	if #list == 0 then
-		pcall(function()
-			local map = workspace:FindFirstChild("Map")
-			local f = map and map:FindFirstChild("Generators")
-			if f then for _, o in ipairs(f:GetDescendants()) do if o:IsA("BasePart") and BG2_IsPointName(o.Name) and not seen[o] then seen[o] = true; table.insert(list, o) end end end
-		end)
-	end
-	return list
-end
-local function BG2_Nearest(list)
-	if #list == 0 then return nil end
-	local root = BG2_GetRoot()
-	if not root then return list[1] end
-	local best, bd = nil, math.huge
-	for _, p in ipairs(list) do if p.Parent then local d = (p.Position - root.Position).Magnitude; if d < bd then bd = d; best = p end end end
-	return best
-end
-local function BG2_Extract(...)
-	local count = select("#", ...); local args = {...}
-	local a, b = args[1], args[2]
-	if typeof(a) == "Instance" and typeof(b) == "Instance" then return a, b end
-	local gen, point = nil, nil
-	for i = 1, count do
-		local v = args[i]
-		if typeof(v) == "Instance" then
-			if BG2_IsPointName(v.Name) then if not point then point = v end
-			elseif not gen then gen = v end
-		end
-	end
-	if point and (not gen or gen == point) then gen = point.Parent end
-	if gen and not point then point = BG2_Nearest(BG2_GetPointsDeep(gen)) end
-	if gen and point then return gen, point end
-	return nil, nil
-end
-local function BG2_IsHealing()
-	local c = Players.LocalPlayer.Character
-	local i = c and c:FindFirstChild("CheckInterractable")
-	return i ~= nil and i:GetAttribute("isHealing") == true
-end
-local function BG2_IsRepairing()
-	local c = Players.LocalPlayer.Character
-	if not c then return false end
-	local i = c:FindFirstChild("CheckInterractable")
-	if i and i:GetAttribute("isRepairing") == true then return true end
-	local hrp = c:FindFirstChild("HumanoidRootPart")
-	if not hrp then return false end
-	for _, g in pairs(BG2_GetAllGens()) do
-		for _, p in pairs(BG2_GetPoints(g)) do
-			if p:GetAttribute("IsRepairing") == true and (hrp.Position - p.Position).Magnitude <= 6 then return true end
-		end
-	end
-	return false
-end
-local function BG2_MarkInjected(p) if p then BG2.Injected[p] = os.clock() end end
-local function BG2_ClearInjected() for k in pairs(BG2.Injected) do BG2.Injected[k] = nil end end
-local function BG2_CountInjected() local n = 0; for _ in pairs(BG2.Injected) do n = n + 1 end; return n end
-local function BG2_PruneInjected()
-	if BG2.IsBypassRunning then return end
-	local now = os.clock()
-	for p, t in pairs(BG2.Injected) do
-		local rm = false
-		if not p.Parent then rm = true
-		else
-			local rp = false
-			pcall(function() rp = p:GetAttribute("IsRepairing") == true end)
-			if rp then BG2.Injected[p] = now elseif now - t > BG2_CFG.INJECT_GRACE then rm = true end
-		end
-		if rm then BG2.Injected[p] = nil end
-	end
-end
-
-local function BG2_ApplyHide(obj)
-	pcall(function()
-		local s = BG2.Saved[obj]
-		if not s then s = {}; BG2.Saved[obj] = s end
-		if obj:IsA("GuiObject") then if s.Bg == nil then s.Bg = obj.BackgroundTransparency end; obj.BackgroundTransparency = 1 end
-		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then if s.Img == nil then s.Img = obj.ImageTransparency end; obj.ImageTransparency = 1 end
-		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-			if s.Txt == nil then s.Txt = obj.TextTransparency end; obj.TextTransparency = 1
-			if s.Stk == nil then s.Stk = obj.TextStrokeTransparency end; obj.TextStrokeTransparency = 1
-		end
-		if obj:IsA("UIStroke") then if s.Str == nil then s.Str = obj.Transparency end; obj.Transparency = 1 end
-	end)
-end
-local function BG2_HideAll()
-	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-	if not pg then return end
-	for _, name in ipairs(BG2_SKILL_GUI) do
-		local g = pg:FindFirstChild(name)
-		if g then BG2_ApplyHide(g); for _, o in ipairs(g:GetDescendants()) do BG2_ApplyHide(o) end end
-	end
-end
-local function BG2_RestoreAll()
-	for obj, s in pairs(BG2.Saved) do
-		pcall(function()
-			if obj.Parent then
-				if s.Bg ~= nil then obj.BackgroundTransparency = s.Bg end
-				if s.Img ~= nil then obj.ImageTransparency = s.Img end
-				if s.Txt ~= nil then obj.TextTransparency = s.Txt end
-				if s.Stk ~= nil then obj.TextStrokeTransparency = s.Stk end
-				if s.Str ~= nil then obj.Transparency = s.Str end
-			end
-		end)
-	end
-	BG2.Saved = {}
-end
-
-local function BG2_SendSuccess(gen, point)
-	local re = BG2.ResultRemote
-	if not re or not re.Parent then return false end
-	BG2.Shared.Sending = true
-	local ok = pcall(function() re:FireServer("success", BG2_CFG.RESULT_VALUE, gen, point) end)
-	BG2.Shared.Sending = false
-	if ok then BG2.Sent = BG2.Sent + 1 end
-	return ok
-end
-local function BG2_OnSkillCheck(...)
-	if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() then return end
-	BG2.LastEventTime = os.clock()
-	BG2.Received = BG2.Received + 1
-	local gen, point = BG2_Extract(...)
-	if not gen or not point then return end
-	if BG2_CFG.SEND_DELAY > 0 then
-		task.delay(BG2_CFG.SEND_DELAY, function() if BG2.Alive and BG2.Enabled and BG2_IsAutoActive() then BG2_SendSuccess(gen, point) end end)
-	else BG2_SendSuccess(gen, point) end
-end
-local function BG2_OnValidated()
-	if BG2.Alive and BG2.Enabled and BG2_IsAutoActive() then BG2.Valid = BG2.Valid + 1 end
-end
-local function BG2_GetCheckParts()
-	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-	if not pg then return nil, nil end
-	for _, name in ipairs(BG2_SKILL_GUI) do
-		local g = pg:FindFirstChild(name)
-		local c = g and g:FindFirstChild("Check")
-		if c then return c, c:FindFirstChild("Goal") end
-	end
-	return nil, nil
-end
-local function BG2_FallbackStep()
-	if not BG2.Enabled or not BG2_IsAutoActive() then BG2.PrevVisible = false; BG2.PrevGoal = nil; return end
-	local check, goal = BG2_GetCheckParts()
-	local vis, gr = false, nil
-	if check then local ok, v = pcall(function() return check.Visible end); vis = ok and v == true end
-	if goal then local ok, r = pcall(function() return goal.Rotation end); if ok then gr = r end end
-	local isNew = false
-	if vis then
-		if not BG2.PrevVisible then isNew = true
-		elseif gr and BG2.PrevGoal and math.abs(gr - BG2.PrevGoal) > 0.5 then isNew = true end
-	end
-	BG2.PrevVisible = vis; BG2.PrevGoal = gr
-	if not isNew then return end
-	if os.clock() - BG2.LastEventTime < BG2_CFG.FALLBACK_WINDOW then return end
-	if BG2_IsHealing() then return end
-	local p = BG2_Nearest(BG2_CollectPoints())
-	if p and p.Parent then if BG2_SendSuccess(p.Parent, p) then BG2.Fallback = BG2.Fallback + 1 end end
-end
-
-local function BG2_SendScourge(session)
-	local h = BG2.HitRemote
-	if not h or not h.Parent then return false end
-	BG2.Shared.Sending = true
-	local ok = pcall(function() h:FireServer(session, "success") end)
-	BG2.Shared.Sending = false
-	if ok then BG2.ScourgeSent = BG2.ScourgeSent + 1 end
-	return ok
-end
-local function BG2_OnScourge(p1, p2, p3)
-	if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() then return end
-	local now = os.clock()
-	if now - BG2.LastScourgeTime < BG2_CFG.SCOURGE_RETRIGGER then return end
-	BG2.LastScourgeTime = now
-	BG2.ScourgeToken = BG2.ScourgeToken + 1
-	local token = BG2.ScourgeToken
-	local session = p2
-	local total = tonumber(p3) or 1; if total < 1 then total = 1 end
-	BG2.ScourgeActive = true
-	task.spawn(function()
-		for _ = 1, total do
-			if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() or token ~= BG2.ScourgeToken then break end
-			task.wait(BG2_CFG.SCOURGE_PRE_DELAY)
-			if not BG2.Alive or not BG2.Enabled or not BG2_IsAutoActive() or token ~= BG2.ScourgeToken then break end
-			BG2_SendScourge(session)
-			task.wait(BG2_CFG.SCOURGE_GAP + math.random(1, BG2_CFG.SCOURGE_GAP_RANDOM) / 100)
-		end
-		task.wait(0.2)
-		if token == BG2.ScourgeToken then BG2.ScourgeActive = false end
-	end)
-end
-
-local function BG2_Link()
-	local nE = BG2_FindRemote("Generator", "SkillCheckEvent")
-	local nR = BG2_FindRemote("Generator", "SkillCheckResultEvent")
-	local nV = BG2_FindRemote("Generator", "Skillcheckvalidated")
-	local nS = BG2_FindDeep("KillerPerks", "kingscourge", "KingScourgeStart")
-	local nH = BG2_FindDeep("KillerPerks", "kingscourge", "KingScourgeHit")
-	if nR and not nR:IsA("RemoteEvent") then nR = nil end
-	BG2.ResultRemote = nR
-	if nE ~= BG2.EventRemote then
-		if BG2.EventConn then pcall(function() BG2.EventConn:Disconnect() end); BG2.EventConn = nil end
-		BG2.EventRemote = nE
-		if nE and nE:IsA("RemoteEvent") then BG2.EventConn = nE.OnClientEvent:Connect(BG2_OnSkillCheck) end
-	end
-	if nV ~= BG2.ValidRemote then
-		if BG2.ValidConn then pcall(function() BG2.ValidConn:Disconnect() end); BG2.ValidConn = nil end
-		BG2.ValidRemote = nV
-		if nV and nV:IsA("RemoteEvent") then BG2.ValidConn = nV.OnClientEvent:Connect(BG2_OnValidated) end
-	end
-	if nS ~= BG2.ScourgeRemote then
-		if BG2.ScourgeConn then pcall(function() BG2.ScourgeConn:Disconnect() end); BG2.ScourgeConn = nil end
-		BG2.ScourgeRemote = nS
-		if nS and nS:IsA("RemoteEvent") then BG2.ScourgeConn = nS.OnClientEvent:Connect(BG2_OnScourge) end
-	end
-	BG2.HitRemote = nH
-end
-local function BG2_InstallHook()
-	if BG2.HookHandlerFn then
-		if BG2.HookRemote then UnregisterHookHandler(BG2.HookRemote) end
-		BG2.HookRemote = BG2.ResultRemote
-		if BG2.HookRemote then RegisterHookHandler(BG2.HookRemote, BG2.HookHandlerFn); EnsureNamecallHook() end
-		return true
-	end
-	BG2.HookHandlerFn = function(args, self)
-		if BG2.Shared.Active and BG2.Shared.Drop and not BG2.Shared.Sending and self == BG2.ResultRemote and BG2_IsAutoActive() then
-			return false
-		end
-		return args
-	end
-	BG2.HookRemote = BG2.ResultRemote
-	if BG2.HookRemote then RegisterHookHandler(BG2.HookRemote, BG2.HookHandlerFn); EnsureNamecallHook() end
-	return true
-end
-
-local function BG2_PlayAnim()
-	local c = Players.LocalPlayer.Character
-	local h = c and c:FindFirstChildOfClass("Humanoid")
-	local a = h and h:FindFirstChildOfClass("Animator")
-	if not a then return end
-	if BG2.RepairAnimTrack and BG2.RepairAnimTrack.IsPlaying then return end
-	pcall(function()
-		local an = Instance.new("Animation"); an.AnimationId = BG2_CFG.REPAIR_ANIM_ID
-		BG2.RepairAnimTrack = a:LoadAnimation(an)
-		BG2.RepairAnimTrack.Priority = Enum.AnimationPriority.Action
-		BG2.RepairAnimTrack:Play()
-	end)
-end
-local function BG2_StopAnim()
-	if BG2.RepairAnimTrack and BG2.RepairAnimTrack.IsPlaying then pcall(function() BG2.RepairAnimTrack:Stop() end) end
-	BG2.RepairAnimTrack = nil
-end
-local function BG2_StandUp()
-	local c = Players.LocalPlayer.Character; if not c then return end
-	local i = c:FindFirstChild("CheckInterractable")
-	local waitT = 0
-	while not i and waitT < 0.5 do task.wait(0.05); waitT = waitT + 0.05; i = c:FindFirstChild("CheckInterractable") end
-	local h = c:FindFirstChildOfClass("Humanoid")
-	local hrp = c:FindFirstChild("HumanoidRootPart")
-	if h and h.Parent then
-		local a = h:FindFirstChildOfClass("Animator")
-		if a then for _, tr in ipairs(a:GetPlayingAnimationTracks()) do local n = (tr.Name or ""):lower(); local id = tr.Animation and tr.Animation.AnimationId or ""; if id == BG2_CFG.REPAIR_ANIM_ID or n:find("repair") or n:find("fix") or n:find("work") or n:find("interact") then pcall(function() tr:Stop(0) end) end end end
-		pcall(function() h.AutoRotate = true end)
-		if h.WalkSpeed < 10 then pcall(function() h.WalkSpeed = 16 end) end
-		if h.PlatformStand then pcall(function() h.PlatformStand = false end) end
-		if h.Sit then pcall(function() h.Sit = false end) end
-		pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-	end
-	if i then
-		for _ = 1, 2 do
-			for _, a in ipairs({"isRepairing","isHealing","isVaulting","isSliding","isUnhooking","isExiting","isDroppingPallet","isCarrying","isDowned"}) do pcall(function() i:SetAttribute(a, false) end) end
-			task.wait(0.05)
-		end
-	end
-	if hrp and hrp.Parent then
-		for _ = 1, 3 do pcall(function() hrp.Anchored = false end); pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end); pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end); task.wait(0.03) end
-	end
-	BG2_StopAnim()
-end
-local function BG2_WaitRepair(point, timeout)
-	local t0 = tick()
-	while tick() - t0 < (timeout or 1) do
-		if not point or not point.Parent then return false end
-		if point:GetAttribute("IsRepairing") == true then return true end
-		task.wait(BG2_CFG.CONFIRM_POLL)
-	end
-	return false
-end
-local function BG2_Smooth(targetCF, dur)
-	local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp.Parent then return end
-	local startCF = hrp.CFrame; local elapsed = 0; local conn
-	conn = RunService.Heartbeat:Connect(function(dt)
-		if not hrp or not hrp.Parent then if conn then conn:Disconnect() end; return end
-		elapsed = elapsed + dt
-		local a = math.min(elapsed / dur, 1)
-		hrp.CFrame = startCF:Lerp(targetCF, a)
-		pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end)
-		if a >= 1 then if conn then conn:Disconnect() end end
-	end)
-	while elapsed < dur do task.wait() end
-	if conn then conn:Disconnect() end
-end
-local function BG2_ForceRelease()
-	local c = Players.LocalPlayer.Character; if not c then return end
-	local hrp = c:FindFirstChild("HumanoidRootPart")
-	local h = c:FindFirstChildOfClass("Humanoid")
-	local i = c:FindFirstChild("CheckInterractable")
-	local re = BG2_getRepairEvent()
-	if re then
-		for _ = 1, 2 do
-			for _, g in pairs(BG2_GetAllGens()) do for _, p in pairs(BG2_GetPoints(g)) do if p and p.Parent and p:GetAttribute("IsRepairing") == true then pcall(function() re:FireServer(p, false) end) end end end
-			if BG2.AutoCurrentPoint and BG2.AutoCurrentPoint.Parent then pcall(function() re:FireServer(BG2.AutoCurrentPoint, false) end) end
-			task.wait(0.05)
-		end
-	end
-	if hrp and hrp.Parent then for _ = 1, 3 do pcall(function() hrp.Anchored = false end); pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end); pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end); task.wait(0.03) end end
-	if h and h.Parent then
-		pcall(function() h.AutoRotate = true end)
-		if h.WalkSpeed < 10 then pcall(function() h.WalkSpeed = 16 end) end
-		if h.PlatformStand then pcall(function() h.PlatformStand = false end) end
-		if h.Sit then pcall(function() h.Sit = false end) end
-		pcall(function() h:ChangeState(Enum.HumanoidStateType.Running) end)
-	end
-	if i then for _ = 1, 2 do for _, a in ipairs({"isRepairing","isHealing","isVaulting","isSliding","isUnhooking","isExiting","isDroppingPallet","isCarrying","isDowned"}) do pcall(function() i:SetAttribute(a, false) end) end; task.wait(0.05) end end
-	BG2_ClearInjected()
-	BG2.AutoRepairEnabled = false
-	if BG2.AutoRepairThread then pcall(function() task.cancel(BG2.AutoRepairThread) end); BG2.AutoRepairThread = nil end
-	BG2.AutoCurrentPoint = nil; BG2.AutoCurrentGenModel = nil; BG2.ProcessedGens = {}
-	if BG2.IsBypassRunning then BG2.IsBypassRunning = false end
-end
-local function BG2_StopAutoRepair()
-	BG2_StopAnim()
-	local p = BG2.AutoCurrentPoint; BG2.AutoCurrentPoint = nil
-	if p and p.Parent then local re = BG2_getRepairEvent(); if re then pcall(function() re:FireServer(p, false) end) end end
-end
-local function BG2_StopAutoOnly()
-	BG2.AutoRepairEnabled = false
-	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
-	BG2_StopAutoRepair(); BG2.AutoCurrentGenModel = nil
-end
-local BG2_StartAuto
-BG2_StartAuto = function(gen)
-	BG2.AutoCurrentGenModel = gen
-	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
-	BG2_StopAutoRepair()
-	BG2.AutoRepairThread = task.spawn(function()
-		while BG2.Alive and BG2.AutoRepairEnabled and BG2.Enabled do
-			local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-			if not hrp then task.wait(0.1); continue end
-			local found = nil
-			for _, g in pairs(BG2_GetAllGens()) do
-				for _, p in pairs(BG2_GetPoints(g)) do
-					if p and p.Parent and (hrp.Position - p.Position).Magnitude <= BG2_CFG.AUTO_SEARCH_RADIUS then found = p; break end
-				end
-				if found then break end
-			end
-			if found then
-				BG2.AutoCurrentPoint = found
-				local now = tick()
-				if now - BG2.LastFireTime >= BG2_CFG.AUTO_FIRE_INTERVAL then
-					local re = BG2_getRepairEvent()
-					if re then BG2_PlayAnim(); BG2.LastFireTime = tick(); pcall(function() re:FireServer(found, true) end) end
-				end
-			else
-				if BG2.AutoCurrentPoint then BG2_StopAutoRepair(); BG2.AutoRepairEnabled = false; if BG2.AutoCurrentGenModel then BG2.ProcessedGens[BG2.AutoCurrentGenModel] = nil; BG2.AutoCurrentGenModel = nil end; break end
-			end
-			task.wait(0.1)
-		end
-		BG2_StopAutoRepair()
-	end)
-end
-local function BG2_ClearProcessed(gen, point)
-	if not point or not point.Parent then BG2.ProcessedGens[gen] = nil; return end
-	local c1, c2
-	c1 = point:GetAttributeChangedSignal("IsRepairing"):Connect(function()
-		if not point or not point.Parent then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end; return end
-		if point:GetAttribute("IsRepairing") == false then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end end
-	end)
-	c2 = point.AncestryChanged:Connect(function()
-		if not point.Parent then BG2.ProcessedGens[gen] = nil; if c1 then c1:Disconnect() end; if c2 then c2:Disconnect() end end
-	end)
-end
-local function BG2_WaitGen(gen, timeout)
-	local t0 = tick()
-	while tick() - t0 < (timeout or 30) do
-		if not gen or not gen.Parent then return false end
-		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if not hrp or not hrp.Parent then return false end
-		local prog = gen:GetAttribute("RepairProgress")
-		if prog ~= nil and type(prog) == "number" and (prog >= 99.5 or prog >= 0.995) then return true end
-		if gen:GetAttribute("Completed") == true or gen:GetAttribute("IsRepaired") == true then return true end
-		task.wait(0.1)
-	end
-	return false
-end
-local function BG2_DoMulti(targetPoint)
-	if BG2.IsBypassRunning or not BG2.Enabled or not targetPoint or not targetPoint.Parent then return end
-	local gen = targetPoint.Parent
-	if not gen or BG2.ProcessedGens[gen] then return end
-	BG2.Injected[targetPoint] = nil
-	BG2.IsBypassRunning = true; BG2.BypassStartTime = tick(); BG2.UserMovedDuringBypass = false
-	pcall(function()
-		local re = BG2_getRepairEvent(); if not re then return end
-		BG2.ProcessedGens[gen] = true; BG2_ClearProcessed(gen, targetPoint)
-		local pts = BG2_GetPoints(gen)
-		if #pts < BG2_CFG.MIN_TITIK_REPAIR then BG2.ProcessedGens[gen] = nil; return end
-		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if not hrp then BG2.ProcessedGens[gen] = nil; return end
-		local origP = hrp.Position; local origR = hrp.CFrame - hrp.CFrame.Position
-		hrp.Anchored = false; task.wait(0.03)
-		local body = gen:FindFirstChild("GeneratorBody") or gen.PrimaryPart
-		local count = 0
-		for _, p in pairs(pts) do
-			if not BG2.Enabled or not hrp.Parent then break end
-			if not p or not p.Parent then count = count + 1; continue end
-			count = count + 1
-			if count > BG2_CFG.MAX_TITIK then break end
-			local look = body and body.Position or p.Position
-			local tcf
-			if (look - p.Position).Magnitude > 0.5 then tcf = CFrame.lookAt(p.Position, look) else tcf = CFrame.new(p.Position) * origR end
-			BG2_Smooth(tcf, BG2_CFG.SMOOTH_MOVE_DURATION); task.wait(BG2_CFG.SMOOTH_SETTLE_DELAY)
-			BG2_MarkInjected(p)
-			pcall(function() re:FireServer(p, true) end)
-			if not BG2_WaitRepair(p, BG2_CFG.CONFIRM_TIMEOUT) then
-				pcall(function() re:FireServer(p, false) end)
-				task.wait(BG2_CFG.TP_DELAY)
-				if hrp.Parent and p.Parent then BG2_Smooth(tcf, BG2_CFG.SMOOTH_MOVE_DURATION); task.wait(BG2_CFG.SMOOTH_SETTLE_DELAY) end
-				BG2_MarkInjected(p)
-				pcall(function() re:FireServer(p, true) end)
-				BG2_WaitRepair(p, BG2_CFG.RETRY_TIMEOUT)
-			end
-		end
-		if hrp.Parent then hrp.Anchored = false; BG2_Smooth(CFrame.new(origP) * origR, BG2_CFG.SMOOTH_MOVE_DURATION) end
-		BG2_WaitGen(gen, 10)
-		pcall(function() re:FireServer(targetPoint, false) end)
-		BG2_StandUp()
-		if hrp.Parent then pcall(function() hrp.Anchored = false end) end
-		task.wait(BG2_CFG.STAND_UP_DELAY)
-		if BG2_CFG.AUTO_REPAIR_AFTER_BYPASS and BG2.Enabled and not BG2.UserMovedDuringBypass then
-			BG2.AutoRepairEnabled = true; BG2_StartAuto(gen)
-		end
-	end)
-	local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp.Parent then pcall(function() hrp.Anchored = false end) end
-	BG2.IsBypassRunning = false
-end
-
-local function BG2_DestroyBtn()
-	for _, c in ipairs(BG2.ButtonConns) do pcall(function() c:Disconnect() end) end
-	BG2.ButtonConns = {}
-	if BG2.BypassButton then pcall(function() BG2.BypassButton:Destroy() end); BG2.BypassButton = nil end
-	BG2.GenButtonUpdater = nil
-end
-local function BG2_CreateBtn()
-	if BG2.BypassButton and BG2.BypassButton.Parent then return end
-	BG2_DestroyBtn()
-	local sg = Instance.new("ScreenGui")
-	sg.Name = "FluxBG_GenUI"; sg.ResetOnSpawn = false; sg.IgnoreGuiInset = true; sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	local parent = getParent()
-	local okM = pcall(function() sg.Parent = parent end)
-	if not okM or not sg.Parent then sg.Parent = Players.LocalPlayer:FindFirstChild("PlayerGui") end
-	local btn = Instance.new("ImageButton")
-	btn.Name = "GenButton"; btn.Size = UDim2.fromOffset(BG2_CFG.BUTTON_SIZE, BG2_CFG.BUTTON_SIZE)
-	btn.Position = BG2_CFG.BUTTON_POSITION
-	btn.BackgroundTransparency = 1; btn.BorderSizePixel = 0
-	btn.Image = "rbxassetid://" .. tostring(BG2_CFG.BUTTON_IMAGE_ID)
-	btn.ImageColor3 = Color3.fromRGB(255, 255, 255); btn.ImageTransparency = 0.45
-	btn.ScaleType = Enum.ScaleType.Fit; btn.AutoButtonColor = false; btn.Active = true
-	btn.Parent = sg
-	local fallback = Instance.new("TextLabel")
-	fallback.Size = UDim2.new(1, 0, 1, 0); fallback.BackgroundTransparency = 1
-	fallback.Text = "GEN"; fallback.TextColor3 = Color3.fromRGB(255, 255, 255)
-	fallback.TextStrokeTransparency = 0.4; fallback.Font = Enum.Font.GothamBold
-	fallback.TextSize = 14; fallback.Visible = false; fallback.Active = false; fallback.Parent = btn
-	local pressStart, pressInput, startAbs, dragMoved, dragging = nil, nil, nil, false, false
-	local created = os.clock()
-	local function screenSize()
-		local w, h = 0, 0
-		pcall(function() local cam = workspace.CurrentCamera; if cam then w = cam.ViewportSize.X; h = cam.ViewportSize.Y end end)
-		if w <= 0 or h <= 0 then pcall(function() w = sg.AbsoluteSize.X; h = sg.AbsoluteSize.Y end) end
-		if w <= 0 or h <= 0 then w, h = 1280, 720 end
-		return w, h
-	end
-	table.insert(BG2.ButtonConns, btn.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-			pressStart = input.Position; pressInput = input; startAbs = btn.AbsolutePosition; dragMoved = false; dragging = false
-		end
-	end))
-	table.insert(BG2.ButtonConns, UserInputService.InputChanged:Connect(function(input)
-		if not pressStart or not pressInput or not startAbs then return end
-		if BG2.ButtonLocked then return end
-		local valid = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseMovement)
-		if not valid then return end
-		local dx, dy = input.Position.X - pressStart.X, input.Position.Y - pressStart.Y
-		if not dragging and math.sqrt(dx*dx+dy*dy) > 8 then
-			dragging = true; dragMoved = true; pressStart = input.Position; startAbs = btn.AbsolutePosition; dx, dy = 0, 0
-		end
-		if dragging and btn and btn.Parent then
-			local sw, sh = screenSize()
-			local nx = math.clamp(startAbs.X + dx, 0, math.max(0, sw - BG2_CFG.BUTTON_SIZE))
-			local ny = math.clamp(startAbs.Y + dy, 0, math.max(0, sh - BG2_CFG.BUTTON_SIZE))
-			btn.Position = UDim2.fromOffset(nx, ny)
-		end
-	end))
-	table.insert(BG2.ButtonConns, UserInputService.InputEnded:Connect(function(input)
-		if not pressInput then return end
-		local ended = (pressInput.UserInputType == Enum.UserInputType.Touch and input.UserInputType == Enum.UserInputType.Touch and input == pressInput) or (input.UserInputType == Enum.UserInputType.MouseButton1)
-		if ended then pressStart = nil; pressInput = nil; startAbs = nil; dragging = false end
-	end))
-	local function upd()
-		if not btn or not btn.Parent then return end
-		local loaded = false
-		pcall(function() loaded = btn.IsLoaded == true end)
-		fallback.Visible = (not loaded) and (os.clock() - created > 3)
-		btn.ImageTransparency = BG2.IsBypassRunning and 0 or (BG2_IsRepairing() and 0 or 0)
-	end
-	BG2.BypassButton = sg; BG2.GenButtonUpdater = upd
-	table.insert(BG2.ButtonConns, btn.MouseButton1Click:Connect(function()
-		if dragMoved then dragMoved = false; return end
-		if BG2.IsBypassRunning and (tick() - BG2.BypassStartTime > 3) then BG2.IsBypassRunning = false end
-		if BG2.IsBypassRunning or not BG2.Enabled then return end
-		local c = Players.LocalPlayer.Character; local hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if not hrp then return end
-		local best, bd = nil, math.huge
-		for _, g in pairs(BG2_GetAllGens()) do
-			for _, p in pairs(BG2_GetPoints(g)) do
-				if p and p.Parent then local d = (hrp.Position - p.Position).Magnitude; if d < bd then bd = d; best = p end end
-			end
-		end
-		if best and bd <= 8 then
-			local g = best.Parent
-			if g and BG2.ProcessedGens[g] then BG2.ProcessedGens[g] = nil end
-			task.spawn(function() BG2_DoMulti(best) end)
-		end
-	end))
-	upd()
-end
-
-local function BG2_Cleanup()
-	BG2.Enabled = false; BG2.IsBypassRunning = false; BG2.AutoRepairEnabled = false; BG2.UserMovedDuringBypass = false
-	BG2.ProcessedGens = {}
-	BG2.Shared.Drop = false; BG2.ScourgeToken = BG2.ScourgeToken + 1; BG2.ScourgeActive = false
-	if BG2.AutoRepairThread then task.cancel(BG2.AutoRepairThread); BG2.AutoRepairThread = nil end
-	BG2_StopAutoRepair(); BG2.AutoCurrentGenModel = nil
-	BG2_DestroyBtn()
-	pcall(BG2_ForceRelease); BG2_ClearInjected(); BG2_RestoreAll()
-end
-
-local BG2_HideRender = "FluxBG_Hide"
-track(RunService:BindToRenderStep(BG2_HideRender, Enum.RenderPriority.Last.Value, function()
-	if not BG2.Alive then return end
-	if BG2.Enabled and BG2_IsAutoActive() and not BG2_IsHealing() then BG2_HideAll()
-	elseif next(BG2.Saved) ~= nil then BG2_RestoreAll() end
-end))
-
-local BG2_Threads = {}
-local function BG2_StartLoop(name, fn)
-	BG2_Threads[name] = task.spawn(function()
-		while BG2.Alive do pcall(fn); task.wait(0.1) end
-	end)
-end
-BG2_StartLoop("Guard", function()
-	task.wait(BG2_CFG.GUARD_INTERVAL)
-	if not BG2.Enabled or not BG2.AutoRepairEnabled or BG2.IsBypassRunning then return end
-	if tick() - BG2.LastFireTime < BG2_CFG.GUARD_GRACE then return end
-	if not BG2_IsRepairing() then BG2_StopAutoOnly() end
-end)
-BG2_StartLoop("Input", function()
-	task.wait(BG2_CFG.INPUT_CHECK_INTERVAL)
-	if not BG2.Enabled then return end
-	local c = Players.LocalPlayer.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
-	if not h then return end
-	local moving = h.MoveDirection.Magnitude > 0.5
-	if BG2.IsBypassRunning then if moving then BG2.UserMovedDuringBypass = true end; return end
-	if BG2.AutoRepairEnabled and moving then
-		BG2_StopAutoOnly(); task.wait(0.05); pcall(BG2_ForceRelease); task.wait(BG2_CFG.RELEASE_SETTLE_DELAY)
-	end
-end)
-BG2_StartLoop("Watchdog", function()
-	task.wait(BG2_CFG.WATCHDOG_INTERVAL)
-	if BG2.IsBypassRunning and BG2.BypassStartTime > 0 and tick() - BG2.BypassStartTime > BG2_CFG.WATCHDOG_MAX_DURATION then BG2.IsBypassRunning = false end
-end)
-BG2_StartLoop("Link", function() task.wait(BG2_CFG.LINK_INTERVAL); pcall(BG2_Link); BG2.Shared.Drop = BG2.Enabled and (BG2.EventConn ~= nil) and (BG2.ResultRemote ~= nil) end)
-BG2_StartLoop("Prune", function() task.wait(BG2_CFG.PRUNE_INTERVAL); pcall(BG2_PruneInjected) end)
-BG2_StartLoop("Fallback", function() task.wait(0.05); if BG2.Enabled and BG2_IsAutoActive() then pcall(BG2_FallbackStep) else BG2.PrevVisible = false; BG2.PrevGoal = nil end end)
-BG2_StartLoop("Btn", function() task.wait(0.15); if BG2.GenButtonUpdater then pcall(BG2.GenButtonUpdater) end end)
-BG2_StartLoop("Jump", function()
-	task.wait(0.1)
-	local c = Players.LocalPlayer.Character; local h = c and c:FindFirstChildOfClass("Humanoid")
-	if not BG2.IsBypassRunning then
-		if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, true); h:SetStateEnabled(Enum.HumanoidStateType.Freefall, true) end) end
-		return
-	end
-	if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Jumping, false); h:SetStateEnabled(Enum.HumanoidStateType.Freefall, false) end) end
-	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui"); local tg = pg and pg:FindFirstChild("TouchGui"); local fr = tg and tg:FindFirstChild("TouchControlFrame"); local jb = fr and fr:FindFirstChild("JumpButton")
-	if jb and jb.Visible then jb.Visible = false end
-end)
-
-pcall(BG2_Link)
-
-local BG2_Row = Add("Boost Generator")
-local BG2_Toggle = BG2_Row:Toggle(false, function(state)
-	BG2.Enabled = state
-	if state then
-		BG2.Received = 0; BG2.Sent = 0; BG2.Valid = 0; BG2.Fallback = 0; BG2.ScourgeSent = 0
-		BG2.ScourgeActive = false; BG2.ScourgeToken = BG2.ScourgeToken + 1
-		BG2.PrevVisible = false; BG2.PrevGoal = nil
-		pcall(BG2_Link)
-		BG2.Shared.Active = true
-		BG2.Shared.Drop = (BG2.EventConn ~= nil) and (BG2.ResultRemote ~= nil)
-		BG2_InstallHook()
-		BG2_CreateBtn()
-	else
-		BG2.Shared.Active = false
-		BG2_Cleanup()
-	end
-end)
-local BG2_LockBtn = BG2_Row:Button({ "Lock", "Unlock" }, function(label, num)
-	BG2.ButtonLocked = (num == 1)
-end)
-end)
-
 -- ===== END BAGIAN 2/3 =====
 -- BAGIAN 3/3 dimulai dari: RunTab("Killer", ...) s/d akhir script
 -- ===== FLUX HUB FIXED - BAGIAN 3/3 =====
@@ -5785,167 +4998,285 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	end)
 
 	-- ============================================================
-	-- 3. HIDE PROFILE
+	-- 3. HIDE PROFILE  (v2 ringan: event + scan berkala, tanpa RenderStepped)
 	-- ============================================================
-	local HP = { Enabled = false, Conn = nil, Ignore = {}, Conns = {} }
-	local HP_Images = { "rbxassetid://87618578646330", "rbxassetid://87618578646330" }
-	local HP_Name = "FLUX HUB"
-	local HP_Applying = setmetatable({}, { __mode = "k" })
-	local function HP_IsOurs(img) for _, u in ipairs(HP_Images) do if img == u then return true end end; return false end
-	local function HP_ApplyImg(v)
-		if HP_Applying[v] or HP_IsOurs(v.Image) then return end
-		HP_Applying[v] = true
-		task.spawn(function()
-			for i = 1, #HP_Images do
-				v.Image = HP_Images[i]
-				local t = 0
-				repeat task.wait(0.1); t += 0.1 until v.IsLoaded or t >= 2
-				if v.IsLoaded then break end
-			end
-			HP_Applying[v] = nil
-		end)
-	end
-	local function HP_LooksAvatar(img)
-		local s = string.lower(img)
-		return string.find(s, "rbxthumb", 1, true) or string.find(s, "headshot", 1, true) or string.find(s, "avatar", 1, true) or string.find(s, "userid=", 1, true) or string.find(s, "thumbnail", 1, true)
-	end
-	local function HP_Obliterate(obj)
-		if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-			obj.Text = ""; obj.TextTransparency = 1; obj.BackgroundTransparency = 1
-			obj.TextStrokeTransparency = 1; obj.Visible = false; obj.Size = UDim2.new(0, 0, 0, 0)
+	do
+		local HP = { Enabled = false, Token = 0, Conns = {}, Ignore = {}, Names = {} }
+		local HP_Images = { "rbxassetid://87618578646330", "rbxassetid://87618578646330" }
+		local HP_Name = "FLUX HUB"
+		local HP_Applying = setmetatable({}, { __mode = "k" })
+		local HP_Checked = setmetatable({}, { __mode = "k" })
+
+		local function HP_IsOurs(img) for _, u in ipairs(HP_Images) do if img == u then return true end end; return false end
+		local function HP_ApplyImg(v)
+			if HP_Applying[v] or HP_IsOurs(v.Image) then return end
+			HP_Applying[v] = true
+			task.spawn(function()
+				for i = 1, #HP_Images do
+					v.Image = HP_Images[i]
+					local t = 0
+					repeat task.wait(0.1); t += 0.1 until v.IsLoaded or t >= 2
+					if v.IsLoaded then break end
+				end
+				HP_Applying[v] = nil
+			end)
 		end
-	end
-	local function HP_Protect(root)
-		if not root then return end
-		for _, o in ipairs(root:GetDescendants()) do HP_Obliterate(o) end
-		root.DescendantAdded:Connect(function(o) task.defer(function() HP_Obliterate(o) end) end)
-	end
-	local function HP_Esc(s) return (string.gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
-	local function HP_GetNames() local n = {}; for _, p in ipairs(Players:GetPlayers()) do n[p.Name] = true; n[p.DisplayName] = true end; return n end
-	local function HP_Process(v, names)
-		if v:IsA("TextLabel") or v:IsA("TextButton") then
-			local t = v.Text
-			if t and t ~= "" and t ~= HP_Name then
-				if names[t] then v.Text = HP_Name
+		local function HP_LooksAvatar(img)
+			local s = string.lower(img)
+			return string.find(s, "rbxthumb", 1, true) or string.find(s, "headshot", 1, true) or string.find(s, "avatar", 1, true) or string.find(s, "userid=", 1, true) or string.find(s, "thumbnail", 1, true)
+		end
+		local function HP_Obliterate(obj)
+			if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+				if obj.Visible == false and obj.Text == "" then return end
+				obj.Text = ""; obj.TextTransparency = 1; obj.BackgroundTransparency = 1
+				obj.TextStrokeTransparency = 1; obj.Visible = false; obj.Size = UDim2.new(0, 0, 0, 0)
+			end
+		end
+		local function HP_Esc(s) return (string.gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
+		local function HP_GetNames()
+			local n = {}
+			for _, p in ipairs(Players:GetPlayers()) do n[p.Name] = true; n[p.DisplayName] = true end
+			HP_Checked = setmetatable({}, { __mode = "k" })
+			return n
+		end
+		local function HP_Process(v, names)
+			if v:IsA("TextLabel") or v:IsA("TextButton") then
+				local t = v.Text
+				if t == "" or t == HP_Name or HP_Checked[v] == t then return end
+				if names[t] then
+					v.Text = HP_Name
 				else
+					local nt = t
 					for name in pairs(names) do
-						if name ~= "" and string.find(t, name, 1, true) then t = string.gsub(t, HP_Esc(name), HP_Name); v.Text = t end
+						if name ~= "" and string.find(nt, name, 1, true) then nt = string.gsub(nt, HP_Esc(name), HP_Name) end
+					end
+					if nt ~= t then v.Text = nt end
+				end
+				HP_Checked[v] = v.Text
+			elseif v:IsA("ImageLabel") or v:IsA("ImageButton") then
+				local img = v.Image or ""
+				if img ~= "" and not HP_IsOurs(img) and HP_LooksAvatar(img) then HP_ApplyImg(v) end
+			end
+		end
+		local function HP_Walk(inst, names)
+			if HP.Ignore[inst] then return end
+			if string.sub(inst.Name, 1, 5) == "FLUX_" then return end
+			HP_Process(inst, names)
+			for _, c in ipairs(inst:GetChildren()) do HP_Walk(c, names) end
+		end
+		local function HP_ProcessGui(root)
+			if not root then return end
+			local names = HP.Names
+			for _, top in ipairs(root:GetChildren()) do HP_Walk(top, names) end
+		end
+		local function HP_Protect(char)
+			if not char then return end
+			for _, o in ipairs(char:GetDescendants()) do HP_Obliterate(o) end
+			table.insert(HP.Conns, char.DescendantAdded:Connect(function(o)
+				task.defer(function() if HP.Enabled then pcall(HP_Obliterate, o) end end)
+			end))
+		end
+		local function HP_WatchPlayer(p)
+			if p.Character then HP_Protect(p.Character) end
+			table.insert(HP.Conns, p.CharacterAdded:Connect(function(c) HP_Protect(c) end))
+		end
+		local function HP_ScanChars()
+			for _, p in ipairs(Players:GetPlayers()) do
+				local c = p.Character
+				if c then
+					for _, o in ipairs(c:GetDescendants()) do
+						if o:IsA("TextLabel") or o:IsA("TextButton") then HP_Obliterate(o) end
 					end
 				end
 			end
-		elseif v:IsA("ImageLabel") or v:IsA("ImageButton") then
-			local img = v.Image or ""
-			if img ~= "" and not HP_IsOurs(img) and HP_LooksAvatar(img) then HP_ApplyImg(v) end
 		end
-	end
-	local function HP_Walk(inst, names)
-		if HP.Ignore[inst] then return end
-		if string.sub(inst.Name, 1, 5) == "FLUX_" then return end
-		HP_Process(inst, names)
-		for _, c in ipairs(inst:GetChildren()) do HP_Walk(c, names) end
-	end
-	local function HP_ProcessGui(root)
-		if not root then return end
-		local names = HP_GetNames()
-		for _, top in ipairs(root:GetChildren()) do HP_Walk(top, names) end
-	end
-	local HP_Row = Add("Hide Profil")
-	HP_Row:Toggle(false, function(state)
-		HP.Enabled = state
-		if state then
-			HP.Conn = RunService.RenderStepped:Connect(function()
-				for _, p in ipairs(Players:GetPlayers()) do
-					if p.Character then for _, o in ipairs(p.Character:GetDescendants()) do if o:IsA("TextLabel") or o:IsA("TextButton") then HP_Obliterate(o) end end end
-				end
-				if Players.LocalPlayer:FindFirstChild("PlayerGui") then HP_ProcessGui(Players.LocalPlayer.PlayerGui) end
-				pcall(function() HP_ProcessGui(game:GetService("CoreGui")) end)
-			end)
-			if Players.LocalPlayer.Character then HP_Protect(Players.LocalPlayer.Character) end
-			table.insert(HP.Conns, Players.LocalPlayer.CharacterAdded:Connect(function(c) HP_Protect(c) end))
-			table.insert(HP.Conns, Players.PlayerAdded:Connect(function(p) if p.Character then HP_Protect(p.Character) end; p.CharacterAdded:Connect(function(c) HP_Protect(c) end) end))
-		else
-			if HP.Conn then pcall(function() HP.Conn:Disconnect() end); HP.Conn = nil end
+		local function HP_Loop(my)
+			local tPG, tCh, tCore = 0, 0, 0
+			while HP.Enabled and HP.Token == my and gui.Parent do
+				local now = os.clock()
+				pcall(function()
+					local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+					if pg and now - tPG >= 1 then tPG = now; HP_ProcessGui(pg) end
+					if now - tCh >= 1.5 then tCh = now; HP_ScanChars() end
+					if now - tCore >= 3 then tCore = now; pcall(function() HP_ProcessGui(game:GetService("CoreGui")) end) end
+				end)
+				task.wait(0.5)
+			end
+		end
+
+		local HP_Row = Add("Hide Profil")
+		HP_Row:Toggle(false, function(state)
+			HP.Enabled = state
+			HP.Token = HP.Token + 1
 			for _, c in ipairs(HP.Conns) do pcall(function() c:Disconnect() end) end
 			HP.Conns = {}
-		end
-	end)
-
--- ============================================================
--- 4. HOOK ESP
--- ============================================================
-local HE = {
-	Enabled = false,
-	Conns = {},
-	Color = Color3.fromRGB(255, 0, 0),
-	Objs = setmetatable({}, { __mode = "k" }),
-}
-
-local function HE_GetRoot(inst)
-	local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
-	while m do
-		if m.Name:lower() == "hook" then return m end
-		local par = m.Parent
-		m = (par and par:IsA("Model")) and par or nil
+			if not state then return end
+			HP.Names = HP_GetNames()
+			local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+			if pg then
+				table.insert(HP.Conns, pg.DescendantAdded:Connect(function(o)
+					task.defer(function()
+						if HP.Enabled and o.Parent and not o:IsDescendantOf(gui) then pcall(HP_Process, o, HP.Names) end
+					end)
+				end))
+			end
+			for _, p in ipairs(Players:GetPlayers()) do HP_WatchPlayer(p) end
+			table.insert(HP.Conns, Players.PlayerAdded:Connect(function(p)
+				HP.Names = HP_GetNames()
+				HP_WatchPlayer(p)
+			end))
+			table.insert(HP.Conns, Players.PlayerRemoving:Connect(function()
+				task.defer(function() HP.Names = HP_GetNames() end)
+			end))
+			task.spawn(HP_Loop, HP.Token)
+		end)
 	end
-	return nil
-end
 
-local function HE_Cleanup(root)
-	local o = HE.Objs[root]
-	if not o then return end
-	HE.Objs[root] = nil
-	pcall(function() o.hl:Destroy() end)
-end
+-- ============================================================
+-- 4. HOOK ESP  (v3: tetap nyala, tampilan sama, tanpa tambahan fitur)
+-- ============================================================
+do
+	local HE = {
+		Enabled = false,
+		Conns = {},
+		Color = Color3.fromRGB(255, 0, 0),
+		Objs = {},
+		Token = 0,
+		MapRef = nil,
+		Folder = nil,
+	}
 
-local function HE_Setup(root)
-	if HE.Objs[root] then return end
-	local hl = Instance.new("Highlight")
-	hl.Name = "HookESP_Chams"
-	hl.Adornee = root
-	hl.FillColor = HE.Color
-	hl.FillTransparency = 0.75
-	hl.OutlineColor = HE.Color
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = root
-
-	HE.Objs[root] = { hl = hl }
-end
-
-local HE_Row = Add("Hook Esp")
-local HE_Toggle = HE_Row:Toggle(false, function(state)
-	HE.Enabled = state
-	local map = workspace:FindFirstChild("Map")
-	if state and map then
-		for _, inst in ipairs(map:GetDescendants()) do
-			local root = HE_GetRoot(inst)
-			if root then HE_Setup(root) end
+	local function HE_GetRoot(inst)
+		local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
+		while m do
+			if m.Name:lower() == "hook" then return m end
+			local par = m.Parent
+			m = (par and par:IsA("Model")) and par or nil
 		end
-		table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst)
-			local root = HE_GetRoot(inst)
-			if root then HE_Setup(root) end
-		end))
-		table.insert(HE.Conns, map.DescendantRemoving:Connect(function(child)
-			local root = HE_GetRoot(child)
-			if root and HE.Objs[root] then HE_Cleanup(root) end
-		end))
-	else
+		return nil
+	end
+
+	-- highlight ditaruh di folder kita sendiri (bukan di dalam model hook),
+	-- jadi tidak ikut terhapus kalau game membersihkan / mengganti isi model hook
+	local function HE_Folder()
+		if not (HE.Folder and HE.Folder.Parent) then
+			local f = Instance.new("Folder")
+			f.Name = "HE_" .. tostring(math.random(1000, 9999))
+			f.Parent = workspace
+			HE.Folder = f
+		end
+		return HE.Folder
+	end
+
+	local function HE_Drop(root)
+		local hl = HE.Objs[root]
+		HE.Objs[root] = nil
+		if hl then pcall(function() hl:Destroy() end) end
+	end
+
+	-- buat highlight kalau belum ada, perbaiki kalau rusak / hilang
+	local function HE_Apply(root)
+		local hl = HE.Objs[root]
+		if not hl or not hl.Parent then
+			if hl then pcall(function() hl:Destroy() end) end
+			hl = Instance.new("Highlight")
+			hl.Name = "HookESP_Chams"
+			hl.FillTransparency = 0.75
+			hl.OutlineTransparency = 0
+			hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			hl.Parent = HE_Folder()
+			HE.Objs[root] = hl
+		end
+		hl.Adornee = root
+		hl.FillColor = HE.Color
+		hl.OutlineColor = HE.Color
+		hl.Enabled = true
+	end
+
+	local function HE_Bind(map)
 		for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
 		HE.Conns = {}
-		for root in pairs(HE.Objs) do HE_Cleanup(root) end
+		HE.MapRef = map
+		if not map then return end
+		table.insert(HE.Conns, map.DescendantAdded:Connect(function(inst)
+			local root = HE_GetRoot(inst)
+			if root then
+				local hl = HE.Objs[root]
+				if not (hl and hl.Parent) then HE_Apply(root) end
+			end
+		end))
 	end
-end)
-HE_Toggle.Color = HE_Row:Color(HE.Color, function(c)
-	HE.Color = c
-	for _, o in pairs(HE.Objs) do
-		pcall(function()
-			if o.hl and o.hl.Parent then
-				o.hl.FillColor = c
-				o.hl.OutlineColor = c
+
+	local function HE_Stop()
+		HE.Token = HE.Token + 1
+		for _, c in ipairs(HE.Conns) do pcall(function() c:Disconnect() end) end
+		HE.Conns = {}
+		HE.MapRef = nil
+		for root in pairs(HE.Objs) do HE_Drop(root) end
+		pcall(function() if HE.Folder then HE.Folder:Destroy() end end)
+		HE.Folder = nil
+	end
+
+	local function HE_Start()
+		HE.Token = HE.Token + 1
+		local my = HE.Token
+		task.spawn(function()
+			local lastScan = 0
+			while HE.Enabled and HE.Token == my and gui.Parent do
+				pcall(function()
+					local map = workspace:FindFirstChild("Map")
+					if map ~= HE.MapRef then
+						for root in pairs(HE.Objs) do HE_Drop(root) end
+						HE_Bind(map)
+						lastScan = 0
+					end
+					local now = os.clock()
+					if map and now - lastScan >= 2 then
+						lastScan = now
+						for _, inst in ipairs(map:GetDescendants()) do
+							if inst:IsA("Model") and inst.Name:lower() == "hook" then
+								HE_Apply(inst)
+							end
+						end
+					end
+					for root in pairs(HE.Objs) do
+						if root.Parent == nil or not root:IsDescendantOf(workspace) then
+							HE_Drop(root)
+						else
+							HE_Apply(root)
+						end
+					end
+				end)
+				task.wait(0.5)
+			end
+			if HE.Token == my and not gui.Parent then
+				HE.Enabled = false
+				HE_Stop()
 			end
 		end)
 	end
-end)
+
+	local HE_Row = Add("Hook Esp")
+	local HE_Toggle = HE_Row:Toggle(false, function(state)
+		HE.Enabled = state
+		if state then
+			HE_Start()
+		else
+			HE_Stop()
+		end
+	end)
+	HE_Toggle.Color = HE_Row:Color(HE.Color, function(c)
+		HE.Color = c
+		for _, hl in pairs(HE.Objs) do
+			pcall(function()
+				if hl and hl.Parent then
+					hl.FillColor = c
+					hl.OutlineColor = c
+				end
+			end)
+		end
+	end)
+end
 
 -- ============================================================
 -- 5. KILLER ESP
