@@ -1748,29 +1748,88 @@ local AP = {
 	Hooked = setmetatable({}, { __mode = "k" }),
 	Cache = { Remote = nil, Button = nil },
 }
-local AP_IDS = {
-	["129895082621579"] = true, ["137220187658475"] = true, ["113499071528107"] = true,
-	["128387952281975"] = true, ["138125499040825"] = true, ["73426590603915"] = true,
-	["106987488279654"] = true, ["114699370608778"] = true, ["106859061030976"] = true,
-	["109975707842369"] = true, ["123782306962803"] = true, ["111427918159250"] = true,
-	["138606330835999"] = true, ["132549827448757"] = true, ["111471189402744"] = true,
-	["137097981510865"] = true, ["81877269249538"] = true, ["81642897917718"] = true,
-	["122812055447896"] = true, ["133963973694098"] = true, ["117042998468241"] = true,
-	["135002183282873"] = true, ["121216847022485"] = true, ["132817836308238"] = true,
-	["129784271201071"] = true, ["82666958311998"] = true, ["78432063483146"] = true,
-	["118907603246885"] = true, ["139369275981139"] = true, ["110355011987939"] = true,
-	["111920872708571"] = true, ["105374834496520"] = true, ["138720291317243"] = true,
-	["106871536134254"] = true, ["130593238885843"] = true, ["115244153053858"] = true,
-	["74968262036854"] = true, ["113255068724446"] = true, ["98163597193511"] = true,
-	["80411309607666"] = true, ["127417297154354"] = true, ["83333467665074"] = true,
-	["129626174716003"] = true, ["84926129581106"] = true, ["101636125032002"] = true,
-	["125430111937587"] = true, ["93902163029544"] = true, ["75618342544502"] = true,
-	["104540716539347"] = true, ["79310600168078"] = true, ["123809268724645"] = true,
-	["81963230963908"] = true, ["113691709436161"] = true, ["117070354890871"] = true,
-	["88848807662765"] = true,
+
+-- ============================================================
+-- DAFTAR ID ANIMASI SERANGAN  (28 slot, isi sendiri)
+-- Format : { "ID", "Nama Killer" },
+-- Contoh : { "129895082621579", "Jason" },
+-- Matikan sementara (buat tes) : { "129895082621579", "Jason", false },
+-- Slot dengan ID "" diabaikan. Nama cuma label, tidak mempengaruhi deteksi.
+-- ============================================================
+local AP_LIST = {
+	{ "129626174716003", "Lungehold Jason" },
+	{ "113691709436161", "Attack Jason" },
+	{ "93902163029544", "Lungehold Jeff" },
+	{ "75618342544502", "Attack Jeff" },
+	{ "104540716539347", "FrenzHold Jeff" },
+	{ "79310600168078", "FrenzyAttack Jeff" },
+	{ "113255068724446", "Lungehold Hidden" },
+	{ "74968262036854", "Attack Hidden" },
+	{ "98163597193511", "Menusuk Hidden" },
+	{ "125430111937587", "Lungehold Abys" },
+	{ "101636125032002", "Attack Abys" },
+	{ "117042998468241", "Lungehold Myers" },
+	{ "133963973694098", "Attack Myers" },
+	{ "84926129581106", "Lungehold Veil" },
+	{ "81963230963908", "Attack Veil" },
+	{ "105374834496520", "Lungehold Masked" },
+	{ "111920872708571", "Attack Masked" },
+	{ "117070354890871", "Lungehold Gergaji Masked" },
+	{ "106871536134254", "Attack Gergajj Masked" },
+	{ "138720291317243", "Attack Harimau Masked" },
+	{ "115244153053858", "Lungehold Ular Masked" },
+	{ "130593238885843", "Attack Ular Masked" },
+	{ "135002183282873", "Lungehold Cure" },
+	{ "121216847022485", "Attack Cure" },
+	{ "127417297154354", "Lungehold Butcher" },
+	{ "83333467665074", "Attack Butcher" },
 }
-local AP_SPECIAL_ID = "114699370608778"
-local AP_SPECIAL_RANGE = 16
+
+-- range khusus per ID (ID yang tidak ada di sini pakai Radius dari stepper)
+-- aturan ini baru aktif kalau ID-nya kamu isi di AP_LIST
+local AP_RANGE_BY_ID = {
+	["98163597193511"] = 16, -- range special
+}
+local AP_DEBUG = false -- true = print ID + nama yang memicu parry
+
+-- bangun tabel lookup dari AP_LIST (hanya ID angka yang valid dan tidak dimatikan)
+local AP_IDS = {}
+local AP_NAMES = {}
+for _, e in ipairs(AP_LIST) do
+	local id = type(e[1]) == "string" and string.match(e[1], "^%s*(%d+)%s*$") or nil
+	if id and e[3] ~= false then
+		AP_IDS[id] = true
+		AP_NAMES[id] = tostring(e[2] or "")
+	end
+end
+
+local function AP_MaxRange()
+	local m = AP.Cfg.Radius
+	for _, r in pairs(AP_RANGE_BY_ID) do
+		if r > m then m = r end
+	end
+	return m
+end
+
+-- ambil ID dari AnimationId secara ketat: harus tepat satu rangkaian angka
+local AP_IdCache = setmetatable({}, { __mode = "k" })
+local function AP_GetId(t)
+	local cached = AP_IdCache[t]
+	if cached ~= nil then return cached or nil end
+	local id = nil
+	local an = t.Animation
+	local aid = an and an.AnimationId
+	if type(aid) == "string" and aid ~= "" then
+		local first, count = nil, 0
+		for n in string.gmatch(aid, "%d+") do
+			count = count + 1
+			if count == 1 then first = n end
+		end
+		if count == 1 then id = first end
+	end
+	AP_IdCache[t] = id or false
+	return id
+end
 
 local function AP_GetRemote()
 	local r = AP.Cache.Remote
@@ -1896,16 +1955,19 @@ end
 local function AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
 	if AP.Fired[t] then return end
 	if not AP.Cfg.AutoParry then return end
-	local aid = t.Animation and t.Animation.AnimationId or ""
-	local id = aid:match("%d+")
-	if not AP_IDS[id] then return end
-	local range = (id == AP_SPECIAL_ID) and AP_SPECIAL_RANGE or AP.Cfg.Radius
+	local id = AP_GetId(t)
+	if not id or AP_IDS[id] ~= true then return end
+	local range = AP_RANGE_BY_ID[id] or AP.Cfg.Radius
 	if (myHRP.Position - kHRP.Position).Magnitude > range then return end
 	if not AP_IsSafeToParry(myChar) then return end
 	if not AP_IsFacingMe(kHRP, myHRP) then return end
 	if AP_IsBlocked(kChar, myChar, kHRP, myHRP) then return end
 	AP.Fired[t] = true
 	AP_HookTrack(t)
+	if AP_DEBUG then
+		print(string.format("[AutoParry] %s | id=%s | nama=%s | pos=%.2f len=%.2f looped=%s",
+			kChar.Name, id, AP_NAMES[id] or "", t.TimePosition, t.Length, tostring(t.Looped)))
+	end
 	AP_ExecuteParry()
 end
 
@@ -1957,7 +2019,7 @@ track(RunService.RenderStepped:Connect(function()
 	local myChar = Players.LocalPlayer.Character
 	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if not myHRP then return end
-	local maxRange = math.max(AP.Cfg.Radius, AP_SPECIAL_RANGE)
+	local maxRange = AP_MaxRange()
 	for kChar, anim in pairs(AP.Tracked) do
 		if not kChar.Parent or not anim.Parent then
 			AP.Tracked[kChar] = nil
