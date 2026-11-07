@@ -1029,7 +1029,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Auto Dodge Crouch", "Boost Generator", "Auto Skill Check Trap" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Auto Dodge Crouch", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -3250,6 +3250,7 @@ end
 	end)
 AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
 AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
+end)
 
 -- ===== END BAGIAN 2/3 =====
 -- BAGIAN 3/3 dimulai dari: RunTab("Killer", ...) s/d akhir script
