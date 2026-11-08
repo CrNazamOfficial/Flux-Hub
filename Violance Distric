@@ -1735,7 +1735,7 @@ local AP = {
 		AutoParry = false,
 		Circle = true,
 		Radius = 12,
-		FacingHalfAngle = 60,
+		FacingHalfAngle = 100,
 		FacingLateral = 6,
 		BlockNeedsAll = false,
 		ParrySafety = true,
@@ -1906,11 +1906,10 @@ local function AP_IsFacingMe(kHRP, myHRP)
 	local flatLook = Vector3.new(look.X, 0, look.Z)
 	if flatLook.Magnitude < 0.001 then return true end
 	flatLook = flatLook.Unit
-	local dot = flatLook:Dot(flatTo.Unit)
-	if dot <= 0 then return false end
-	if math.deg(math.acos(math.clamp(dot, -1, 1))) <= AP.Cfg.FacingHalfAngle then return true end
-	local lateral = (flatTo - flatLook * flatTo:Dot(flatLook)).Magnitude
-	return lateral <= AP.Cfg.FacingLateral
+	flatTo = flatTo.Unit
+	local dot = math.clamp(flatLook:Dot(flatTo), -1, 1)
+	local angle = math.deg(math.acos(dot))
+	return angle <= AP.Cfg.FacingHalfAngle
 end
 
 local AP_BlockParams = RaycastParams.new()
@@ -3870,11 +3869,6 @@ do
 	end)
 end
 
--- ============================================================
--- 1. SILENT AIM VEIL — HALLOWEEN 🎃
--- v2: prediction diperbaiki (dt-smoothing, braking, assembly blend, airborne, wall clip, ping EMA).
--- UI row/label/urutan kontrol sama persis seperti sebelumnya (kompatibel save config + panel).
--- ============================================================
 do
 	local Env = (getgenv and getgenv()) or _G
 
@@ -3943,6 +3937,7 @@ do
 		IsKiller = false,
 		MyRoot = nil,
 		Ping = 0,
+		InFov = {},
 	}
 
 	local Reg = Env.__VDHookReg
@@ -4256,6 +4251,7 @@ do
 				end
 			end
 		end
+		Aim.InFov = list
 		if best and Aim.PrevRoot and best.root ~= Aim.PrevRoot then
 			for _, e in ipairs(list) do
 				if e.root == Aim.PrevRoot and (e.score - best.score) < Config.Hysteresis then
@@ -4299,6 +4295,10 @@ do
 			s = LastPower
 		end
 		return math.clamp(s, 1, maxSpeed())
+	end
+
+	local function isChargingThrow()
+		return LastPower ~= nil and (os.clock() - LastPowerAt) <= 0.15
 	end
 
 	local function clipToWorld(from, to)
@@ -4704,7 +4704,7 @@ do
 		end)
 	end))
 
-	Env.VDSilent = { Unload = unload, State = State, Config = Config }
+	Env.VDSilent = { Unload = unload, State = State, Config = Config, Aim = Aim, IsCharging = isChargingThrow }
 
 	--------------------------------------------------
 	-- UI: ROW FLUX HUB
