@@ -1029,7 +1029,7 @@ local function Row(pageObj, text)
 	return self
 end
 
-local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Auto Dodge Crouch", "Auto Skill Check Trap" }
+local PANEL_FEATURES = { "Silent Aim Veil", "Aim Butcher", "Aim Lock Hidden", "Auto Parry", "Infinite Lunge", "Self Heal", "God Mode", "Auto Dodge Crouch", "Auto Skill Check Trap" }
 
 local function BuildFeature(Add, name, cfg)
 	local row = Add(name)
@@ -4739,6 +4739,141 @@ do
 				if st then st.Color = c end
 			end)
 		end
+	end)
+end
+
+-- ============================================================
+-- AIM LOCK HIDDEN
+-- ============================================================
+do
+	local ALH = {
+		Enabled = false,
+		isAimLocking = false,
+		currentTarget = nil,
+		lockTimerThread = nil,
+		lastTrigger = 0,
+		RenderConn = nil,
+		InputConn = nil,
+		MobileLoop = nil,
+		MobileBtnConn = nil,
+		LockDuration = 2,
+		TriggerCooldown = 0.2,
+		Smoothness = 0.5,
+	}
+
+	local function ALH_IsKiller()
+		return Players.LocalPlayer.Team and Players.LocalPlayer.Team.Name == "Killer"
+	end
+
+	local function ALH_IsBlocked(character)
+		if not character then return true end
+		if character:GetAttribute("Knocked") then return true end
+		if character:GetAttribute("IsHooked") then return true end
+		if character:GetAttribute("IsCarried") then return true end
+		if character:GetAttribute("IsDead") then return true end
+		return false
+	end
+
+	local function ALH_FindNearest()
+		local myChar = Players.LocalPlayer.Character
+		local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+		if not myRoot then return nil end
+		local best, bestDist = nil, math.huge
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player ~= Players.LocalPlayer and player.Character then
+				local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+				local hum = player.Character:FindFirstChildOfClass("Humanoid")
+				if hrp and hum and hum.Health > 0 and not ALH_IsBlocked(player.Character) then
+					local dist = (hrp.Position - myRoot.Position).Magnitude
+					if dist < bestDist then
+						best, bestDist = player.Character, dist
+					end
+				end
+			end
+		end
+		return best
+	end
+
+	local function ALH_TriggerLock()
+		if not ALH.Enabled then return end
+		if not ALH_IsKiller() then return end
+		if ALH.isAimLocking then return end
+		if tick() - ALH.lastTrigger < ALH.TriggerCooldown then return end
+		ALH.lastTrigger = tick()
+		local target = ALH_FindNearest()
+		if target and target:FindFirstChild("HumanoidRootPart") then
+			ALH.currentTarget = target
+			ALH.isAimLocking = true
+			if ALH.lockTimerThread then task.cancel(ALH.lockTimerThread) end
+			ALH.lockTimerThread = task.delay(ALH.LockDuration, function()
+				ALH.isAimLocking = false
+				ALH.currentTarget = nil
+				ALH.lockTimerThread = nil
+			end)
+		end
+	end
+
+	local function ALH_Enable()
+		if ALH.Enabled then return end
+		ALH.Enabled = true
+		ALH.RenderConn = RunService.RenderStepped:Connect(function()
+			if not ALH.Enabled then return end
+			if ALH.isAimLocking and ALH.currentTarget and ALH.currentTarget:FindFirstChild("HumanoidRootPart") then
+				local cam = workspace.CurrentCamera
+				cam.CFrame = cam.CFrame:Lerp(
+					CFrame.lookAt(cam.CFrame.Position, ALH.currentTarget.HumanoidRootPart.Position),
+					ALH.Smoothness
+				)
+			else
+				ALH.isAimLocking = false
+			end
+		end)
+		ALH.InputConn = UserInputService.InputBegan:Connect(function(input, gp)
+			if gp then return end
+			if input.UserInputType == Enum.UserInputType.MouseButton2 then
+				ALH_TriggerLock()
+			end
+		end)
+		ALH.MobileLoop = task.spawn(function()
+			local lastBtn = nil
+			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+			while ALH.Enabled do
+				task.wait(2)
+				pcall(function()
+					if not playerGui then return end
+					local hiddenMob = playerGui:FindFirstChild("Hidden-mob")
+					local move2 = hiddenMob
+						and hiddenMob:FindFirstChild("Controls")
+						and hiddenMob.Controls:FindFirstChild("move2")
+					if move2 and move2 ~= lastBtn then
+						if ALH.MobileBtnConn then ALH.MobileBtnConn:Disconnect() end
+						lastBtn = move2
+						ALH.MobileBtnConn = move2.InputBegan:Connect(function(input)
+							if input.UserInputType == Enum.UserInputType.Touch
+								or input.UserInputType == Enum.UserInputType.MouseButton1 then
+								ALH_TriggerLock()
+							end
+						end)
+					end
+				end)
+			end
+		end)
+	end
+
+	local function ALH_Disable()
+		ALH.Enabled = false
+		ALH.isAimLocking = false
+		ALH.currentTarget = nil
+		if ALH.RenderConn then ALH.RenderConn:Disconnect(); ALH.RenderConn = nil end
+		if ALH.InputConn then ALH.InputConn:Disconnect(); ALH.InputConn = nil end
+		if ALH.MobileBtnConn then ALH.MobileBtnConn:Disconnect(); ALH.MobileBtnConn = nil end
+		if ALH.MobileLoop then task.cancel(ALH.MobileLoop); ALH.MobileLoop = nil end
+		if ALH.lockTimerThread then task.cancel(ALH.lockTimerThread); ALH.lockTimerThread = nil end
+	end
+
+	local ALH_Row = Add("Aim Lock Hidden")
+	ALH_Row:Toggle(false, function(state)
+		if state then ALH_Enable() else ALH_Disable() end
 	end)
 end
 
