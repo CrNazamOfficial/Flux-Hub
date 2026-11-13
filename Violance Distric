@@ -1405,7 +1405,7 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	NF_Row:Toggle(false, function(state) NF_Enabled = state end)
 
 -- ============================================================
--- 11. AUTO SKILL CHECK TRAP (logic asli)
+-- 11. AUTO SKILL CHECK TRAP (dengan AUTO-SWITCH ke AG)
 -- ============================================================
 local AST = {
 	Enabled = false, Mode = "INSTANT", Alive = true,
@@ -1452,6 +1452,17 @@ local function AST_IsTrapped()
 	end)
 	return r
 end
+-- ===== AUTO-SWITCH: cek apakah ini skill check generator (Goal) =====
+local function AST_IsGeneratorCheck()
+	local result = false
+	pcall(function()
+		if not AST.Check or not AST.Check.Parent then return end
+		local g = AST.Check:FindFirstChild("Goal")
+		if g and g.Visible == true then result = true end
+	end)
+	return result
+end
+-- ====================================================================
 local function AST_GetGoal()
 	if not AST.Check or not AST.Check.Parent or not AST.Line or not AST.Line.Parent then return nil end
 	local ok, rotation = pcall(function()
@@ -1491,6 +1502,14 @@ end
 local function AST_Step()
 	local now = os.clock()
 	if (not AST.Check or not AST.Check.Parent or not AST.Line or not AST.Line.Parent) and now - AST.LastRefresh > 0.25 then AST_Refresh() end
+
+	-- ===== AUTO-SWITCH GATE =====
+	if AST_IsGeneratorCheck() then
+		AST.PrevDiff = nil
+		return
+	end
+	-- ============================
+
 	local goal = nil
 	if AST_IsTrapped() then goal = AST_GetGoal() end
 	if not AST.Enabled or not goal then AST.PrevDiff = nil; return end
@@ -3250,13 +3269,33 @@ end
 		end)
 	end
 	local function AG_MainLoop()
-		local conn
-		conn = RunService.RenderStepped:Connect(function()
-			local now = os.clock()
-			if not AG_Check or not AG_Check.Parent then AG_Refresh() end
-			local vis = AG_Check ~= nil and AG_Check.Parent ~= nil and AG_Check.Visible == true
-			if vis then AG.LastVisible = now
-			elseif AG.ScourgeActive and now - AG.LastVisible > AG_SCOURGE_TIMEOUT then AG.ScourgeActive = false; AG.Busy = false end
+	local conn
+	conn = RunService.RenderStepped:Connect(function()
+		local now = os.clock()
+		if not AG_Check or not AG_Check.Parent then AG_Refresh() end
+		local vis = AG_Check ~= nil and AG_Check.Parent ~= nil and AG_Check.Visible == true
+
+		-- ===== AUTO-SWITCH GATE =====
+		-- kalau TrapGoal / TrapPerfect yang visible → ini skill check trap, AST yang handle
+		local isTrapCheck = false
+		pcall(function()
+			if AG_Check and AG_Check.Parent then
+				local tp = AG_Check:FindFirstChild("TrapPerfect")
+				local tg = AG_Check:FindFirstChild("TrapGoal")
+				if (tp and tp.Visible == true) or (tg and tg.Visible == true) then
+					isTrapCheck = true
+				end
+			end
+		end)
+		if isTrapCheck then
+			AG.Busy = false
+			AG.PreviousVisible = vis
+			return
+		end
+		-- ============================
+
+		if vis then AG.LastVisible = now
+		elseif AG.ScourgeActive and now - AG.LastVisible > AG_SCOURGE_TIMEOUT then AG.ScourgeActive = false; AG.Busy = false end
 			if not AG.Enabled then AG.PreviousVisible = false; return end
 			local wasVis = AG.PreviousVisible
 			AG.PreviousVisible = vis
