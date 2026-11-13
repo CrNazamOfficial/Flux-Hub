@@ -4946,148 +4946,6 @@ do
 end
 
 	-- ============================================================
-	-- 3. MASKED [ BETA ] (logic asli)
-	-- ============================================================
-	local MK = { Index = 1, Masks = { "Alex", "Brandon", "Cobra", "Rabbit", "Richter", "Tony" } }
-	local function MK_GetRemote(name)
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		local k = r and r:FindFirstChild("Killers")
-		local m = k and k:FindFirstChild("Masked")
-		return m and m:FindFirstChild(name)
-	end
-	local MK_Row = Add("Masked [ BETA ]")
-	MK_Row:Dropdown({ "Tony", "Alex", "Brandon", "Rabbit", "Cobra", "Richter" }, "Tony", function(v)
-		for i, n in ipairs(MK.Masks) do if n == v then MK.Index = i; break end end
-	end)
-	MK_Row:Button({ "Active", "Deactivate" }, function(label, number)
-		if number == 1 then
-			local ev = MK_GetRemote("Activatepower")
-			if ev then ev:FireServer(MK.Masks[MK.Index]) end
-		else
-			local ev = MK_GetRemote("Deactivatepower")
-			if ev then ev:FireServer() end
-		end
-	end)
-
-	-- ============================================================
-	-- 4. INFINITE LUNGE (logic asli, hook global)
-	-- ============================================================
-	local IL = { Enabled = false, FrenzyToken = 0, PursuitToken = 0, Flags = { Frenzy = false, Pursuit = false }, Conns = {}, Hooked = false }
-	local IL_genv = (getgenv and getgenv()) or _G
-	IL_genv.VD_INF_FLAGS = IL.Flags
-	local function IL_InstallHook()
-		if IL.Hooked then return true end
-		local r = ReplicatedStorage:FindFirstChild("Remotes")
-		local k = r and r:FindFirstChild("Killers")
-		if not k then return false end
-		local function makeHandler()
-			return function(args, self)
-				local name = self.Name
-				if IL.Flags.Frenzy and (name == "Deactivatefromclient" or name == "PowerDoneDeactivating") then return false end
-				if IL.Flags.Pursuit and name == "Pursuit" and args[1] == false then return false end
-				return args
-			end
-		end
-		local killer = k:FindFirstChild("Killer")
-		local jason = k:FindFirstChild("Jason")
-		if killer then
-			local d = killer:FindFirstChild("Deactivatefromclient")
-			local p = killer:FindFirstChild("PowerDoneDeactivating")
-			if d then RegisterHookHandler(d, makeHandler()) end
-			if p then RegisterHookHandler(p, makeHandler()) end
-		end
-		if jason then
-			local pursuit = jason:FindFirstChild("Pursuit")
-			if pursuit then RegisterHookHandler(pursuit, makeHandler()) end
-		end
-		EnsureNamecallHook()
-		IL.Hooked = true
-		return true
-	end
-	local function IL_EnableLunge()
-		local c = Players.LocalPlayer.Character
-		if c then c:SetAttribute("lungeboost", 999) end
-	end
-	local function IL_DisableLunge()
-		local c = Players.LocalPlayer.Character
-		if c then c:SetAttribute("lungeboost", 1) end
-	end
-	local function IL_StartFrenzy()
-		IL.FrenzyToken = IL.FrenzyToken + 1
-		local my = IL.FrenzyToken
-		task.spawn(function()
-			while IL.Enabled and IL.Flags.Frenzy and my == IL.FrenzyToken do
-				pcall(function()
-					local c = Players.LocalPlayer.Character
-					if c and c:GetAttribute("Frenzy") ~= true then c:SetAttribute("Frenzy", true) end
-				end)
-				task.wait(0.1)
-			end
-		end)
-	end
-	local function IL_StopFrenzy()
-		IL.FrenzyToken = IL.FrenzyToken + 1
-		pcall(function()
-			local c = Players.LocalPlayer.Character
-			if c and c:GetAttribute("Frenzy") == true then
-				c:SetAttribute("Frenzy", false)
-				local r = ReplicatedStorage:FindFirstChild("Remotes")
-				local k = r and r:FindFirstChild("Killers")
-				local kk = k and k:FindFirstChild("Killer")
-				local d = kk and kk:FindFirstChild("Deactivatefromclient")
-				if d then d:FireServer() end
-			end
-		end)
-	end
-	local function IL_StartPursuit()
-		IL.PursuitToken = IL.PursuitToken + 1
-		local my = IL.PursuitToken
-		task.spawn(function()
-			while IL.Enabled and IL.Flags.Pursuit and my == IL.PursuitToken do
-				pcall(function()
-					local c = Players.LocalPlayer.Character
-					if c and c:GetAttribute("Pursuit") ~= true then c:SetAttribute("Pursuit", true) end
-				end)
-				task.wait(0.1)
-			end
-		end)
-	end
-	local function IL_StopPursuit()
-		IL.PursuitToken = IL.PursuitToken + 1
-		pcall(function()
-			local c = Players.LocalPlayer.Character
-			if c and c:GetAttribute("Pursuit") == true then
-				c:SetAttribute("Pursuit", false)
-				local r = ReplicatedStorage:FindFirstChild("Remotes")
-				local k = r and r:FindFirstChild("Killers")
-				local j = k and k:FindFirstChild("Jason")
-				local d = j and j:FindFirstChild("Deactivatefromclient")
-				if d then d:FireServer() end
-			end
-		end)
-	end
-	local IL_Row = Add("Infinite Lunge")
-	local IL_Toggle = IL_Row:Toggle(false, function(state)
-		IL.Enabled = state
-		if state then
-			IL_InstallHook()
-			IL_EnableLunge()
-			IL.Flags.Frenzy = true; IL_StartFrenzy()
-			IL.Flags.Pursuit = true; IL_StartPursuit()
-			table.insert(IL.Conns, Players.LocalPlayer.CharacterAdded:Connect(function(nc)
-				task.wait(0.8)
-				if IL.Enabled and nc then nc:SetAttribute("lungeboost", 999) end
-			end))
-		else
-			IL_DisableLunge()
-			IL.Flags.Frenzy = false; IL_StopFrenzy()
-			IL.Flags.Pursuit = false; IL_StopPursuit()
-			for _, c in ipairs(IL.Conns) do pcall(function() c:Disconnect() end) end
-			IL.Conns = {}
-		end
-	end)
-
-	-- ============================================================
 	-- 5. ANTI BLIND (logic asli)
 	-- ============================================================
 	local AB = { Enabled = false, Thread = nil }
@@ -5121,7 +4979,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		Enabled = false, Conns = {}, KillerCache = setmetatable({}, { __mode = "k" }),
 		FovObjs = {}, FovScanT = 0, RayFilterT = 0, Color = Color3.fromRGB(255, 255, 255),
 	}
-	local FK_CFG = { RADIUS = 14.5, ANGLE = 90, ARC_SEGMENTS = 16, EFFECT_SEGMENTS = 36, THICKNESS = 0.12, TRANSPARENCY = 0.15, GROUND_OFFSET = 0.12, STEP_HEIGHT = 1, MAX_DEVIATION = 2, MAX_DISTANCE = 100 }
+	local FK_CFG = { RADIUS = 6.8, ANGLE = 90, ARC_SEGMENTS = 16, EFFECT_SEGMENTS = 36, THICKNESS = 0.12, TRANSPARENCY = 0.15, GROUND_OFFSET = 0.12, STEP_HEIGHT = 1, MAX_DEVIATION = 2, MAX_DISTANCE = 100 }
 	local FK_RayParams = RaycastParams.new()
 	FK_RayParams.FilterType = Enum.RaycastFilterType.Exclude
 	FK_RayParams.RespectCanCollide = true
@@ -5263,140 +5121,189 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		for _, o in pairs(FK.FovObjs) do for _, b in ipairs(o.boxes) do pcall(function() b.Color3 = c end) end end
 	end)
 
-	-- ============================================================
-	-- 3. HIDE PROFILE  (v2 ringan: event + scan berkala, tanpa RenderStepped)
-	-- ============================================================
-	do
-		local HP = { Enabled = false, Token = 0, Conns = {}, Ignore = {}, Names = {} }
-		local HP_Images = { "rbxassetid://87618578646330", "rbxassetid://87618578646330" }
-		local HP_Name = "FLUX HUB"
-		local HP_Applying = setmetatable({}, { __mode = "k" })
-		local HP_Checked = setmetatable({}, { __mode = "k" })
+-- ============================================================
+-- HIDE PROFIL v3 — EVENT-DRIVEN (RINGAN, NO POLLING)
+-- Ganti blok Hide Profil lama di Flux Hub
+-- ============================================================
+do
+	local HP = {
+		Enabled = false,
+		Token = 0,
+		Conns = {},
+		Names = {},
+		Handled = setmetatable({}, { __mode = "k" }), -- object yang udah diproses
+	}
+	local HP_Images = { "rbxassetid://87618578646330", "rbxassetid://87618578646330" }
+	local HP_Name = "FLUX HUB"
+	local HP_Applying = setmetatable({}, { __mode = "k" })
 
-		local function HP_IsOurs(img) for _, u in ipairs(HP_Images) do if img == u then return true end end; return false end
-		local function HP_ApplyImg(v)
-			if HP_Applying[v] or HP_IsOurs(v.Image) then return end
-			HP_Applying[v] = true
-			task.spawn(function()
-				for i = 1, #HP_Images do
-					v.Image = HP_Images[i]
-					local t = 0
-					repeat task.wait(0.1); t += 0.1 until v.IsLoaded or t >= 2
-					if v.IsLoaded then break end
-				end
-				HP_Applying[v] = nil
-			end)
-		end
-		local function HP_LooksAvatar(img)
-			local s = string.lower(img)
-			return string.find(s, "rbxthumb", 1, true) or string.find(s, "headshot", 1, true) or string.find(s, "avatar", 1, true) or string.find(s, "userid=", 1, true) or string.find(s, "thumbnail", 1, true)
-		end
-		local function HP_Obliterate(obj)
-			if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-				if obj.Visible == false and obj.Text == "" then return end
-				obj.Text = ""; obj.TextTransparency = 1; obj.BackgroundTransparency = 1
-				obj.TextStrokeTransparency = 1; obj.Visible = false; obj.Size = UDim2.new(0, 0, 0, 0)
-			end
-		end
-		local function HP_Esc(s) return (string.gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0")) end
-		local function HP_GetNames()
-			local n = {}
-			for _, p in ipairs(Players:GetPlayers()) do n[p.Name] = true; n[p.DisplayName] = true end
-			HP_Checked = setmetatable({}, { __mode = "k" })
-			return n
-		end
-		local function HP_Process(v, names)
-			if v:IsA("TextLabel") or v:IsA("TextButton") then
-				local t = v.Text
-				if t == "" or t == HP_Name or HP_Checked[v] == t then return end
-				if names[t] then
-					v.Text = HP_Name
-				else
-					local nt = t
-					for name in pairs(names) do
-						if name ~= "" and string.find(nt, name, 1, true) then nt = string.gsub(nt, HP_Esc(name), HP_Name) end
-					end
-					if nt ~= t then v.Text = nt end
-				end
-				HP_Checked[v] = v.Text
-			elseif v:IsA("ImageLabel") or v:IsA("ImageButton") then
-				local img = v.Image or ""
-				if img ~= "" and not HP_IsOurs(img) and HP_LooksAvatar(img) then HP_ApplyImg(v) end
-			end
-		end
-		local function HP_Walk(inst, names)
-			if HP.Ignore[inst] then return end
-			if string.sub(inst.Name, 1, 5) == "FLUX_" then return end
-			HP_Process(inst, names)
-			for _, c in ipairs(inst:GetChildren()) do HP_Walk(c, names) end
-		end
-		local function HP_ProcessGui(root)
-			if not root then return end
-			local names = HP.Names
-			for _, top in ipairs(root:GetChildren()) do HP_Walk(top, names) end
-		end
-		local function HP_Protect(char)
-			if not char then return end
-			for _, o in ipairs(char:GetDescendants()) do HP_Obliterate(o) end
-			table.insert(HP.Conns, char.DescendantAdded:Connect(function(o)
-				task.defer(function() if HP.Enabled then pcall(HP_Obliterate, o) end end)
-			end))
-		end
-		local function HP_WatchPlayer(p)
-			if p.Character then HP_Protect(p.Character) end
-			table.insert(HP.Conns, p.CharacterAdded:Connect(function(c) HP_Protect(c) end))
-		end
-		local function HP_ScanChars()
-			for _, p in ipairs(Players:GetPlayers()) do
-				local c = p.Character
-				if c then
-					for _, o in ipairs(c:GetDescendants()) do
-						if o:IsA("TextLabel") or o:IsA("TextButton") then HP_Obliterate(o) end
-					end
-				end
-			end
-		end
-		local function HP_Loop(my)
-			local tPG, tCh, tCore = 0, 0, 0
-			while HP.Enabled and HP.Token == my and gui.Parent do
-				local now = os.clock()
-				pcall(function()
-					local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-					if pg and now - tPG >= 1 then tPG = now; HP_ProcessGui(pg) end
-					if now - tCh >= 1.5 then tCh = now; HP_ScanChars() end
-					if now - tCore >= 3 then tCore = now; pcall(function() HP_ProcessGui(game:GetService("CoreGui")) end) end
-				end)
-				task.wait(0.5)
-			end
-		end
-
-		local HP_Row = Add("Hide Profil")
-		HP_Row:Toggle(false, function(state)
-			HP.Enabled = state
-			HP.Token = HP.Token + 1
-			for _, c in ipairs(HP.Conns) do pcall(function() c:Disconnect() end) end
-			HP.Conns = {}
-			if not state then return end
-			HP.Names = HP_GetNames()
-			local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-			if pg then
-				table.insert(HP.Conns, pg.DescendantAdded:Connect(function(o)
-					task.defer(function()
-						if HP.Enabled and o.Parent and not o:IsDescendantOf(gui) then pcall(HP_Process, o, HP.Names) end
-					end)
-				end))
-			end
-			for _, p in ipairs(Players:GetPlayers()) do HP_WatchPlayer(p) end
-			table.insert(HP.Conns, Players.PlayerAdded:Connect(function(p)
-				HP.Names = HP_GetNames()
-				HP_WatchPlayer(p)
-			end))
-			table.insert(HP.Conns, Players.PlayerRemoving:Connect(function()
-				task.defer(function() HP.Names = HP_GetNames() end)
-			end))
-			task.spawn(HP_Loop, HP.Token)
-		end)
+	-- ===== HELPERS (dioptimasi) =====
+	local function HP_IsOurs(img)
+		for i = 1, #HP_Images do if img == HP_Images[i] then return true end end
+		return false
 	end
+
+	local function HP_LooksAvatar(img)
+		-- cek cepat tanpa gsub, cuma find
+		if img == "" then return false end
+		if string.find(img, "rbxthumb", 1, true) then return true end
+		if string.find(img, "headshot", 1, true) then return true end
+		if string.find(img, "avatar", 1, true) then return true end
+		if string.find(img, "thumbnail", 1, true) then return true end
+		if string.find(img, "userid=", 1, true) then return true end
+		return false
+	end
+
+	local function HP_ApplyImg(v)
+		if HP_Applying[v] then return end
+		if HP_IsOurs(v.Image) then return end
+		HP_Applying[v] = true
+		-- ganti langsung tanpa preload (biar nggak spawn task)
+		v.Image = HP_Images[1]
+	end
+
+	local function HP_Esc(s)
+		return (string.gsub(s, "[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+	end
+
+	local function HP_ReplaceText(t)
+		-- kalau persis nama player → langsung ganti
+		if HP.Names[t] then return HP_Name end
+		-- kalau mengandung nama player → gsub
+		local nt = t
+		for name in pairs(HP.Names) do
+			if name ~= "" and string.find(nt, name, 1, true) then
+				nt = string.gsub(nt, HP_Esc(name), HP_Name)
+			end
+		end
+		return nt
+	end
+
+	local function HP_Process(v)
+		if HP.Handled[v] then return end
+		if v:IsA("TextLabel") or v:IsA("TextButton") then
+			local t = v.Text
+			if t == "" or t == HP_Name then
+				HP.Handled[v] = true
+				return
+			end
+			-- cek cepat: apakah ada nama player di text?
+			local has = false
+			for name in pairs(HP.Names) do
+				if name ~= "" and string.find(t, name, 1, true) then has = true; break end
+			end
+			if not has then return end -- bukan text player, abaikan
+			v.Text = HP_ReplaceText(t)
+			HP.Handled[v] = true
+			-- pantau perubahan text selanjutnya
+			table.insert(HP.Conns, v:GetPropertyChangedSignal("Text"):Connect(function()
+				if not HP.Enabled then return end
+				local new = v.Text
+				if new == "" or new == HP_Name then return end
+				local has2 = false
+				for name in pairs(HP.Names) do
+					if name ~= "" and string.find(new, name, 1, true) then has2 = true; break end
+				end
+				if has2 then v.Text = HP_ReplaceText(new) end
+			end))
+		elseif v:IsA("ImageLabel") or v:IsA("ImageButton") then
+			local img = v.Image or ""
+			if img == "" or HP_IsOurs(img) or not HP_LooksAvatar(img) then return end
+			HP_ApplyImg(v)
+			HP.Handled[v] = true
+			-- pantau perubahan image selanjutnya
+			table.insert(HP.Conns, v:GetPropertyChangedSignal("Image"):Connect(function()
+				if not HP.Enabled then return end
+				local new = v.Image or ""
+				if new ~= "" and not HP_IsOurs(new) and HP_LooksAvatar(new) then
+					HP_ApplyImg(v)
+				end
+			end))
+		end
+	end
+
+	-- proses existing children dulu, lalu pasang listener DescendantAdded
+	local function HP_BindGui(root)
+		if not root then return end
+		-- proses yang udah ada (sekali saja, di awal enable)
+		for _, d in ipairs(root:GetDescendants()) do
+			pcall(HP_Process, d)
+		end
+		-- dengerin yang baru
+		table.insert(HP.Conns, root.DescendantAdded:Connect(function(d)
+			if not HP.Enabled then return end
+			pcall(HP_Process, d)
+		end))
+	end
+
+	-- protect karakter: sembunyikan text di atas kepala player
+	local function HP_Obliterate(obj)
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+			if obj.Text ~= "" then
+				obj.Text = ""
+				obj.TextTransparency = 1
+				obj.TextStrokeTransparency = 1
+				obj.Visible = false
+			end
+		end
+	end
+
+	local function HP_ProtectChar(char)
+		if not char or not char.Parent then return end
+		for _, o in ipairs(char:GetDescendants()) do
+			if o:IsA("TextLabel") or o:IsA("TextButton") then HP_Obliterate(o) end
+		end
+		table.insert(HP.Conns, char.DescendantAdded:Connect(function(o)
+			if not HP.Enabled then return end
+			if o:IsA("TextLabel") or o:IsA("TextButton") then HP_Obliterate(o) end
+		end))
+	end
+
+	local function HP_RefreshNames()
+		local n = {}
+		for _, p in ipairs(Players:GetPlayers()) do
+			n[p.Name] = true
+			n[p.DisplayName] = true
+		end
+		HP.Names = n
+	end
+
+	local HP_Row = Add("Hide Profil")
+	HP_Row:Toggle(false, function(state)
+		HP.Enabled = state
+		HP.Token = HP.Token + 1
+		for _, c in ipairs(HP.Conns) do pcall(function() c:Disconnect() end) end
+		HP.Conns = {}
+		HP.Handled = setmetatable({}, { __mode = "k" })
+		HP_Applying = setmetatable({}, { __mode = "k" })
+		if not state then return end
+
+		HP_RefreshNames()
+
+		-- bind ke PlayerGui + CoreGui
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		if pg then HP_BindGui(pg) end
+		pcall(function() HP_BindGui(game:GetService("CoreGui")) end)
+
+		-- protect semua karakter (player lain) biar nametag hilang
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= Players.LocalPlayer and p.Character then
+				HP_ProtectChar(p.Character)
+			end
+			table.insert(HP.Conns, p.CharacterAdded:Connect(function(c)
+				if HP.Enabled then HP_ProtectChar(c) end
+			end))
+		end
+
+		-- update nama kalau ada player join/leave
+		table.insert(HP.Conns, Players.PlayerAdded:Connect(function()
+			task.defer(HP_RefreshNames)
+		end))
+		table.insert(HP.Conns, Players.PlayerRemoving:Connect(function()
+			task.defer(HP_RefreshNames)
+		end))
+	end)
+end
 
 -- ============================================================
 -- 4. HOOK ESP  (v3: tetap nyala, tampilan sama, tanpa tambahan fitur)
