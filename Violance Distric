@@ -1803,7 +1803,7 @@ end)
 
 
 -- ============================================================
--- 7. AUTO PARRY (logic baru 100% + fallback parry)
+-- 7. AUTO PARRY (Full Code: Fast-Track Priority & Anti-Layer Conflict)
 -- ============================================================
 local AP = {
 	Cfg = {
@@ -1817,18 +1817,10 @@ local AP = {
 	State = { Cooldown = false, CooldownThread = nil, RingFolder = nil, RingParts = nil, RayParams = nil, RayChar = nil },
 	Attached = {},
 	Tracked = {},
-	Fired = setmetatable({}, { __mode = "k" }),
-	Hooked = setmetatable({}, { __mode = "k" }),
+	LastTrigger = {},
 	Cache = { Remote = nil, Button = nil },
 }
 
--- ============================================================
--- DAFTAR ID ANIMASI SERANGAN  (28 slot, isi sendiri)
--- Format : { "ID", "Nama Killer" },
--- Contoh : { "129895082621579", "Jason" },
--- Matikan sementara (buat tes) : { "129895082621579", "Jason", false },
--- Slot dengan ID "" diabaikan. Nama cuma label, tidak mempengaruhi deteksi.
--- ============================================================
 local AP_LIST = {
 	{ "129626174716003", "Lungehold Jason" },
 	{ "113691709436161", "Attack Jason" },
@@ -1858,14 +1850,17 @@ local AP_LIST = {
 	{ "83333467665074", "Attack Butcher" },
 }
 
--- range khusus per ID (ID yang tidak ada di sini pakai Radius dari stepper)
--- aturan ini baru aktif kalau ID-nya kamu isi di AP_LIST
-local AP_RANGE_BY_ID = {
-	["98163597193511"] = 16, -- range special
+local AP_PRIORITY_IDS = {
+	["98163597193511"] = true, -- Menusuk Hidden
+	["74968262036854"] = true, -- Attack Hidden
+	["113255068724446"] = true, -- Lungehold Hidden
 }
-local AP_DEBUG = false -- true = print ID + nama yang memicu parry
 
--- bangun tabel lookup dari AP_LIST (hanya ID angka yang valid dan tidak dimatikan)
+local AP_RANGE_BY_ID = {
+	["98163597193511"] = 16,
+}
+local AP_DEBUG = false
+
 local AP_IDS = {}
 local AP_NAMES = {}
 for _, e in ipairs(AP_LIST) do
@@ -1884,7 +1879,6 @@ local function AP_MaxRange()
 	return m
 end
 
--- ambil ID dari AnimationId secara ketat: harus tepat satu rangkaian angka
 local AP_IdCache = setmetatable({}, { __mode = "k" })
 local function AP_GetId(t)
 	local cached = AP_IdCache[t]
@@ -1893,12 +1887,7 @@ local function AP_GetId(t)
 	local an = t.Animation
 	local aid = an and an.AnimationId
 	if type(aid) == "string" and aid ~= "" then
-		local first, count = nil, 0
-		for n in string.gmatch(aid, "%d+") do
-			count = count + 1
-			if count == 1 then first = n end
-		end
-		if count == 1 then id = first end
+		id = string.match(aid, "%d+")
 	end
 	AP_IdCache[t] = id or false
 	return id
@@ -2004,28 +1993,41 @@ local function AP_IsSafeToParry(char)
 	return true
 end
 
-local function AP_HookTrack(t)
-	if AP.Hooked[t] then return end
-	AP.Hooked[t] = true
-	track(t.Stopped:Connect(function() AP.Fired[t] = nil end))
-end
-
 local function AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
-	if AP.Fired[t] then return end
-	if not AP.Cfg.AutoParry then return end
+	if not AP.Cfg.AutoParry then return false end
 	local id = AP_GetId(t)
-	if not id or AP_IDS[id] ~= true then return end
+	if not id or AP_IDS[id] ~= true then return false end
+
+	local now = os.clock()
+	local key = tostring(kChar) .. "_" .. id
+	if AP.LastTrigger[key] and (now - AP.LastTrigger[key]) < 0.25 then
+		return false
+	end
+
 	local range = AP_RANGE_BY_ID[id] or AP.Cfg.Radius
-	if (myHRP.Position - kHRP.Position).Magnitude > range then return end
-	if not AP_IsSafeToParry(myChar) then return end
-	if AP_IsBlocked(kChar, myChar, kHRP, myHRP) then return end
-	AP.Fired[t] = true
-	AP_HookTrack(t)
+	if (myHRP.Position - kHRP.Position).Magnitude > range then return false end
+	if not AP_IsSafeToParry(myChar) then return false end
+	if AP_IsBlocked(kChar, myChar, kHRP, myHRP) then return false end
+
+	AP.LastTrigger[key] = now
 	if AP_DEBUG then
 		print(string.format("[AutoParry] %s | id=%s | nama=%s | pos=%.2f len=%.2f looped=%s",
 			kChar.Name, id, AP_NAMES[id] or "", t.TimePosition, t.Length, tostring(t.Looped)))
 	end
 	AP_ExecuteParry()
+	return true
+end
+
+local function AP_ScanTracks(kChar, tracks, myChar, myHRP, kHRP)
+	for _, t in ipairs(tracks) do
+		local id = AP_GetId(t)
+		if id and AP_PRIORITY_IDS[id] then
+			if AP_TryTrack(kChar, t, myChar, myHRP, kHRP) then return end
+		end
+	end
+	for _, t in ipairs(tracks) do
+		if AP_TryTrack(kChar, t, myChar, myHRP, kHRP) then return end
+	end
 end
 
 local function AP_Attach(kChar)
@@ -2036,6 +2038,7 @@ local function AP_Attach(kChar)
 	local anim = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
 	if not anim then return end
 	AP.Tracked[kChar] = anim
+
 	track(hum.ChildAdded:Connect(function(c)
 		if c:IsA("Animator") then AP.Attached[kChar] = nil; AP.Tracked[kChar] = nil; AP_Attach(kChar) end
 	end))
@@ -2083,9 +2086,7 @@ track(RunService.RenderStepped:Connect(function()
 		else
 			local kHRP = kChar:FindFirstChild("HumanoidRootPart")
 			if kHRP and (myHRP.Position - kHRP.Position).Magnitude <= maxRange then
-				for _, t in ipairs(anim:GetPlayingAnimationTracks()) do
-					AP_TryTrack(kChar, t, myChar, myHRP, kHRP)
-				end
+				AP_ScanTracks(kChar, anim:GetPlayingAnimationTracks(), myChar, myHRP, kHRP)
 			end
 		end
 	end
@@ -2191,6 +2192,7 @@ NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
 		for _, seg in ipairs(AP.State.RingParts) do pcall(function() seg.Color = c end) end
 	end
 end)
+
 
 -- ============================================================
 -- SILENT AIM [ TOF ] — HALLOWEEN 🎃 (UPDATED)
@@ -4900,7 +4902,7 @@ do
 end
 
 -- ============================================================
--- AIM LOCK HIDDEN (Improved: Smooth Tracking, Health/State Check, & Dynamic Switch)
+-- AIM LOCK HIDDEN (Improved: Instant Stop on Hit, No Target Switching, & Movement Prediction)
 -- ============================================================
 do
 	local TargetBlock = {}
@@ -4918,27 +4920,29 @@ do
 		ENABLED = false,
 		ANIM_ID = "98163597193511",
 		AIM_PART = "HumanoidRootPart",
-		AIM_OFFSET = Vector3.new(0, 0.5, 0), -- Sedikit disesuaikan ke atas badan
+		AIM_OFFSET = Vector3.new(0, 0.5, 0),
 		MAX_DISTANCE = 75,
 		MAX_ANGLE = 65,
 		DIST_WEIGHT = 0.2,
-		SMOOTH_SPEED = 8, -- Diperhalus agar tidak terlalu kaku/snap
+		SMOOTH_SPEED = 10,
+		PREDICTION_FACTOR = 0.12, -- Faktor prediksi pergerakan agar tidak meleset
 		LOS_GRACE = 0.15,
 	}
 
-	local BIND_NAME = "FluxHiddenAimLockStep_V2"
+	local BIND_NAME = "FluxHiddenAimLockStep_V3"
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.IgnoreWater = true
 
-	local session = { active = false, target = nil, lost = false, lostTime = 0, lastHealth = nil }
+	local session = { active = false, target = nil, lost = false, lostTime = 0, initialHealth = nil, lockedOnce = false }
 
 	local function resetSession()
 		session.active = false
 		session.target = nil
 		session.lost = false
 		session.lostTime = 0
-		session.lastHealth = nil
+		session.initialHealth = nil
+		session.lockedOnce = false
 	end
 
 	local function isSkillAnimPlaying(char)
@@ -5046,10 +5050,24 @@ do
 		local char = Players.LocalPlayer.Character
 		if not cam or not char then resetSession(); return end
 
-		-- Jika animasi menusuk selesai/tidak dimainkan, matikan sesi aim lock
+		-- Jika animasi menusuk selesai, reset sesi
 		if not isSkillAnimPlaying(char) then
 			if session.active then resetSession() end
 			return
+		end
+
+		-- Jika sudah pernah mengunci target pada sesi ini, DAN targetnya sudah terkena hit/berkurang darahnya, 
+		-- maka kunci dimatikan total dan TIDAK BOLEH mencari target lain (no switch).
+		if session.lockedOnce and session.target then
+			local hum = session.target:FindFirstChildOfClass("Humanoid")
+			if hum and session.initialHealth and hum.Health < session.initialHealth then
+				resetSession()
+				return
+			end
+			if not isValidTarget(session.target) then
+				resetSession()
+				return
+			end
 		end
 
 		if not session.active then
@@ -5057,20 +5075,27 @@ do
 			session.target = nil
 			session.lost = false
 			session.lostTime = 0
-			session.lastHealth = nil
+			session.initialHealth = nil
+			session.lockedOnce = false
 		end
 
 		if session.lost then return end
 
 		local origin = cam.CFrame.Position
 
-		-- Dinamis memilih atau memperbarui target selama proses penusukan
+		-- Hanya mencari target jika belum punya target sama sekali di awal serangan
 		if not session.target or not isValidTarget(session.target) then
+			if session.lockedOnce then
+				-- Jika sudah pernah mengunci target lalu hilang/mati, jangan pindah ke target lain. Matikan saja.
+				resetSession()
+				return
+			end
 			local found = pickTarget(char, cam)
 			if found then
 				session.target = found
+				session.lockedOnce = true
 				local hum = found:FindFirstChildOfClass("Humanoid")
-				session.lastHealth = hum and hum.Health or nil
+				session.initialHealth = hum and hum.Health or nil
 				session.lostTime = 0
 			else
 				return
@@ -5080,19 +5105,16 @@ do
 		local tchar = session.target
 		local hum = tchar:FindFirstChildOfClass("Humanoid")
 
-		-- Cek perubahan status target (terkena hit / berkurang darahnya secara drastis / downed / knocked)
+		-- Pengecekan mutlak status darah target (jika terkena hit oleh kita, langsung matikan aim lock)
 		if hum then
-			if session.lastHealth and hum.Health < session.lastHealth then
-				-- Target baru saja kena hit / kesakitan, matikan aim lock agar pemain punya kontrol kembali
+			if session.initialHealth and hum.Health < session.initialHealth then
 				resetSession()
 				return
 			end
 			if TargetBlock.IsBlocked(tchar) or hum.Health <= 0 then
-				-- Target sudah downed / tumbang / mati
 				resetSession()
 				return
 			end
-			session.lastHealth = hum.Health
 		end
 
 		local part = tchar:FindFirstChild(CONFIG.AIM_PART)
@@ -5108,9 +5130,9 @@ do
 		end
 		session.lostTime = 0
 
-		-- Prediksi posisi target sederhana berdasarkan kecepatan rakitan (AssemblyLinearVelocity) untuk pergerakan mulus
-		local targetVelocity = part.AssemblyLinearVelocity or Vector3.new(0,0,0)
-		local predictedPos = part.Position + (targetVelocity * 0.08) + CONFIG.AIM_OFFSET
+		-- Sistem Prediksi Pergerakan (Menghitung kecepatan objek agar tembakan/tusukan tidak meleset)
+		local targetVelocity = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+		local predictedPos = part.Position + (targetVelocity * CONFIG.PREDICTION_FACTOR) + CONFIG.AIM_OFFSET
 
 		local dir = predictedPos - origin
 		if dir.Magnitude < 0.1 then return end
@@ -5120,7 +5142,7 @@ do
 
 		local desired = CFrame.lookAt(origin, predictedPos, up)
 		
-		-- Pergerakan kamera lebih organik & tidak terlalu "snap"
+		-- Pergerakan kamera halus menuju titik prediksi target
 		local alpha = 1 - math.exp(-CONFIG.SMOOTH_SPEED * dt)
 		cam.CFrame = cam.CFrame:Lerp(desired, alpha)
 	end
