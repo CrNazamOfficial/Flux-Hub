@@ -2157,8 +2157,10 @@ NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
 	end
 end)
 
+-- ============================================================
 -- SILENT AIM [ TOF ] — HALLOWEEN 🎃
--- v3: velocity tracking dipisah dari titik bidik (lihat penjelasan)
+-- v2: prediction pistol diperbaiki (regresi velocity, deteksi belok/rem/akselerasi, blend assembly,
+-- air ballistic, clip lead ke tembok, ping EMA). UI row/urutan kontrol sama persis.
 -- ============================================================
 do
 	local Players = game:GetService("Players")
@@ -2727,11 +2729,11 @@ do
 		local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
 		if not myHRP then
-			return nil, nil, nil
+			return nil, nil
 		end
 
 		if targetMode == "Killer" then
-			local nearestBody, nearestName, nearestVel = nil, nil, nil
+			local nearestBody, nearestName = nil, nil
 			local nearestDistance = math.huge
 
 			for _, player in ipairs(Players:GetPlayers()) do
@@ -2740,26 +2742,24 @@ do
 					if char and IsKillerChar(player, char) then
 						local hum = char:FindFirstChildOfClass("Humanoid")
 						local body = GetBody(char)
-						local velPart = char:FindFirstChild("HumanoidRootPart")
-						if body and velPart and (not hum or hum.Health > 0) then
+						if body and (not hum or hum.Health > 0) then
 							local distance = (body.Position - myHRP.Position).Magnitude
 							if distance < nearestDistance then
 								nearestDistance = distance
 								nearestBody = body
 								nearestName = player.Name
-								nearestVel = velPart
 							end
 						end
 					end
 				end
 			end
 
-			return nearestBody, nearestName, nearestVel
+			return nearestBody, nearestName
 		end
 
 		local cam = workspace.CurrentCamera
 		if not cam then
-			return nil, nil, nil
+			return nil, nil
 		end
 
 		local camPos = cam.CFrame.Position
@@ -2780,12 +2780,11 @@ do
 			end
 		end
 
-		return bestBody, bestName, bestBody
+		return bestBody, bestName
 	end
 
 	local targetBody = nil
 	local targetName = nil
-	local targetVelPart = nil
 	local myRootRef = nil
 
 	local function RefreshTarget()
@@ -2793,17 +2792,15 @@ do
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		myRootRef = root
 		if root then
-			local body, name, velPart = GetTarget()
+			local body, name = GetTarget()
 			targetBody = body
 			targetName = name
-			targetVelPart = velPart
-			if velPart then
-				UpdateVelocity(velPart)
+			if body then
+				UpdateVelocity(body)
 			end
 		else
 			targetBody = nil
 			targetName = nil
-			targetVelPart = nil
 		end
 	end
 
@@ -2926,13 +2923,9 @@ do
 			root = char and char:FindFirstChild("HumanoidRootPart")
 		end
 
-		local body, _, velPart = GetTarget()
+		local body = GetTarget()
 		if not body or body.Parent == nil then
 			body = targetBody
-			velPart = targetVelPart
-		end
-		if not velPart or velPart.Parent == nil then
-			velPart = body
 		end
 
 		if not body or not root then
@@ -2943,7 +2936,7 @@ do
 			return nil
 		end
 
-		pcall(UpdateVelocity, velPart)
+		pcall(UpdateVelocity, body)
 
 		local fromPos = GetMuzzlePos(root)
 
@@ -2952,7 +2945,7 @@ do
 			point = body.Position
 		end
 
-		local predicted = PredictPoint(fromPos, point, velPart)
+		local predicted = PredictPoint(fromPos, point, body)
 
 		pcall(MarkShot, body)
 
@@ -3096,7 +3089,6 @@ do
 		local char = GetCharacter()
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		local body = targetBody
-		local velPart = targetVelPart or body
 
 		if not root or not body or body.Parent == nil then
 			hideLaser()
@@ -3112,7 +3104,7 @@ do
 			if not okPoint or typeof(point) ~= "Vector3" then
 				point = body.Position
 			end
-			laserTarget = PredictPoint(originPos, point, velPart)
+			laserTarget = PredictPoint(originPos, point, body)
 		end
 
 		updateLaser(originPos, laserTarget)
@@ -3128,9 +3120,9 @@ do
 			return
 		end
 
-		local velPart = targetVelPart or targetBody
-		if velPart and velPart.Parent then
-			pcall(UpdateVelocity, velPart)
+		local body = targetBody
+		if body and body.Parent then
+			pcall(UpdateVelocity, body)
 		end
 
 		pcall(UpdateLaser)
@@ -3145,7 +3137,6 @@ do
 		SCPCache = {}
 		SCPCacheTimer = 0
 		targetBody = nil
-		targetVelPart = nil
 		myRootRef = nil
 		laserTarget = nil
 		ResetTrack()
