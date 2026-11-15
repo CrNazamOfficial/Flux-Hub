@@ -6438,40 +6438,81 @@ MP_Row:Toggle(false, function(state)
 end)
 
 	-- ============================================================
-	-- 8. PALLET ESP (outline saja)
+	-- 8. PALLET ESP (fill solid ikut bentuk objek, abaikan nama berisi kata terlarang)
 	-- ============================================================
-	local PE = { Enabled = false, Conns = {}, Color = Color3.fromRGB(190, 125, 65) }
-	local function PE_Apply(obj)
-		if not (obj:IsA("Model") and string.find(string.lower(obj.Name), "pallet")) then return end
-		local old = obj:FindFirstChild("PalletESP_Outline"); if old then old:Destroy() end
+	local PE = { Enabled = false, Objects = {}, Scanned = {}, Conns = {}, Color = Color3.fromRGB(190, 125, 65), ShowHL = true, FillTransparency = 0.3, OutlineTransparency = 0.1, Exclude = { "crate" } }
+	local function PE_Excluded(name)
+		local n = string.lower(name)
+		for _, w in ipairs(PE.Exclude) do
+			if string.find(n, string.lower(w), 1, true) then return true end
+		end
+		return false
+	end
+	local function PE_Remove(model)
+		local d = PE.Objects[model]
+		if d and d.hl then pcall(function() d.hl:Destroy() end) end
+		PE.Objects[model] = nil
+		PE.Scanned[model] = nil
+	end
+	local function PE_Handle(obj)
+		if not PE.Enabled then return end
+		if not obj:IsA("Model") then return end
+		local lname = string.lower(obj.Name)
+		if not string.find(lname, "pallet", 1, true) then return end
+		if PE_Excluded(obj.Name) then return end
+		if PE.Scanned[obj] or PE.Objects[obj] then return end
+		PE.Scanned[obj] = true
 		local hl = Instance.new("Highlight")
 		hl.Name = "PalletESP_Outline"
+		hl.Adornee = obj
 		hl.FillColor = PE.Color
-		hl.FillTransparency = 1
+		hl.FillTransparency = PE.FillTransparency
 		hl.OutlineColor = PE.Color
-		hl.OutlineTransparency = 0
+		hl.OutlineTransparency = PE.OutlineTransparency
 		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Enabled = PE.ShowHL
 		hl.Parent = obj
+		PE.Objects[obj] = { hl = hl }
+		obj.Destroying:Connect(function() PE_Remove(obj) end)
+	end
+	local function PE_Scan()
+		if not PE.Enabled then return end
+		for _, o in ipairs(workspace:GetDescendants()) do PE_Handle(o) end
 	end
 	local PE_Row = Add("Pallet Esp")
 	local PE_Toggle = PE_Row:Toggle(false, function(state)
 		PE.Enabled = state
 		if state then
-			for _, o in ipairs(workspace:GetDescendants()) do PE_Apply(o) end
-			table.insert(PE.Conns, workspace.DescendantAdded:Connect(function(d) task.wait(0.3); if PE.Enabled and d:IsA("Model") then PE_Apply(d) end end))
+			PE_Scan()
+			table.insert(PE.Conns, workspace.DescendantAdded:Connect(function(d)
+				if not PE.Enabled or not d:IsA("Model") then return end
+				task.wait(0.3)
+				if PE.Enabled then PE_Handle(d) end
+			end))
+			table.insert(PE.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+				task.wait(0.5)
+				if PE.Enabled then
+					for m in pairs(PE.Objects) do PE_Remove(m) end
+					PE.Objects = {}
+					PE.Scanned = {}
+					task.wait(0.3)
+					PE_Scan()
+				end
+			end))
 		else
+			for m in pairs(PE.Objects) do PE_Remove(m) end
+			PE.Objects = {}
+			PE.Scanned = {}
 			for _, c in ipairs(PE.Conns) do pcall(function() c:Disconnect() end) end
 			PE.Conns = {}
-			for _, o in ipairs(workspace:GetDescendants()) do local h = o:FindFirstChild("PalletESP_Outline"); if h then h:Destroy() end end
 		end
 	end)
 	PE_Toggle.Color = PE_Row:Color(PE.Color, function(c)
 		PE.Color = c
-		for _, o in ipairs(workspace:GetDescendants()) do
-			local h = o:FindFirstChild("PalletESP_Outline")
-			if h and h:IsA("Highlight") then
-				h.OutlineColor = c
-				h.FillColor = c
+		for _, d in pairs(PE.Objects) do
+			if d.hl then
+				d.hl.FillColor = c
+				d.hl.OutlineColor = c
 			end
 		end
 	end)
@@ -6650,9 +6691,9 @@ PK_Row:Toggle(false, function(state)
 end)
 
 	-- ============================================================
-	-- 10. WINDOW ESP
+	-- 10. WINDOW ESP (hanya part Bottom, window tidak ikut)
 	-- ============================================================
-	local WE = { Enabled = false, Objects = {}, Scanned = {}, Conns = {}, Color = Color3.fromRGB(255, 255, 255), ShowHL = true }
+	local WE = { Enabled = false, Objects = {}, Scanned = {}, Conns = {}, Color = Color3.fromRGB(255, 255, 255), ShowHL = true, Retry = setmetatable({}, { __mode = "k" }) }
 	local function WE_Remove(win)
 		local d = WE.Objects[win]; if not d then return end
 		if d.box then pcall(function() d.box:Destroy() end) end
@@ -6669,24 +6710,27 @@ end)
 		if not WE.Enabled or child.Name ~= "VaultTrigger" then return end
 		local win = child.Parent; if not win or not win:IsA("Model") then return end
 		if WE.Scanned[win] or WE.Objects[win] then return end
-		WE.Scanned[win] = true
 		local bottom = win:FindFirstChild("Bottom")
 		if not bottom or not bottom:IsA("BasePart") then
-			local best = 0
-			for _, p in ipairs(win:GetChildren()) do
-				if p:IsA("BasePart") and p.Name ~= "VaultTrigger" and p.Name ~= "inviswall" and p.Size.Magnitude > best then best = p.Size.Magnitude; bottom = p end
+			local n = (WE.Retry[win] or 0) + 1
+			WE.Retry[win] = n
+			if n <= 2 then
+				task.delay(1.5, function()
+					if WE.Enabled then WE_Handle(child) end
+				end)
 			end
+			return
 		end
-		if not bottom then return end
+		WE.Scanned[win] = true
 		if bottom:GetAttribute("ESP_OrigTrans") == nil then bottom:SetAttribute("ESP_OrigTrans", bottom.Transparency) end
 		if bottom.Transparency > 0.5 then bottom.Transparency = 0.5 end
 		local box = Instance.new("BoxHandleAdornment")
 		box.Name = "WindowBox"; box.Adornee = bottom; box.Size = bottom.Size
 		box.Color3 = WE.Color; box.Transparency = 0.3; box.AlwaysOnTop = true; box.ZIndex = 5; box.Parent = bottom
 		local hl = Instance.new("Highlight")
-		hl.Adornee = win; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
+		hl.Adornee = bottom; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
 		hl.OutlineColor = WE.Color; hl.OutlineTransparency = 0.1
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = WE.ShowHL; hl.Parent = win
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = WE.ShowHL; hl.Parent = bottom
 		WE.Objects[win] = { box = box, bottom = bottom, hl = hl }
 	end
 	local function WE_Scan()
