@@ -6266,7 +6266,7 @@ TRP_Toggle.Color = TRP_Row:Color(TRP.Color, function(c)
 end)
 
 -- ============================================================
--- 7. MAP PREDICTION (logic baru — single line compact)
+-- 7. MAP PREDICTION
 -- ============================================================
 local MP = { Enabled = false, Gui = nil, Box = nil, Label = nil, Conns = {}, Running = false, LastMap = nil, LastMapExists = false }
 local MP_CFG = {
@@ -6288,28 +6288,36 @@ local function MP_IsSpec()
 	return t ~= nil and t.Name == "Spectator"
 end
 local function MP_ReadKiller()
-	local pGui = Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-	local spec = pGui and pGui:FindFirstChild("Spectator")
-	local info = spec and spec:FindFirstChild("Info")
-	local lbP = info and info:FindFirstChild("Leaderboard")
-	local lb = lbP and lbP:FindFirstChild("Leaderboard")
-	if not lb then return nil, false end
-	local highest, predicted = -1, nil
-	for _, f in ipairs(lb:GetChildren()) do
-		if f:IsA("GuiObject") then
-			local kcF = f:FindFirstChild("kc")
-			local kc = kcF and kcF:FindFirstChild("kc")
-			if kc then
-				local v = tonumber(kc.Text) or 0
-				if v > highest then highest = v; predicted = f.Name end
+	local best, bestChance = nil, -1
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		local allow = p:GetAttribute("AllowKiller")
+		local chance = p:GetAttribute("KillerChance")
+		if allow == true and type(chance) == "number" then
+			if chance > bestChance then
+				bestChance = chance
+				best = p
 			end
 		end
 	end
-	local your = info:FindFirstChild("Your")
-	local myKC = your and your:FindFirstChild("KillerChance")
-	local myVal = myKC and tonumber(myKC.Text) or 0
-	if myVal > highest then return Players.LocalPlayer.Name, true end
-	return predicted, predicted == Players.LocalPlayer.Name
+
+	if not best then
+		for _, p in ipairs(Players:GetPlayers()) do
+			local chance = p:GetAttribute("KillerChance")
+			if type(chance) == "number" then
+				if chance > bestChance then
+					bestChance = chance
+					best = p
+				end
+			end
+		end
+	end
+
+	if not best then return nil, false, nil end
+
+	local sk = best:FindFirstChild("SelectedKiller")
+	local killerName = sk and sk.Value or best:GetAttribute("SelectedKiller")
+	return best.Name, best == Players.LocalPlayer, killerName
 end
 local function MP_DetectMap()
 	local map = workspace:FindFirstChild("Map")
@@ -6321,7 +6329,7 @@ local function MP_DetectMap()
 	elseif map:FindFirstChild("White Armored Car") then return "Mount Massive Asylum"
 	elseif map:FindFirstChild("Dumbster") then return "The Bay Harbor"
 	elseif map:FindFirstChild("water pump") then return "Valdelobos Village"
-	elseif map:FindFirstChild("BrickWall") then return "Ashwood Farm"
+	elseif map:FindFirstChild("TelephonePoles", true) then return "Ashwood Farm"
 	elseif map:FindFirstChild("LargeBoulder01") then return "Woodview Cabin" end
 	return nil
 end
@@ -6348,7 +6356,7 @@ local function MP_Build()
 		AutomaticSize = Enum.AutomaticSize.X,
 	}, sg)
 	corner(box, 4)
-	local st = make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1, Transparency = 0.2 }, box)
+	make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1, Transparency = 0.2 }, box)
 	make("UIPadding", {
 		PaddingLeft = UDim.new(0, 5),
 		PaddingRight = UDim.new(0, 5),
@@ -6398,11 +6406,20 @@ local function MP_Update()
 	local spec = MP_IsSpec()
 	MP.Box.Visible = spec or MP_CFG.ALWAYS_SHOW
 	if not spec then return end
-	local killerName, isYou = MP_ReadKiller()
+
+	local killerName, isYou, selectedKiller = MP_ReadKiller()
 	local killerTxt
-	if killerName and isYou then killerTxt = '<font color="#FF0000">(You)</font>'
-	elseif killerName then killerTxt = MP_Esc(killerName)
-	else killerTxt = "-" end
+	if killerName and isYou then
+		killerTxt = '<font color="#FF0000">(You)</font>'
+	elseif killerName then
+		killerTxt = '<font color="#FF0000">' .. MP_Esc(killerName) .. '</font>'
+	else
+		killerTxt = '<font color="#FF0000">Unknown</font>'
+	end
+
+	local killerSpec = tostring(selectedKiller or "Unknown")
+	local killerSpecTxt = '<font color="#FF0000">' .. MP_Esc(killerSpec) .. '</font>'
+
 	local map = workspace:FindFirstChild("Map")
 	local exists = map ~= nil
 	local detected = MP_DetectMap()
@@ -6411,7 +6428,8 @@ local function MP_Update()
 	elseif exists and detected then MP.LastMap = detected; mapVal = detected
 	elseif exists then mapVal = "Unknown" end
 	MP.LastMapExists = exists
-	local txt = "Map : " .. MP_Esc(mapVal) .. "  |  Killer : " .. killerTxt
+
+	local txt = "Map : " .. MP_Esc(mapVal) .. "  |  Killer : " .. killerTxt .. " - " .. killerSpecTxt
 	if MP.Label.Text ~= txt then MP.Label.Text = txt end
 end
 local MP_Row = Add("Map Prediction")
