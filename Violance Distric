@@ -1576,6 +1576,7 @@ local AST_Toggle = AST_RefRow:Toggle(false, function(state)
 	end
 end)
 AST_RefRow:Dropdown({ "NORMAL", "INSTANT" }, "INSTANT", function(v) AST.Mode = v end)
+
 -- ============================================================
 -- FAST VAULT (integrasi Flux Hub + Panel)
 -- ============================================================
@@ -3384,6 +3385,7 @@ end
 AG_Row:Dropdown({ "Normal", "Perfect", "Instant" }, "Normal", function(v) AG.Mode = string.upper(v) end)
 AG_Row:Dropdown({ "Normal", "Instant" }, "Instant", function(v) AG.ScourgeMode = string.upper(v) end)
 end)
+
 -- ===== END BAGIAN 2/3 =====
 -- BAGIAN 3/3 dimulai dari: RunTab("Killer", ...) s/d akhir script
 -- ===== FLUX HUB FIXED - BAGIAN 3/3 =====
