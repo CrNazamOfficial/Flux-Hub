@@ -2158,9 +2158,9 @@ NP_Row:Color(Color3.fromRGB(255, 255, 255), function(c)
 end)
 
 -- ============================================================
--- SILENT AIM [ TOF ] — HALLOWEEN 🎃
--- v2: prediction pistol diperbaiki (regresi velocity, deteksi belok/rem/akselerasi, blend assembly,
--- air ballistic, clip lead ke tembok, ping EMA). UI row/urutan kontrol sama persis.
+-- SILENT AIM [ TOF ] — HALLOWEEN 🎃 (UPDATED)
+-- v3: Penyempurnaan arah peluru nyata/proyektil agar langsung 
+-- mengarah ke titik prediksi sejak dilepaskan tanpa merusak pergerakan kamera.
 -- ============================================================
 do
 	local Players = game:GetService("Players")
@@ -2309,7 +2309,6 @@ do
 		track.stable = 1
 	end
 
-	-- regresi linear posisi terhadap waktu (lebih halus dari titik awal-akhir)
 	local function FitVelocity(hist, now, window)
 		local first, tFirst, tLast = nil, nil, nil
 		local n, st, stt = 0, 0, 0
@@ -2389,17 +2388,13 @@ do
 					local c = vLong:Dot(vShort) / (lm * sm)
 					stable = math.clamp((c - 0.2) / 0.8, 0, 1)
 					if stable < 1 then
-						-- target sedang belok / zigzag: percaya sampel terbaru
 						vel = vLong:Lerp(vShort, 1 - stable)
 					elseif sm > lm * 1.1 then
-						-- baru mulai lari / akselerasi
 						vel = vLong:Lerp(vShort, 0.6)
 					elseif sm < lm then
-						-- mengerem
 						vel = vLong * math.clamp(sm / lm, BRAKE_MIN, 1)
 					end
 				elseif lm > 2 and sm < 1 then
-					-- sudah berhenti
 					vel = ZERO
 				end
 			end
@@ -2472,7 +2467,6 @@ do
 		return Vector3.new(horiz.X, vy, horiz.Z), stable, air
 	end
 
-	-- potong titik lead supaya tidak membidik menembus tembok besar
 	local function ClipLead(point, finalPos, targetChar)
 		local d = finalPos - point
 		if d.Magnitude < 1 then
@@ -2542,7 +2536,6 @@ do
 			offset = offset.Unit * MAX_LEAD
 		end
 
-		-- target zigzag / belok: kurangi lead supaya tidak overshoot
 		offset = offset * (TURN_LEAD_MIN + (1 - TURN_LEAD_MIN) * stable)
 
 		local finalPos = point + offset
@@ -2556,7 +2549,7 @@ do
 	end
 
 	--------------------------------------------------
-	-- PILIH TITIK BIDIK
+	-- PEMILIHAN TITIK BIDIK
 	--------------------------------------------------
 
 	local function CastToChar(origin, direction, char)
@@ -2657,10 +2650,6 @@ do
 		return muzzleOnly or fallback
 	end
 
-	--------------------------------------------------
-	-- BAGIAN BADAN TARGET
-	--------------------------------------------------
-
 	local function GetBody(character)
 		if not character then
 			return nil
@@ -2673,7 +2662,7 @@ do
 	end
 
 	--------------------------------------------------
-	-- PEMILIHAN TARGET
+	-- TARGET SELECTION
 	--------------------------------------------------
 
 	local targetMode = DEFAULT_TARGET_MODE
@@ -2805,7 +2794,7 @@ do
 	end
 
 	--------------------------------------------------
-	-- SUARA HIT / STUN
+	-- HIT / STUN SOUND
 	--------------------------------------------------
 
 	local hitWatch = nil
@@ -2909,7 +2898,7 @@ do
 	end)
 
 	--------------------------------------------------
-	-- SILENT AIM
+	-- SILENT AIM HOOK (UPDATED TO RETAIN ALL ARGUMENTS)
 	--------------------------------------------------
 
 	local function SilentDirection()
@@ -2985,12 +2974,15 @@ do
 					if not mine then
 						local fn = SHARED.aim
 						if fn then
-							local tool, dir = ...
+							local args = table.pack(...)
+							local tool, dir = args[1], args[2]
 							if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
 								local okAim, newDir = pcall(fn)
 								if okAim and typeof(newDir) == "Vector3" then
+									args[2] = newDir -- Mengganti arah vektor tembakan ke titik prediksi
 									setnamecallmethod("FireServer")
-									return old(self, tool, newDir, select(3, ...))
+									-- Meneruskan seluruh argumen secara utuh (termasuk argumen ke-3, dst)
+									return old(self, table.unpack(args, 1, args.n))
 								end
 							end
 						end
