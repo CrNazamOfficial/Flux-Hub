@@ -7444,5 +7444,58 @@ task.spawn(function()
 	end
 end)
 
+-- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI =====
+task.spawn(function()
+	local lp = Players.LocalPlayer
+	local mask = nil
+	local maskChar = nil
+
+	local function clearMask()
+		if mask then
+			pcall(function() mask:Destroy() end)
+		end
+		mask = nil
+		maskChar = nil
+	end
+
+	local function applyMask(char)
+		clearMask()
+		if not char or not char.Parent then return end
+		local hl = Instance.new("Highlight")
+		hl.Name = "SelfMask"
+		hl.Adornee = char
+		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+		hl.FillColor = Color3.fromRGB(0, 0, 0)
+		hl.OutlineColor = Color3.fromRGB(0, 0, 0)
+		hl.FillTransparency = 1
+		hl.OutlineTransparency = 0.9999999
+		hl.Parent = char
+		mask = hl
+		maskChar = char
+	end
+
+	local charConn = lp.CharacterAdded:Connect(function(char)
+		task.wait(0.3)
+		if gui.Parent and lp.Character == char then
+			applyMask(char)
+		end
+	end)
+
+	applyMask(lp.Character)
+
+	while gui.Parent do
+		task.wait(1)
+		local char = lp.Character
+		if char and char.Parent then
+			if (not mask) or (not mask.Parent) or maskChar ~= char then
+				applyMask(char)
+			end
+		end
+	end
+
+	pcall(function() charConn:Disconnect() end)
+	clearMask()
+end)
+
 -- ===== END BAGIAN 3/3 =====
 -- ===== END FULL SCRIPT =====
