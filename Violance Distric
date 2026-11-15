@@ -1366,19 +1366,54 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	end)
 
 	-- ============================================================
-	-- 3. GOD MODE (logic asli)
+	-- 3. GOD MODE (Improved: Full Absolute Protection)
 	-- ============================================================
-	local GM = { Enabled = false, Conn = nil }
+	local GM = { Enabled = false, Conns = {} }
 	local function GM_Apply()
 		local c = Players.LocalPlayer.Character
-		local h = c and c:FindFirstChildOfClass("Humanoid")
-		if h and h.Health > 0 and h.Health < h.MaxHealth then pcall(function() h.Health = h.MaxHealth end) end
+		if not c then return end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if h and h.MaxHealth > 0 then
+			if h.Health < h.MaxHealth then
+				h.Health = h.MaxHealth
+			end
+			-- Mencegah modifikasi state cedera/knocked jika ada
+			if c:GetAttribute("Knocked") then
+				c:SetAttribute("Knocked", false)
+			end
+		end
 	end
+	
 	local GM_Row = Add("God Mode")
 	GM_Row:Toggle(false, function(state)
 		GM.Enabled = state
-		if GM.Conn then pcall(function() GM.Conn:Disconnect() end); GM.Conn = nil end
-		if state then GM.Conn = RunService.Heartbeat:Connect(GM_Apply) end
+		for _, c in ipairs(GM.Conns) do pcall(function() c:Disconnect() end) end
+		GM.Conns = {}
+		
+		if state then
+			-- Proteksi instan tiap frame dan event perubahan health
+			table.insert(GM.Conns, RunService.Heartbeat:Connect(GM_Apply))
+			local lp = Players.LocalPlayer
+			table.insert(GM.Conns, lp.CharacterAdded:Connect(function(char)
+				task.wait(0.2)
+				if GM.Enabled then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						table.insert(GM.Conns, hum.HealthChanged:Connect(function()
+							if GM.Enabled then GM_Apply() end
+						end))
+					end
+				end
+			end))
+			local curChar = lp.Character
+			local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+			if curHum then
+				table.insert(GM.Conns, curHum.HealthChanged:Connect(function()
+					if GM.Enabled then GM_Apply() end
+				end))
+			end
+			GM_Apply()
+		end
 	end)
 
 	-- ============================================================
@@ -3389,7 +3424,7 @@ RunTab("Killer", function(Add, Title, AddFeature)
 	Title("Features")
 
 -- ============================================================
--- AIM BUTCHER  (paste di dalam RunTab("Killer", ...))
+-- AIM BUTCHER (Improved: Smooth Silent Snap on Release)
 -- ============================================================
 do
 	local AB2 = {
@@ -3411,7 +3446,6 @@ do
 		CdB = nil,
 		CamPos = nil,
 		Status = "-",
-		FaceActive = false,
 		SavedAuto = true,
 		Fired = 0,
 		Changed = 0,
@@ -3431,9 +3465,8 @@ do
 		AimHeightOffset = 0,
 		RemoteName = "ChainThrow",
 		CooldownAttribute = "ChainMove1CD",
-		FaceTarget = true,
+		FaceTarget = false, -- Dimatikan total agar kamera/karakter tidak kaku/menempel ke target sebelum dilepas
 		CastTimeout = 2.5,
-		FaceHold = 0.35,
 		AckWait = 0.45,
 		MaxAngleStart = 180,
 		MinAngle = 3,
@@ -3688,41 +3721,54 @@ do
 		if AB2.Dead then return nil end
 		local a1 = args[1]
 		local now = os.clock()
-		local isVec = typeof(a1) == "Vector3"
+		
+		-- Memeriksa apakah ini perintah lempar (berupa Vector3 / data table argumen lemparan)
+		local isVec = (typeof(a1) == "Vector3") or (type(a1) == "table" and a1.Direction ~= nil)
+		
 		if isVec and AB2.LastSent and a1 == AB2.LastSent and now - AB2.LastSentT < 0.15 then return nil end
 		if isVec then AB2.Fired = AB2.Fired + 1 end
 		if not AB2.Enabled then return nil end
+		
 		if a1 == "windup" then
 			AB2.Casting = true
 			AB2.CastUntil = now + AB2_CFG.CastTimeout
 			return nil
 		end
+		
 		if not isVec then return nil end
-		if AB2.Casting then AB2.CastUntil = now + AB2_CFG.FaceHold end
+		
 		local snap = AB2.Snap
 		if not snap then return nil end
-		local info = args[3]
-		local origin
-		if type(info) == "table" and typeof(info.Origin) == "Vector3" then origin = info.Origin end
+		
+		local origin = AB2.CamPos
+		if type(args[3]) == "table" and typeof(args[3].Origin) == "Vector3" then
+			origin = args[3].Origin
+		end
 		if not origin then origin = AB2.CamPos end
 		if not origin then return nil end
+
 		local aim = AB2_aimFromSnap(snap, origin)
 		local d = aim - origin
 		local m = d.Magnitude
 		if m ~= m or m < 0.5 or m == math.huge then return nil end
-		local sent = AB2_limitDir(a1, d.Unit, AB2.MaxAngle)
-		local sm = sent.Magnitude
-		if sm ~= sm or sm < 0.5 then return nil end
-		sent = sent.Unit
-		local base = sent
-		if a1.Magnitude > 0.001 then base = a1.Unit end
-		local dev = math.deg(math.acos(math.clamp(AB2_dot(base, sent), -1, 1)))
+		
+		-- Tepat saat tombol tembak dilepas, arah vektor langsung dialihkan secara senyap ke target prediksi
+		local sent = d.Unit
 		local out = AB2_copyArgs(args)
-		out[1] = sent
+		
+		if typeof(a1) == "Vector3" then
+			out[1] = sent
+		elseif type(a1) == "table" and a1.Direction ~= nil then
+			local newTbl = {}
+			for k, v in pairs(a1) do newTbl[k] = v end
+			newTbl.Direction = sent
+			out[1] = newTbl
+		end
+
 		AB2.Changed = AB2.Changed + 1
 		AB2.LastSent = sent
 		AB2.LastSentT = now
-		AB2.Pending = { t = now, remote = remote, orig = args, dev = dev, a = AB2.CdA, b = AB2.CdB }
+		AB2.Pending = { t = now, remote = remote, orig = args, dev = 0, a = AB2.CdA, b = AB2.CdB }
 		return out
 	end
 
@@ -3763,64 +3809,6 @@ do
 			if setreadonly and ro then setreadonly(mt, true) end
 			AB2.HookOk = true
 		end)
-	end
-	if hookfunction then
-		pcall(function()
-			local tmp = Instance.new("RemoteEvent")
-			local fs = tmp.FireServer
-			pcall(function() tmp:Destroy() end)
-			local oldFS
-			local function fsh(self, ...)
-				if not AB2.Bypass and typeof(self) == "Instance" and self.Name == AB2_CFG.RemoteName
-					and not (checkcaller and checkcaller()) then
-					local args = table.pack(...)
-					local ok, newArgs = pcall(AB2_onFire, self, args)
-					if ok and newArgs then
-						return oldFS(self, table.unpack(newArgs, 1, newArgs.n))
-					end
-				end
-				return oldFS(self, ...)
-			end
-			oldFS = hookfunction(fs, newcclosure and newcclosure(fsh) or fsh)
-			AB2.HookOk = true
-		end)
-	end
-
-	local function AB2_checkPending()
-		local p = AB2.Pending
-		if not p then return end
-		local waitTime = math.max(AB2_CFG.AckWait, AB2.PingSec + 0.3)
-		if os.clock() - p.t < waitTime then return end
-		AB2.Pending = nil
-		local known = p.a ~= nil or p.b ~= nil or AB2.CdA ~= nil or AB2.CdB ~= nil
-		if not known then AB2.Status = "?"; return end
-		local accepted = (AB2.CdA ~= p.a) or (AB2.CdB ~= p.b)
-		if accepted then
-			AB2.Status = "OK"
-			if p.dev >= AB2.MaxAngle - 0.5 then
-				AB2.MaxAngle = math.min(180, AB2.MaxAngle * 1.3 + 1)
-			end
-			return
-		end
-		AB2.Status = "DITOLAK"
-		AB2.MaxAngle = math.max(AB2_CFG.MinAngle, p.dev * 0.5)
-		local fb = AB2_copyArgs(p.orig)
-		local info = fb[3]
-		if type(info) == "table" then
-			local ni = {}
-			for k, v in pairs(info) do ni[k] = v end
-			if type(ni.Time) == "number" then
-				local ok, sn = pcall(function() return workspace:GetServerTimeNow() end)
-				if ok and type(sn) == "number" and math.abs(ni.Time - (sn - (os.clock() - p.t))) < 3 then
-					ni.Time = sn
-				end
-			end
-			fb[3] = ni
-		end
-		AB2.Bypass = true
-		pcall(function() p.remote:FireServer(table.unpack(fb, 1, fb.n)) end)
-		AB2.Bypass = false
-		AB2.Status = "DITOLAK, kirim normal"
 	end
 
 	local acc, accSlow = 0, 0
@@ -3884,37 +3872,9 @@ do
 		else
 			AB2.Snap = nil
 		end
-		AB2_checkPending()
 	end))
 
-	local function AB2_faceStep()
-		if AB2.Dead then return end
-		local now = os.clock()
-		if AB2.Casting and now >= AB2.CastUntil then AB2.Casting = false end
-		local ch = Players.LocalPlayer.Character
-		local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-		local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
-		local active = AB2_CFG.FaceTarget and AB2.Enabled and AB2.Casting and AB2.Snap ~= nil
-		if active and hum and hrp then
-			if not AB2.FaceActive then
-				AB2.FaceActive = true
-				AB2.SavedAuto = hum.AutoRotate
-			end
-			hum.AutoRotate = false
-			local origin = hrp.Position + Vector3.new(0, 1.5, 0)
-			local aim = AB2_aimFromSnap(AB2.Snap, origin)
-			local d = aim - hrp.Position
-			local flat = Vector3.new(d.X, 0, d.Z)
-			if flat.Magnitude > 0.5 then
-				hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + flat)
-			end
-		elseif AB2.FaceActive then
-			AB2.FaceActive = false
-			if hum then hum.AutoRotate = (AB2.SavedAuto ~= false) end
-		end
-	end
-
-	pcall(function() RunService:BindToRenderStep("AimButcherFace", 2000, AB2_faceStep) end)
+	-- Bagian FaceTarget dikosongkan/dimatikan sepenuhnya agar kamera pemain tidak ikut tergeser secara kaku sebelum tombol dilepas
 
 	-- ===== ROW UI (Flux Hub) =====
 	local AB2_Row = Add("Aim Butcher")
@@ -3925,15 +3885,10 @@ do
 			AB2.Target = nil
 			AB2.Casting = false
 			AB2.Pending = nil
-			if AB2.FaceActive then
-				AB2.FaceActive = false
-				local ch = Players.LocalPlayer.Character
-				local hum = ch and ch:FindFirstChildOfClass("Humanoid")
-				if hum then hum.AutoRotate = (AB2.SavedAuto ~= false) end
-			end
 		end
 	end)
 end
+
 
 -- SILENT AIM VEIL
 
@@ -4945,7 +4900,7 @@ do
 end
 
 -- ============================================================
--- AIM LOCK HIDDEN
+-- AIM LOCK HIDDEN (Improved: Smooth Tracking, Health/State Check, & Dynamic Switch)
 -- ============================================================
 do
 	local TargetBlock = {}
@@ -4963,26 +4918,27 @@ do
 		ENABLED = false,
 		ANIM_ID = "98163597193511",
 		AIM_PART = "HumanoidRootPart",
-		AIM_OFFSET = Vector3.new(0, 0, 0),
-		MAX_DISTANCE = 80,
-		MAX_ANGLE = 75,
-		DIST_WEIGHT = 0.15,
-		SMOOTH_SPEED = 14,
-		LOS_GRACE = 0.2,
+		AIM_OFFSET = Vector3.new(0, 0.5, 0), -- Sedikit disesuaikan ke atas badan
+		MAX_DISTANCE = 75,
+		MAX_ANGLE = 65,
+		DIST_WEIGHT = 0.2,
+		SMOOTH_SPEED = 8, -- Diperhalus agar tidak terlalu kaku/snap
+		LOS_GRACE = 0.15,
 	}
 
-	local BIND_NAME = "FluxHiddenAimLockStep"
+	local BIND_NAME = "FluxHiddenAimLockStep_V2"
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.IgnoreWater = true
 
-	local session = { active = false, target = nil, lost = false, lostTime = 0 }
+	local session = { active = false, target = nil, lost = false, lostTime = 0, lastHealth = nil }
 
 	local function resetSession()
 		session.active = false
 		session.target = nil
 		session.lost = false
 		session.lostTime = 0
+		session.lastHealth = nil
 	end
 
 	local function isSkillAnimPlaying(char)
@@ -5089,28 +5045,59 @@ do
 		local cam = workspace.CurrentCamera
 		local char = Players.LocalPlayer.Character
 		if not cam or not char then resetSession(); return end
+
+		-- Jika animasi menusuk selesai/tidak dimainkan, matikan sesi aim lock
 		if not isSkillAnimPlaying(char) then
 			if session.active then resetSession() end
 			return
 		end
+
 		if not session.active then
 			session.active = true
 			session.target = nil
 			session.lost = false
 			session.lostTime = 0
+			session.lastHealth = nil
 		end
+
 		if session.lost then return end
+
 		local origin = cam.CFrame.Position
-		if not session.target then
+
+		-- Dinamis memilih atau memperbarui target selama proses penusukan
+		if not session.target or not isValidTarget(session.target) then
 			local found = pickTarget(char, cam)
-			if not found then return end
-			session.target = found
-			session.lostTime = 0
+			if found then
+				session.target = found
+				local hum = found:FindFirstChildOfClass("Humanoid")
+				session.lastHealth = hum and hum.Health or nil
+				session.lostTime = 0
+			else
+				return
+			end
 		end
+
 		local tchar = session.target
-		if not isValidTarget(tchar) then session.target = nil; session.lost = true; return end
+		local hum = tchar:FindFirstChildOfClass("Humanoid")
+
+		-- Cek perubahan status target (terkena hit / berkurang darahnya secara drastis / downed / knocked)
+		if hum then
+			if session.lastHealth and hum.Health < session.lastHealth then
+				-- Target baru saja kena hit / kesakitan, matikan aim lock agar pemain punya kontrol kembali
+				resetSession()
+				return
+			end
+			if TargetBlock.IsBlocked(tchar) or hum.Health <= 0 then
+				-- Target sudah downed / tumbang / mati
+				resetSession()
+				return
+			end
+			session.lastHealth = hum.Health
+		end
+
 		local part = tchar:FindFirstChild(CONFIG.AIM_PART)
 		if not part then session.target = nil; session.lost = true; return end
+
 		if not isVisible(origin, tchar, char) then
 			session.lostTime = session.lostTime + dt
 			if session.lostTime >= CONFIG.LOS_GRACE then
@@ -5120,12 +5107,20 @@ do
 			return
 		end
 		session.lostTime = 0
-		local aimPos = part.Position + CONFIG.AIM_OFFSET
-		local dir = aimPos - origin
+
+		-- Prediksi posisi target sederhana berdasarkan kecepatan rakitan (AssemblyLinearVelocity) untuk pergerakan mulus
+		local targetVelocity = part.AssemblyLinearVelocity or Vector3.new(0,0,0)
+		local predictedPos = part.Position + (targetVelocity * 0.08) + CONFIG.AIM_OFFSET
+
+		local dir = predictedPos - origin
 		if dir.Magnitude < 0.1 then return end
+
 		local up = Vector3.new(0, 1, 0)
 		if math.abs(dir.Unit.Y) > 0.999 then up = Vector3.new(0, 0, 1) end
-		local desired = CFrame.lookAt(origin, aimPos, up)
+
+		local desired = CFrame.lookAt(origin, predictedPos, up)
+		
+		-- Pergerakan kamera lebih organik & tidak terlalu "snap"
 		local alpha = 1 - math.exp(-CONFIG.SMOOTH_SPEED * dt)
 		cam.CFrame = cam.CFrame:Lerp(desired, alpha)
 	end
@@ -5146,6 +5141,7 @@ do
 		if not state then resetSession() end
 	end)
 end
+
 
 	-- ============================================================
 	-- 5. ANTI BLIND (logic asli)
