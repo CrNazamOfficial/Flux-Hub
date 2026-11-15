@@ -1777,7 +1777,7 @@ do
 	local hubGui = gui
 
 	local CFG = {
-		Speed     = 3.6,
+		Speed     = 3.5,
 		Amplitude = 38,
 		Shape     = 0.6,
 		Smooth    = 28,
