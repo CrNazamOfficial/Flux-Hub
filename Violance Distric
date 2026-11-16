@@ -6921,129 +6921,233 @@ SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 	end
 end)
 
--- ============================================================
--- 8. WORLD SETTINGS (Real-time Potato & Smooth Gray World)
--- ============================================================
-local WS = {
-	Cfg = {
-		Enabled = false,
-	},
-}
+	-- ============================================================
+	-- 12. WORLD SETTING (Full Bright + No Fog + FPS Boost, terrain tidak disentuh)
+	-- ============================================================
+	local WS = { Enabled = false, Tracked = {}, OwnSky = nil, GlobalConns = {}, Heartbeat = nil, Enforcing = false, Orig = setmetatable({}, { __mode = "k" }), Removed = {}, Token = 0, OrigQuality = nil }
+	local WS_CFG = { Characters = false, Textures = true, Particles = true }
+	local WS_Lighting = game:GetService("Lighting")
+	local WS_FACES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
+	local WS_TEX = { SkyboxBk = "rbxasset://textures/sky/sky512_bk.tex", SkyboxDn = "rbxasset://textures/sky/sky512_dn.tex", SkyboxFt = "rbxasset://textures/sky/sky512_ft.tex", SkyboxLf = "rbxasset://textures/sky/sky512_lf.tex", SkyboxRt = "rbxasset://textures/sky/sky512_rt.tex", SkyboxUp = "rbxasset://textures/sky/sky512_up.tex" }
+	local WS_BRIGHT = { Brightness = 2, ClockTime = 14, ExposureCompensation = 0, FogStart = 100000, FogEnd = 100000, GlobalShadows = false, ShadowSoftness = 0, Ambient = Color3.fromRGB(170, 170, 170), OutdoorAmbient = Color3.fromRGB(170, 170, 170) }
+	local WS_LIGHT_PROPS = { "FogEnd", "FogStart", "Brightness", "ClockTime", "Ambient", "OutdoorAmbient", "GlobalShadows", "ExposureCompensation", "ShadowSoftness" }
 
-local Lighting = game:GetService("Lighting")
-local Terrain = workspace:FindFirstChildOfClass("Terrain")
-local originalLighting = {}
-local connection = nil
-
-local function storeLighting()
-	if not originalLighting.Initialized then
-		originalLighting.Brightness = Lighting.Brightness
-		originalLighting.ClockTime = Lighting.ClockTime
-		originalLighting.FogEnd = Lighting.FogEnd
-		originalLighting.GlobalShadows = Lighting.GlobalShadows
-		originalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
-		originalLighting.Initialized = true
+	local function WS_Set(inst, prop, value)
+		local ok, cur = pcall(function() return inst[prop] end)
+		if not ok or cur == value then return end
+		local o = WS.Orig[inst]
+		if not o then
+			o = {}
+			WS.Orig[inst] = o
+		end
+		if o[prop] == nil then o[prop] = cur end
+		pcall(function() inst[prop] = value end)
 	end
-end
 
-local function optimizePart(obj)
-	if not WS.Cfg.Enabled then return end
-	if not obj:IsA("BasePart") then return end
+	local function WS_Enforce(sky)
+		if WS.Enforcing then return end
+		WS.Enforcing = true
+		for _, f in ipairs(WS_FACES) do pcall(function() if sky[f] ~= WS_TEX[f] then sky[f] = WS_TEX[f] end end) end
+		pcall(function() if sky.CelestialBodiesShown ~= false then sky.CelestialBodiesShown = false end; if sky.StarCount ~= 0 then sky.StarCount = 0 end end)
+		WS.Enforcing = false
+	end
 
-	-- Jangan ubah karakter player, bagian tubuh, atau aksesori
-	local isChar = false
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Character and obj:IsDescendantOf(p.Character) then
-			isChar = true
-			break
+	local function WS_EnforceLight()
+		if WS.Enforcing then return end
+		WS.Enforcing = true
+		pcall(function()
+			for p, v in pairs(WS_BRIGHT) do WS_Set(WS_Lighting, p, v) end
+			for _, i in ipairs(WS_Lighting:GetChildren()) do
+				if i:IsA("Atmosphere") then
+					WS_Set(i, "Density", 0)
+					WS_Set(i, "Haze", 0)
+					WS_Set(i, "Glare", 0)
+				elseif i:IsA("PostEffect") then
+					WS_Set(i, "Enabled", false)
+				end
+			end
+			local terrain = workspace:FindFirstChildOfClass("Terrain")
+			local clouds = terrain and terrain:FindFirstChildOfClass("Clouds")
+			if clouds then WS_Set(clouds, "Enabled", false) end
+		end)
+		WS.Enforcing = false
+	end
+
+	local function WS_Untrack(sky)
+		local c = WS.Tracked[sky]
+		if c then for _, x in ipairs(c) do pcall(function() x:Disconnect() end) end; WS.Tracked[sky] = nil end
+	end
+
+	local function WS_Track(sky)
+		if not WS.Enabled or WS.Tracked[sky] then return end
+		local c = {}; WS.Tracked[sky] = c; WS_Enforce(sky)
+		for _, f in ipairs(WS_FACES) do
+			local ok, sig = pcall(function() return sky:GetPropertyChangedSignal(f) end)
+			if ok and sig then table.insert(c, sig:Connect(function() WS_Enforce(sky) end)) end
+		end
+		table.insert(c, sky.AncestryChanged:Connect(function() if not sky:IsDescendantOf(game) then WS_Untrack(sky) end end))
+	end
+
+	local function WS_EnsureSky()
+		if WS.OwnSky == nil or WS.OwnSky.Parent ~= WS_Lighting then
+			if WS.OwnSky then WS_Untrack(WS.OwnSky); WS.OwnSky = nil end
+			local ex = WS_Lighting:FindFirstChild("FullBrightSky")
+			if ex and ex:IsA("Sky") then WS.OwnSky = ex
+			else local s = Instance.new("Sky"); s.Name = "FullBrightSky"; pcall(function() s.Parent = WS_Lighting end); if s.Parent == WS_Lighting then WS.OwnSky = s end end
+		end
+		if WS.OwnSky then WS_Track(WS.OwnSky) end
+	end
+
+	local function WS_Scan(root)
+		local ok, list = pcall(function() return root:GetDescendants() end)
+		if ok and list then for _, i in ipairs(list) do if i:IsA("Sky") then WS_Track(i) end end end
+	end
+
+	local function WS_EnforceAll() for sky in pairs(WS.Tracked) do WS_Enforce(sky) end end
+
+	local function WS_InCharacter(d)
+		local p = d.Parent
+		local depth = 0
+		while p and p ~= workspace and depth < 8 do
+			if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
+			p = p.Parent
+			depth = depth + 1
+		end
+		return false
+	end
+
+	local function WS_Apply(d)
+		if not WS.Enabled then return end
+		if d:IsA("BasePart") then
+			if d:IsA("Terrain") then return end
+			WS_Set(d, "CastShadow", false)
+			if d:IsA("MeshPart") then
+				local inChar = WS_InCharacter(d)
+				if not inChar or WS_CFG.Characters then
+					WS_Set(d, "RenderFidelity", Enum.RenderFidelity.Performance)
+					if WS_CFG.Textures then WS_Set(d, "TextureID", "") end
+				end
+			end
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			if WS_CFG.Textures and (WS_CFG.Characters or not WS_InCharacter(d)) then
+				WS_Set(d, "Transparency", 1)
+			end
+		elseif d:IsA("SurfaceAppearance") then
+			if WS_CFG.Textures and (WS_CFG.Characters or not WS_InCharacter(d)) then
+				local par = d.Parent
+				if par then
+					table.insert(WS.Removed, { inst = d, parent = par })
+					pcall(function() d.Parent = nil end)
+				end
+			end
+		elseif d:IsA("ParticleEmitter") then
+			if WS_CFG.Particles then
+				WS_Set(d, "Enabled", false)
+				WS_Set(d, "Rate", 0)
+				WS_Set(d, "Lifetime", NumberRange.new(0))
+			end
+		elseif d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
+			if WS_CFG.Particles then WS_Set(d, "Enabled", false) end
+		elseif d:IsA("Light") then
+			WS_Set(d, "Shadows", false)
+		elseif d:IsA("PostEffect") then
+			WS_Set(d, "Enabled", false)
+		elseif d:IsA("Atmosphere") then
+			WS_Set(d, "Density", 0)
+			WS_Set(d, "Haze", 0)
+			WS_Set(d, "Glare", 0)
+		elseif d:IsA("Clouds") then
+			WS_Set(d, "Enabled", false)
+		elseif d:IsA("Sky") then
+			WS_Track(d)
 		end
 	end
-	if isChar then return end
 
-	-- Jangan ubah Generator atau objek sistem penting
-	local nameLower = obj.Name:lower()
-	local parentName = obj.Parent and obj.Parent.Name:lower() or ""
-	if string.find(nameLower, "generator") or string.find(parentName, "generator") or string.find(nameLower, "interactive") then
-		return
+	local function WS_ScanAll(token)
+		task.spawn(function()
+			local ok, list = pcall(function() return workspace:GetDescendants() end)
+			if ok and list then
+				for i, d in ipairs(list) do
+					if not WS.Enabled or WS.Token ~= token then return end
+					pcall(WS_Apply, d)
+					if i % 400 == 0 then RunService.Heartbeat:Wait() end
+				end
+			end
+			local ok2, l2 = pcall(function() return WS_Lighting:GetDescendants() end)
+			if ok2 and l2 then
+				for _, d in ipairs(l2) do
+					if not WS.Enabled or WS.Token ~= token then return end
+					pcall(WS_Apply, d)
+				end
+			end
+		end)
 	end
 
-	-- Ubah jadi abu-abu smooth ringan
-	pcall(function()
-		obj.Material = Enum.Material.SmoothPlastic
-		obj.Color = Color3.fromRGB(200, 200, 200)
-		obj.CastShadow = false
-	end)
-end
-
-local function applyWorldSettings(state)
-	WS.Cfg.Enabled = state
-	storeLighting()
-	
-	if state then
-		Lighting.FogEnd = 999999
-		Lighting.GlobalShadows = false
-		Lighting.Brightness = 2
-		Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-		
-		for _, v in ipairs(Lighting:GetChildren()) do
-			if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("Sky") then
-				v.Enabled = false
+	local function WS_RestoreAll()
+		for inst, props in pairs(WS.Orig) do
+			for prop, val in pairs(props) do
+				pcall(function() inst[prop] = val end)
 			end
 		end
-
-		if Terrain then
+		WS.Orig = setmetatable({}, { __mode = "k" })
+		for _, r in ipairs(WS.Removed) do
 			pcall(function()
-				Terrain.WaterWaveSize = 0
-				Terrain.WaterWaveTransparency = 0.5
-				Terrain.WaterTransparency = 0.8
-				sethiddenproperty(Terrain, "Decoration", false)
+				if r.inst and r.parent and r.parent.Parent then r.inst.Parent = r.parent end
 			end)
 		end
-
-		-- Optimalkan semua objek yang sudah ada
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			optimizePart(obj)
-			if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
-				pcall(function() obj:Destroy() end)
-			end
-		end
-
-		-- Pantau objek baru yang muncul (Streaming / Map loading)
-		if not connection then
-			connection = workspace.DescendantAdded:Connect(function(obj)
-				if not WS.Cfg.Enabled then return end
-				if obj:IsA("BasePart") then
-					optimizePart(obj)
-				elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") then
-					pcall(function() obj:Destroy() end)
-				end
-			end)
-		end
-	else
-		if connection then
-			connection:Disconnect()
-			connection = nil
-		end
-		if originalLighting.Initialized then
-			Lighting.Brightness = originalLighting.Brightness
-			Lighting.ClockTime = originalLighting.ClockTime
-			Lighting.FogEnd = originalLighting.FogEnd
-			Lighting.GlobalShadows = originalLighting.GlobalShadows
-			Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient
-			for _, v in ipairs(Lighting:GetChildren()) do
-				if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("Sky") then
-					v.Enabled = true
-				end
-			end
+		WS.Removed = {}
+		if WS.OrigQuality ~= nil then
+			pcall(function() settings().Rendering.QualityLevel = WS.OrigQuality end)
+			WS.OrigQuality = nil
 		end
 	end
-end
 
-local WS_Row = Add("World Optimization")
-WS_Row:Toggle(false, function(state)
-	applyWorldSettings(state)
-end)
-end)
+	local WS_Row = Add("World Setting")
+	WS_Row:Toggle(false, function(state)
+		WS.Enabled = state
+		WS.Token = WS.Token + 1
+		if state then
+			pcall(function()
+				local r = settings().Rendering
+				if WS.OrigQuality == nil then WS.OrigQuality = r.QualityLevel end
+				r.QualityLevel = Enum.QualityLevel.Level01
+			end)
+			WS_EnsureSky()
+			WS_Scan(WS_Lighting)
+			WS_EnforceLight()
+			WS_ScanAll(WS.Token)
+			table.insert(WS.GlobalConns, workspace.DescendantAdded:Connect(function(d) if WS.Enabled then pcall(WS_Apply, d) end end))
+			table.insert(WS.GlobalConns, WS_Lighting.DescendantAdded:Connect(function(d) if WS.Enabled then pcall(WS_Apply, d) end end))
+			table.insert(WS.GlobalConns, WS_Lighting.ChildRemoved:Connect(function() if WS.Enabled then WS_EnsureSky() end end))
+			for _, p in ipairs(WS_LIGHT_PROPS) do
+				local ok, sig = pcall(function() return WS_Lighting:GetPropertyChangedSignal(p) end)
+				if ok and sig then
+					table.insert(WS.GlobalConns, sig:Connect(function() if WS.Enabled and not WS.Enforcing then WS_EnforceLight() end end))
+				end
+			end
+			local acc, accSky = 0, 0
+			WS.Heartbeat = RunService.Heartbeat:Connect(function(dt)
+				if not WS.Enabled then return end
+				acc = acc + dt
+				if acc < 0.25 then return end
+				accSky = accSky + acc
+				acc = 0
+				pcall(function()
+					WS_EnsureSky()
+					WS_EnforceAll()
+					WS_EnforceLight()
+					if accSky >= 2 then accSky = 0; WS_Scan(WS_Lighting) end
+				end)
+			end)
+		else
+			if WS.Heartbeat then pcall(function() WS.Heartbeat:Disconnect() end); WS.Heartbeat = nil end
+			for _, c in ipairs(WS.GlobalConns) do pcall(function() c:Disconnect() end) end
+			WS.GlobalConns = {}
+			for sky in pairs(WS.Tracked) do WS_Untrack(sky) end
+			if WS.OwnSky then pcall(function() WS.OwnSky:Destroy() end); WS.OwnSky = nil end
+			WS_RestoreAll()
+		end
+	end)
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
