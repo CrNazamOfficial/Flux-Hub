@@ -6922,21 +6922,18 @@ SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 end)
 
 -- ============================================================
--- 8. WORLD SETTINGS (Terrain Textured, Smooth Gray/White Objects, No Grass)
+-- 8. WORLD SETTINGS (Real-time Potato & Smooth Gray World)
 -- ============================================================
 local WS = {
 	Cfg = {
 		Enabled = false,
-		NoFog = true,
-		SmoothObjects = true,
-		RemoveFoliage = true,
-		PotatoTerrain = true, -- Terrain tetap ada texture dasarnya tapi tanpa rumput/detail berat
 	},
 }
 
 local Lighting = game:GetService("Lighting")
 local Terrain = workspace:FindFirstChildOfClass("Terrain")
 local originalLighting = {}
+local connection = nil
 
 local function storeLighting()
 	if not originalLighting.Initialized then
@@ -6949,61 +6946,84 @@ local function storeLighting()
 	end
 end
 
+local function optimizePart(obj)
+	if not WS.Cfg.Enabled then return end
+	if not obj:IsA("BasePart") then return end
+
+	-- Jangan ubah karakter player, bagian tubuh, atau aksesori
+	local isChar = false
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character and obj:IsDescendantOf(p.Character) then
+			isChar = true
+			break
+		end
+	end
+	if isChar then return end
+
+	-- Jangan ubah Generator atau objek sistem penting
+	local nameLower = obj.Name:lower()
+	local parentName = obj.Parent and obj.Parent.Name:lower() or ""
+	if string.find(nameLower, "generator") or string.find(parentName, "generator") or string.find(nameLower, "interactive") then
+		return
+	end
+
+	-- Ubah jadi abu-abu smooth ringan
+	pcall(function()
+		obj.Material = Enum.Material.SmoothPlastic
+		obj.Color = Color3.fromRGB(200, 200, 200)
+		obj.CastShadow = false
+	end)
+end
+
 local function applyWorldSettings(state)
+	WS.Cfg.Enabled = state
 	storeLighting()
 	
 	if state then
-		if WS.Cfg.NoFog then
-			Lighting.FogEnd = 999999
-			Lighting.GlobalShadows = false
-			Lighting.Brightness = 2
-			Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-			for _, v in ipairs(Lighting:GetChildren()) do
-				if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("Sky") then
-					v.Enabled = false
-				end
+		Lighting.FogEnd = 999999
+		Lighting.GlobalShadows = false
+		Lighting.Brightness = 2
+		Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+		
+		for _, v in ipairs(Lighting:GetChildren()) do
+			if v:IsA("Atmosphere") or v:IsA("PostEffect") or v:IsA("Sky") then
+				v.Enabled = false
 			end
 		end
 
-		if WS.Cfg.SmoothObjects or WS.Cfg.RemoveFoliage then
-			for _, obj in ipairs(workspace:GetDescendants()) do
-				local isChar = false
-				for _, p in ipairs(Players:GetPlayers()) do
-					if p.Character and obj:IsDescendantOf(p.Character) then
-						isChar = true
-						break
-					end
-				end
-
-				if not isChar then
-					if WS.Cfg.SmoothObjects and obj:IsA("BasePart") then
-						obj.Material = Enum.Material.SmoothPlastic
-						obj.Color = Color3.fromRGB(220, 220, 220) -- Warna abu-abu terang / putih bersih (smooth)
-						obj.CastShadow = false
-					elseif WS.Cfg.RemoveFoliage and (obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles")) then
-						obj:Destroy()
-					elseif WS.Cfg.RemoveFoliage and obj:IsA("Model") and (string.find(obj.Name:lower(), "grass") or string.find(obj.Name:lower(), "foliage") or string.find(obj.Name:lower(), "plant")) then
-						for _, part in ipairs(obj:GetDescendants()) do
-							if part:IsA("BasePart") then
-								part.Transparency = 1
-								part.CanCollide = false
-							end
-						end
-					end
-				end
-			end
-		end
-
-		if WS.Cfg.PotatoTerrain and Terrain then
+		if Terrain then
 			pcall(function()
 				Terrain.WaterWaveSize = 0
 				Terrain.WaterWaveTransparency = 0.5
 				Terrain.WaterTransparency = 0.8
-				-- Terrain texture tetap aktif, tapi hiasan rumput/bunga dimatikan total agar ringan
-				sethiddenproperty(Terrain, "Decoration", false) 
+				sethiddenproperty(Terrain, "Decoration", false)
+			end)
+		end
+
+		-- Optimalkan semua objek yang sudah ada
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			optimizePart(obj)
+			if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles") then
+				pcall(function() obj:Destroy() end)
+			end
+		end
+
+		-- Pantau objek baru yang muncul (Streaming / Map loading)
+		if not connection then
+			connection = workspace.DescendantAdded:Connect(function(obj)
+				if not WS.Cfg.Enabled then return end
+				if obj:IsA("BasePart") then
+					optimizePart(obj)
+				elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") then
+					pcall(function() obj:Destroy() end)
+				end
 			end)
 		end
 	else
+		if connection then
+			connection:Disconnect()
+			connection = nil
+		end
 		if originalLighting.Initialized then
 			Lighting.Brightness = originalLighting.Brightness
 			Lighting.ClockTime = originalLighting.ClockTime
@@ -7021,11 +7041,9 @@ end
 
 local WS_Row = Add("World Optimization")
 WS_Row:Toggle(false, function(state)
-	WS.Cfg.Enabled = state
 	applyWorldSettings(state)
 end)
 end)
-
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
