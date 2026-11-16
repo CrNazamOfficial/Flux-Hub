@@ -7006,6 +7006,8 @@ end)
 	local function WS_EnforceAll() for sky in pairs(WS.Tracked) do WS_Enforce(sky) end end
 
 	local function WS_InCharacter(d)
+		local cam = workspace.CurrentCamera
+		if cam and d:IsDescendantOf(cam) then return true end
 		local p = d.Parent
 		local depth = 0
 		while p and p ~= workspace and depth < 8 do
@@ -7041,13 +7043,13 @@ end)
 				end
 			end
 		elseif d:IsA("ParticleEmitter") then
-			if WS_CFG.Particles then
+			if WS_CFG.Particles and (WS_CFG.Characters or not WS_InCharacter(d)) then
 				WS_Set(d, "Enabled", false)
 				WS_Set(d, "Rate", 0)
 				WS_Set(d, "Lifetime", NumberRange.new(0))
 			end
 		elseif d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-			if WS_CFG.Particles then WS_Set(d, "Enabled", false) end
+			if WS_CFG.Particles and (WS_CFG.Characters or not WS_InCharacter(d)) then WS_Set(d, "Enabled", false) end
 		elseif d:IsA("Light") then
 			WS_Set(d, "Shadows", false)
 		elseif d:IsA("PostEffect") then
@@ -7148,7 +7150,7 @@ end)
 			WS_RestoreAll()
 		end
 	end)
-end) 
+end)
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
