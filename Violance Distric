@@ -6922,16 +6922,15 @@ SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 end)
 
 -- ============================================================
--- 8. WORLD SETTINGS (Ultra Optimization, No Fog/Smoke, Smooth Shading, ESP Compatible)
+-- 8. WORLD SETTINGS (Terrain Textured, Smooth Gray/White Objects, No Grass)
 -- ============================================================
 local WS = {
 	Cfg = {
 		Enabled = false,
 		NoFog = true,
-		FullBright = true,
 		SmoothObjects = true,
-		RemoveFoliage = true, -- Menghapus rumput, detail kecil, dan partikel
-		PotatoTerrain = true, -- Terrain ringan
+		RemoveFoliage = true,
+		PotatoTerrain = true, -- Terrain tetap ada texture dasarnya tapi tanpa rumput/detail berat
 	},
 }
 
@@ -6954,7 +6953,6 @@ local function applyWorldSettings(state)
 	storeLighting()
 	
 	if state then
-		-- 1. Hapus Fog, Asap, & Gelap
 		if WS.Cfg.NoFog then
 			Lighting.FogEnd = 999999
 			Lighting.GlobalShadows = false
@@ -6967,12 +6965,10 @@ local function applyWorldSettings(state)
 			end
 		end
 
-		-- 2. Buat Semua Objek Mulus Tanpa Texture & Hapus Rumput/Foliage
 		if WS.Cfg.SmoothObjects or WS.Cfg.RemoveFoliage then
 			for _, obj in ipairs(workspace:GetDescendants()) do
-				-- Abaikan karakter player agar ESP dan hitbox aman
 				local isChar = false
-				for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+				for _, p in ipairs(Players:GetPlayers()) do
 					if p.Character and obj:IsDescendantOf(p.Character) then
 						isChar = true
 						break
@@ -6982,11 +6978,11 @@ local function applyWorldSettings(state)
 				if not isChar then
 					if WS.Cfg.SmoothObjects and obj:IsA("BasePart") then
 						obj.Material = Enum.Material.SmoothPlastic
+						obj.Color = Color3.fromRGB(220, 220, 220) -- Warna abu-abu terang / putih bersih (smooth)
 						obj.CastShadow = false
 					elseif WS.Cfg.RemoveFoliage and (obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Fire") or obj:IsA("Smoke") or obj:IsA("Sparkles")) then
 						obj:Destroy()
-					elseif WS.Cfg.RemoveFoliage and obj:IsA("Model") and (string.find(obj.Name:lower(), "grass") or string.find(obj.Name:lower(), "foliage") or string.find(obj.Name:lower(), "plant") or string.find(obj.Name:lower(), "tree")) then
-						-- Opsional: Matikan atau bersihkan detail tanaman yang bikin berat
+					elseif WS.Cfg.RemoveFoliage and obj:IsA("Model") and (string.find(obj.Name:lower(), "grass") or string.find(obj.Name:lower(), "foliage") or string.find(obj.Name:lower(), "plant")) then
 						for _, part in ipairs(obj:GetDescendants()) do
 							if part:IsA("BasePart") then
 								part.Transparency = 1
@@ -6998,18 +6994,16 @@ local function applyWorldSettings(state)
 			end
 		end
 
-		-- 3. Terrain Versi Ringan (Potato Terrain)
 		if WS.Cfg.PotatoTerrain and Terrain then
 			pcall(function()
 				Terrain.WaterWaveSize = 0
-				Terrain.WaterWaveTransparency = 1
-				Terrain.WaterTransparency = 1
-				Terrain.WaterReflectance = 0
-				sethiddenproperty(Terrain, "Decoration", false) -- Mematikan detail rumput/bunga di tanah
+				Terrain.WaterWaveTransparency = 0.5
+				Terrain.WaterTransparency = 0.8
+				-- Terrain texture tetap aktif, tapi hiasan rumput/bunga dimatikan total agar ringan
+				sethiddenproperty(Terrain, "Decoration", false) 
 			end)
 		end
 	else
-		-- Kembalikan semula jika dimatikan
 		if originalLighting.Initialized then
 			Lighting.Brightness = originalLighting.Brightness
 			Lighting.ClockTime = originalLighting.ClockTime
@@ -7025,11 +7019,11 @@ local function applyWorldSettings(state)
 	end
 end
 
--- Integrasi UI Tab World / Settings Anda
 local WS_Row = Add("World Optimization")
 WS_Row:Toggle(false, function(state)
 	WS.Cfg.Enabled = state
 	applyWorldSettings(state)
+end)
 end)
 
 
