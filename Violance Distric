@@ -7148,6 +7148,7 @@ end)
 			WS_RestoreAll()
 		end
 	end)
+end) 
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
