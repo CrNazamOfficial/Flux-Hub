@@ -7152,821 +7152,956 @@ end)
 	end)
 
 Title ("Fake Avatar")
--- ============================================================
--- LARP AVATAR (FIXED FULL) | FLUX HUB
--- ============================================================
+-- FAKE AVATAR + FAKE ACCESSORIES
+-- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
+-- tepat sebelum baris "end)" penutup tab Visual.
 do
-	local LP = Players.LocalPlayer
-	local selectedUserId = LP.UserId
-	local selectedUsername = LP.Name
-	local enabled = false
-	local selectedAccessories = {}
-	local applyToken = 0
-	local charConn = nil
-	local spawnedVisuals = {}
+	local function FA_Install()
+		local FA_Page = Pages["Visual"]
+		local FA_LP = Players.LocalPlayer
+		if not FA_Page or not FA_LP then return end
 
-	-- Format: { Nama, AssetId, Slot, Offset }
-	-- Slot: "Head", "RightLeg", "LeftLeg", "Torso"
-	local ACCESSORIES = {
-		{ "Headless Horseman", 15093053680, "Head", CFrame.new() },
-		{ "Korblox Deathspeaker Kanan", 139607718, "RightLeg", CFrame.new() },
-		{ "Korblox Deathspeaker Kiri", 139607673, "LeftLeg", CFrame.new() },
-		{ "Fiery Horns of the Netherworld", 215718515, "Head", CFrame.new(0, 0.35, 0) },
-		{ "Frozen Horns of the Frigid Planes", 74891470, "Head", CFrame.new(0, 0.35, 0) },
-		{ "Poisoned Horns of the Toxic Wasteland", 1744060292, "Head", CFrame.new(0, 0.35, 0) },
-		{ "St Patrick's Day Fairy", 226189871, "Torso", CFrame.new(0, 0.2, 0.45) },
-		{ "Winter Fairy", 141742418, "Torso", CFrame.new(0, 0.2, 0.45) },
-		{ "Fall Fairy", 128217885, "Torso", CFrame.new(0, 0.2, 0.45) },
-		{ "8-Bit Royal Crown", 10159600649, "Head", CFrame.new(0, 0.45, 0) },
-		{ "8-Bit HP Bar", 10159610478, "Head", CFrame.new(0, 1.15, 0) },
-		{ "8-Bit Tabby Cat", 10159617728, "Head", CFrame.new(0.75, 0.5, 0) },
-		{ "8-Bit Roblox Coin", 10159622004, "Torso", CFrame.new(-0.75, 0.3, 0) },
-		{ "8-Bit Extra Life", 10159606132, "Torso", CFrame.new(0.75, 0.3, 0) },
-	}
+		----------------------------------------------------------------
+		-- DATA ITEM (nama tampil, asset id, slot untuk bagian tubuh)
+		----------------------------------------------------------------
+		local FA_ITEMS = {
+			{ Name = "Headless Horseman", Id = 15093053680, Slot = "Head", Tag = "Head" },
+			{ Name = "Korblox Deathspeaker Kanan", Id = 139607718, Slot = "RightLeg", Tag = "Kaki Kanan" },
+			{ Name = "Korblox Deathspeaker Kiri", Id = 139607673, Slot = "LeftLeg", Tag = "Kaki Kiri" },
+			{ Name = "Fiery Horns of the Netherworld", Id = 215718515, Tag = "" },
+			{ Name = "Frozen Horns of the Frigid Planes", Id = 74891470, Tag = "" },
+			{ Name = "Poisoned Horns of the Toxic Wasteland", Id = 1744060292, Tag = "" },
+			{ Name = "St Patrick's Day Fairy", Id = 226189871, Tag = "" },
+			{ Name = "Winter Fairy", Id = 141742418, Tag = "" },
+			{ Name = "Fall Fairy", Id = 128217885, Tag = "" },
+			{ Name = "8-Bit Royal Crown", Id = 10159600649, Tag = "" },
+			{ Name = "8-Bit HP Bar", Id = 10159610478, Tag = "" },
+			{ Name = "8-Bit Tabby Cat", Id = 10159617728, Tag = "" },
+			{ Name = "8-Bit Roblox Coin", Id = 10159622004, Tag = "" },
+			{ Name = "8-Bit Extra Life", Id = 10159606132, Tag = "" },
+		}
 
-	local function notify(msg)
-		pcall(showNotif, "Larp Avatar", msg, ICONS.Logo, 2)
-	end
+		local FA_ACC_FIELD = {
+			[8] = "HatAccessory", [41] = "HairAccessory", [42] = "FaceAccessory", [43] = "NeckAccessory",
+			[44] = "ShouldersAccessory", [45] = "FrontAccessory", [46] = "BackAccessory", [47] = "WaistAccessory",
+		}
+		local FA_BODY_FIELD = {
+			[17] = "Head", [27] = "Torso", [28] = "RightArm", [29] = "LeftArm", [30] = "LeftLeg", [31] = "RightLeg",
+		}
+		local FA_R15 = {
+			Head = { "Head" },
+			Torso = { "UpperTorso", "LowerTorso" },
+			LeftArm = { "LeftUpperArm", "LeftLowerArm", "LeftHand" },
+			RightArm = { "RightUpperArm", "RightLowerArm", "RightHand" },
+			LeftLeg = { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" },
+			RightLeg = { "RightUpperLeg", "RightLowerLeg", "RightFoot" },
+		}
 
-	local function clearVisuals()
-		for _, item in ipairs(spawnedVisuals) do
-			pcall(function()
-				if item and item.Parent then
-					item:Destroy()
-				end
+		local FA = {
+			Enabled = false,
+			Target = nil,
+			Selected = {},
+			Busy = false,
+			Dirty = false,
+			Template = nil,
+			TplFailAt = -100,
+			Backups = setmetatable({}, { __mode = "k" }),
+			Resolved = {},
+		}
+
+		----------------------------------------------------------------
+		-- UTILITAS
+		----------------------------------------------------------------
+		local function FA_Notify(title, sub)
+			pcall(showNotif, title, sub, ICONS.Logo, 1.4)
+		end
+
+		local function FA_IdOf(s)
+			return string.match(tostring(s or ""), "%d+") or ""
+		end
+
+		local function FA_Clean(txt)
+			txt = tostring(txt or "")
+			txt = string.gsub(txt, "^%s+", "")
+			txt = string.gsub(txt, "%s+$", "")
+			txt = string.gsub(txt, "^@", "")
+			if #txt < 3 or #txt > 20 or not string.match(txt, "^[%w_]+$") then return nil end
+			return txt
+		end
+
+		local function FA_SelectedItems()
+			local list = {}
+			for _, it in ipairs(FA_ITEMS) do
+				if FA.Selected[it.Name] then list[#list + 1] = it end
+			end
+			return list
+		end
+
+		local function FA_Sig()
+			local parts = { FA.Target and tostring(FA.Target.Id) or "0" }
+			for _, it in ipairs(FA_SelectedItems()) do parts[#parts + 1] = tostring(it.Id) end
+			return table.concat(parts, "|")
+		end
+
+		local function FA_Resolve(item)
+			local cached = FA.Resolved[item.Id]
+			if cached then return cached end
+			local kind, field = nil, nil
+			local ok, info = pcall(function()
+				return MarketplaceService:GetProductInfo(item.Id, Enum.InfoType.Asset)
 			end)
+			if ok and type(info) == "table" then
+				local t = info.AssetTypeId
+				if FA_BODY_FIELD[t] then kind, field = "Body", FA_BODY_FIELD[t]
+				elseif FA_ACC_FIELD[t] then kind, field = "Acc", FA_ACC_FIELD[t] end
+			end
+			if kind then
+				local res = { Kind = kind, Field = field }
+				FA.Resolved[item.Id] = res
+				return res
+			end
+			if item.Slot then return { Kind = "Body", Field = item.Slot } end
+			return { Kind = "Acc", Field = "HatAccessory" }
 		end
-		table.clear(spawnedVisuals)
-	end
 
-	local function getLimb(char, slot)
-		if not char then return nil end
-		if slot == "Head" then
-			return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-		elseif slot == "RightLeg" then
-			return char:FindFirstChild("Right Leg") or char:FindFirstChild("RightLowerLeg") or char:FindFirstChild("RightUpperLeg")
-		elseif slot == "LeftLeg" then
-			return char:FindFirstChild("Left Leg") or char:FindFirstChild("LeftLowerLeg") or char:FindFirstChild("LeftUpperLeg")
-		else
-			return char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+		local function FA_Lookup(name)
+			local id = nil
+			for _ = 1, 2 do
+				local ok, res = pcall(function() return Players:GetUserIdFromNameAsync(name) end)
+				if ok and type(res) == "number" and res > 0 then id = res; break end
+				task.wait(0.6)
+			end
+			if not id then return nil, "Username tidak ditemukan" end
+			local okN, uname = pcall(function() return Players:GetNameFromUserIdAsync(id) end)
+			if not okN or type(uname) ~= "string" then uname = name end
+			local desc = nil
+			for _ = 1, 2 do
+				local ok, res = pcall(function() return Players:GetHumanoidDescriptionFromUserId(id) end)
+				if ok and res then desc = res; break end
+				task.wait(0.6)
+			end
+			if not desc then return nil, "Avatar gagal diambil" end
+			return { Id = id, Name = uname, Desc = desc }
 		end
-	end
 
-	local function fetchAssetObjects(assetId)
-		local ok, result = pcall(function()
-			return game:GetObjects("rbxassetid://" .. tostring(assetId))
-		end)
-		if ok and type(result) == "table" and #result > 0 then
-			return result
-		end
-		return nil
-	end
-
-	local function attachSingleAccessory(char, hum, accName, assetId, slot, offset)
-		if not char or not char.Parent then return end
-
-		-- Headless: sembunyikan kepala asli & decal wajah
-		if assetId == 15093053680 then
-			local head = char:FindFirstChild("Head")
-			if head and head:IsA("BasePart") then
-				head.Transparency = 1
-				for _, d in ipairs(head:GetDescendants()) do
-					if d:IsA("Decal") then
-						d.Transparency = 1
-					end
+		----------------------------------------------------------------
+		-- BUILD DESCRIPTION DAN TEMPLATE MODEL
+		----------------------------------------------------------------
+		local function FA_BuildDesc()
+			local desc = nil
+			if FA.Target and FA.Target.Desc then
+				local ok, c = pcall(function() return FA.Target.Desc:Clone() end)
+				if ok and c then desc = c end
+				if not desc then
+					local ok2, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(FA.Target.Id) end)
+					if ok2 and d then desc = d end
 				end
 			end
-		end
-
-		-- Korblox kanan / kiri: sesuaikan tampilan limb kaki terkait
-		if slot == "RightLeg" or slot == "LeftLeg" then
-			local limb = getLimb(char, slot)
-			if limb and limb:IsA("BasePart") then
-				limb.Transparency = 0
-			end
-		end
-
-		local objs = fetchAssetObjects(assetId)
-		if not objs then return end
-
-		for _, obj in ipairs(objs) do
-			if obj and (obj:IsA("Accoutrement") or obj:IsA("Accessory")) then
-				if hum then
-					local added = pcall(function()
-						hum:AddAccessory(obj)
+			if not desc then desc = Instance.new("HumanoidDescription") end
+			local slots = {}
+			for _, it in ipairs(FA_SelectedItems()) do
+				local r = FA_Resolve(it)
+				if r.Kind == "Body" then
+					pcall(function() desc[r.Field] = it.Id end)
+					slots[r.Field] = true
+				else
+					pcall(function()
+						local cur = desc[r.Field]
+						if type(cur) ~= "string" then cur = "" end
+						desc[r.Field] = (cur ~= "" and (cur .. ",") or "") .. tostring(it.Id)
 					end)
-					if added then
-						table.insert(spawnedVisuals, obj)
-						return
-					end
 				end
 			end
+			return desc, slots
 		end
 
-		-- Fallback pasang ke limb jika bukan Accessory standar
-		local targetLimb = getLimb(char, slot)
-		if not targetLimb or not targetLimb:IsA("BasePart") then
-			for _, o in ipairs(objs) do pcall(function() o:Destroy() end) end
-			return
-		end
-
-		for _, obj in ipairs(objs) do
-			local part = nil
-			if obj:IsA("BasePart") then
-				part = obj
-			elseif obj:IsA("Model") then
-				part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-			elseif obj:IsA("Accoutrement") then
-				part = obj:FindFirstChild("Handle", true) or obj:FindFirstChildWhichIsA("BasePart", true)
+		local function FA_MakeModel(desc)
+			for _ = 1, 2 do
+				local ok, model = pcall(function()
+					return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+				end)
+				if ok and typeof(model) == "Instance" then
+					for _, d in ipairs(model:GetDescendants()) do
+						if d:IsA("LuaSourceContainer") then
+							pcall(function() d:Destroy() end)
+						elseif d:IsA("BasePart") and not d:FindFirstAncestorWhichIsA("Accessory") then
+							d.Anchored = true
+							d.CanCollide = false
+						end
+					end
+					pcall(function()
+						model:PivotTo(CFrame.new(0, 40000, 0))
+						model.Parent = workspace.CurrentCamera or workspace
+					end)
+					task.wait(0.4)
+					pcall(function() model.Parent = nil end)
+					return model
+				end
+				task.wait(0.5)
 			end
+			return nil
+		end
 
-			if part and part:IsA("BasePart") then
-				local holder = Instance.new("Model")
-				holder.Name = "FakeAcc_" .. tostring(assetId)
-
-				part.Anchored = false
-				part.CanCollide = false
-				part.CanTouch = false
-				part.CanQuery = false
-				part.Massless = true
-				part.CFrame = targetLimb.CFrame * (offset or CFrame.new())
-				part.Parent = holder
-
-				local weld = Instance.new("WeldConstraint")
-				weld.Part0 = targetLimb
-				weld.Part1 = part
-				weld.Parent = part
-
-				if obj:IsA("Model") then
-					for _, descPart in ipairs(obj:GetDescendants()) do
-						if descPart:IsA("BasePart") and descPart ~= part then
-							descPart.Anchored = false
-							descPart.CanCollide = false
-							descPart.CanTouch = false
-							descPart.CanQuery = false
-							descPart.Massless = true
-							descPart.Parent = holder
-							local w = Instance.new("WeldConstraint")
-							w.Part0 = part
-							w.Part1 = descPart
-							w.Parent = descPart
+		local function FA_FallbackModel()
+			local holder = Instance.new("Model")
+			local any = false
+			for _, it in ipairs(FA_SelectedItems()) do
+				local r = FA_Resolve(it)
+				if r.Kind == "Acc" then
+					local ok, objs = pcall(function() return game:GetObjects("rbxassetid://" .. tostring(it.Id)) end)
+					if ok and type(objs) == "table" then
+						for _, o in ipairs(objs) do
+							local acc = nil
+							if o:IsA("Accessory") then acc = o else acc = o:FindFirstChildWhichIsA("Accessory", true) end
+							if acc then acc.Parent = holder; any = true end
 						end
 					end
 				end
-
-				holder.PrimaryPart = part
-				holder.Parent = char
-				table.insert(spawnedVisuals, holder)
-				break
 			end
+			if any then return holder end
+			pcall(function() holder:Destroy() end)
+			return nil
 		end
 
-		for _, o in ipairs(objs) do
-			if o.Parent == nil then
-				pcall(function() o:Destroy() end)
+		local function FA_BuildTemplate(sig)
+			local desc, slots = FA_BuildDesc()
+			local model = FA_MakeModel(desc)
+			local full = FA.Target ~= nil
+			if not model then
+				model = FA_FallbackModel()
+				full = false
+				slots = {}
 			end
-		end
-	end
-
-	local function applyFakeAccessories(char, hum)
-		for _, item in ipairs(ACCESSORIES) do
-			if selectedAccessories[item[2]] then
-				attachSingleAccessory(char, hum, item[1], item[2], item[3], item[4])
-			end
-		end
-	end
-
-	local function getFullDescription(userId)
-		local ok, desc = pcall(function()
-			return Players:GetHumanoidDescriptionFromUserId(userId)
-		end)
-		if not ok or not desc then return nil end
-
-		local accList = {}
-		pcall(function()
-			accList = desc:GetAccessories(true)
-		end)
-
-		for _, item in ipairs(ACCESSORIES) do
-			if selectedAccessories[item[2]] then
-				table.insert(accList, {
-					AssetId = item[2],
-					AccessoryType = Enum.AccessoryType.Hat,
-					IsLayered = false,
-				})
-			end
+			pcall(function() desc:Destroy() end)
+			if not model then return nil end
+			return { Sig = sig, Model = model, Slots = slots, Full = full }
 		end
 
-		pcall(function()
-			desc:SetAccessories(accList, true)
-		end)
+		----------------------------------------------------------------
+		-- OPERASI PART (copy / swap / restore)
+		----------------------------------------------------------------
+		local function FA_IsLook(c)
+			return c:IsA("Decal") or c:IsA("Texture") or c:IsA("SurfaceAppearance") or c:IsA("DataModelMesh")
+		end
 
-		return desc
-	end
-
-	local function copyAppearanceFallback(srcModel, dstChar)
-		if not srcModel or not dstChar then return end
-		local dstHum = dstChar:FindFirstChildOfClass("Humanoid")
-
-		for _, part in ipairs(dstChar:GetChildren()) do
-			if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-				local srcPart = srcModel:FindFirstChild(part.Name)
-				if srcPart and srcPart:IsA("BasePart") then
+		local function FA_Swap(char, from, to)
+			pcall(function() to.CFrame = from.CFrame end)
+			to.Parent = char
+			for _, c in ipairs(from:GetChildren()) do
+				if not FA_IsLook(c) then pcall(function() c.Parent = to end) end
+			end
+			for _, d in ipairs(char:GetDescendants()) do
+				if d:IsA("JointInstance") or d:IsA("WeldConstraint") then
 					pcall(function()
-						part.Color = srcPart.Color
+						if d.Part0 == from then d.Part0 = to end
+						if d.Part1 == from then d.Part1 = to end
 					end)
 				end
 			end
+			from.Parent = nil
 		end
 
-		for _, cls in ipairs({ "Shirt", "Pants", "ShirtGraphic", "BodyColors" }) do
-			local oldInst = dstChar:FindFirstChildOfClass(cls)
-			local newInst = srcModel:FindFirstChildOfClass(cls)
-			if newInst then
-				if oldInst then pcall(function() oldInst:Destroy() end) end
-				local clone = newInst:Clone()
-				clone.Parent = dstChar
-				table.insert(spawnedVisuals, clone)
-			end
-		end
-
-		if dstHum then
-			for _, child in ipairs(dstChar:GetChildren()) do
-				if child:IsA("Accoutrement") and not child.Name:match("^FakeAcc_") then
-					pcall(function() child:Destroy() end)
+		local function FA_ReplacePart(bk, char, dst, src)
+			local ok, new = pcall(function() return src:Clone() end)
+			if not ok or not new then return nil end
+			for _, c in ipairs(new:GetChildren()) do
+				if c:IsA("Attachment") or c:IsA("JointInstance") or c:IsA("WeldConstraint") then
+					pcall(function() c:Destroy() end)
 				end
 			end
-			for _, child in ipairs(srcModel:GetChildren()) do
-				if child:IsA("Accoutrement") then
-					local okClone, clonedAcc = pcall(function() return child:Clone() end)
-					if okClone and clonedAcc then
-						pcall(function() dstHum:AddAccessory(clonedAcc) end)
-						table.insert(spawnedVisuals, clonedAcc)
+			new.Name = dst.Name
+			pcall(function()
+				new.Anchored = false
+				new.CanCollide = dst.CanCollide
+				new.Massless = dst.Massless
+				new.Size = dst.Size
+			end)
+			local okSwap = pcall(FA_Swap, char, dst, new)
+			if not okSwap then return nil end
+			bk.Swapped[#bk.Swapped + 1] = { Old = dst, New = new }
+			return new
+		end
+
+		local function FA_SaveProps(bk, part)
+			if bk.Props[part] then return end
+			bk.Props[part] = {
+				MeshId = part.MeshId, TextureID = part.TextureID, Color = part.Color,
+				Transparency = part.Transparency, Size = part.Size,
+			}
+		end
+
+		local function FA_CopyLook(bk, src, dst)
+			local isHead = dst.Name == "Head"
+			local function wanted(c)
+				return c:IsA("SurfaceAppearance") or (isHead and c:IsA("Decal"))
+			end
+			local fresh = {}
+			for _, c in ipairs(src:GetChildren()) do
+				if wanted(c) then fresh[#fresh + 1] = c end
+			end
+			if #fresh == 0 and not isHead then return end
+			for _, c in ipairs(dst:GetChildren()) do
+				if wanted(c) then
+					bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = dst }
+					c.Parent = nil
+				end
+			end
+			for _, c in ipairs(fresh) do
+				local ok, cl = pcall(function() return c:Clone() end)
+				if ok and cl then
+					cl.Parent = dst
+					bk.Added[#bk.Added + 1] = cl
+				end
+			end
+		end
+
+		local function FA_CopyPart(bk, char, src, dst, withColor)
+			if not (src and dst and src:IsA("BasePart") and dst:IsA("BasePart")) then return end
+			local final = dst
+			if src:IsA("MeshPart") and dst:IsA("MeshPart") then
+				FA_SaveProps(bk, dst)
+				local size = dst.Size
+				pcall(function() dst.MeshId = src.MeshId end)
+				pcall(function() dst.TextureID = src.TextureID end)
+				pcall(function() if dst.Size ~= size then dst.Size = size end end)
+				if withColor then pcall(function() dst.Color = src.Color end) end
+				if dst.Name == "Head" then pcall(function() dst.Transparency = src.Transparency end) end
+				if FA_IdOf(dst.MeshId) ~= FA_IdOf(src.MeshId) then
+					local new = FA_ReplacePart(bk, char, dst, src)
+					if new then final = new end
+				else
+					pcall(FA_CopyLook, bk, src, dst)
+				end
+			else
+				local new = FA_ReplacePart(bk, char, dst, src)
+				if new then final = new end
+			end
+			if final:IsA("MeshPart") then bk.Want[final] = FA_IdOf(final.MeshId) end
+		end
+
+		local function FA_Restore(char)
+			if not char then return end
+			local bk = FA.Backups[char]
+			FA.Backups[char] = nil
+			pcall(function() char:SetAttribute("FA_Sig", nil) end)
+			if not bk then return end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			for i = #bk.Added, 1, -1 do
+				pcall(function() bk.Added[i]:Destroy() end)
+			end
+			for i = #bk.Swapped, 1, -1 do
+				local s = bk.Swapped[i]
+				pcall(function()
+					if s.New.Parent then FA_Swap(char, s.New, s.Old) end
+					s.New:Destroy()
+				end)
+			end
+			for part, p in pairs(bk.Props) do
+				pcall(function()
+					if part.Parent then
+						part.MeshId = p.MeshId
+						part.TextureID = p.TextureID
+						part.Color = p.Color
+						part.Transparency = p.Transparency
+						part.Size = p.Size
+					end
+				end)
+			end
+			for _, r in ipairs(bk.Removed) do
+				pcall(function()
+					if r.Acc and hum then
+						hum:AddAccessory(r.Inst)
+						if r.Inst.Parent ~= char then r.Inst.Parent = char end
+					else
+						r.Inst.Parent = r.Parent
+					end
+				end)
+			end
+		end
+
+		local function FA_ApplyTemplate(char, hum, tpl)
+			local bk = { Props = {}, Removed = {}, Added = {}, Swapped = {}, Want = {}, Sig = tpl.Sig, Time = os.clock() }
+			FA.Backups[char] = bk
+			local model = tpl.Model
+			local isR15 = hum.RigType == Enum.HumanoidRigType.R15
+			if tpl.Full then
+				for _, c in ipairs(char:GetChildren()) do
+					if c:IsA("Accessory") then
+						bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = char, Acc = true }
+						c.Parent = nil
+					elseif c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") then
+						bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = char }
+						c.Parent = nil
+					end
+				end
+				for _, c in ipairs(model:GetChildren()) do
+					if c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") then
+						local ok, cl = pcall(function() return c:Clone() end)
+						if ok and cl then
+							cl.Parent = char
+							bk.Added[#bk.Added + 1] = cl
+						end
 					end
 				end
 			end
+			for _, c in ipairs(model:GetChildren()) do
+				if c:IsA("Accessory") then
+					local ok, cl = pcall(function() return c:Clone() end)
+					if ok and cl then
+						local handle = cl:FindFirstChild("Handle")
+						if handle then
+							for _, w in ipairs(handle:GetChildren()) do
+								if w:IsA("JointInstance") or w:IsA("WeldConstraint") then pcall(function() w:Destroy() end) end
+							end
+							pcall(function() handle.Anchored = false end)
+						end
+						pcall(function() hum:AddAccessory(cl) end)
+						if cl.Parent ~= char then pcall(function() cl.Parent = char end) end
+						bk.Added[#bk.Added + 1] = cl
+					end
+				end
+			end
+			if isR15 then
+				for slot, names in pairs(FA_R15) do
+					if tpl.Full or tpl.Slots[slot] then
+						for _, n in ipairs(names) do
+							pcall(FA_CopyPart, bk, char, model:FindFirstChild(n), char:FindFirstChild(n), tpl.Full)
+						end
+					end
+				end
+			end
+			pcall(function() char:SetAttribute("FA_Sig", tpl.Sig) end)
 		end
-	end
 
-	local function applyAvatar()
-		applyToken += 1
-		local token = applyToken
+		local function FA_Verify(char, bk)
+			for _, inst in ipairs(bk.Added) do
+				if inst:IsA("Accessory") and inst.Parent ~= char then return false end
+			end
+			for part, want in pairs(bk.Want) do
+				if not part.Parent or not char:IsAncestorOf(part) then return false end
+				if part:IsA("MeshPart") and FA_IdOf(part.MeshId) ~= want then return false end
+			end
+			return true
+		end
 
-		task.spawn(function()
-			local char = LP.Character
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
-			if not char or not hum then
-				notify("Karakter belum ada")
+		----------------------------------------------------------------
+		-- SIKLUS APPLY (single flight, aman untuk respawn)
+		----------------------------------------------------------------
+		local function FA_Cycle()
+			local char = FA_LP.Character
+			if not char or not char.Parent then return end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if not hum or hum.Health <= 0 then return end
+			local bk = FA.Backups[char]
+			if not FA.Enabled then
+				if bk then FA_Restore(char) end
 				return
 			end
-
-			clearVisuals()
-
-			local desc = getFullDescription(selectedUserId)
-			if token ~= applyToken then return end
-
-			local applied = false
-			if desc then
-				applied = pcall(function()
-					hum:ApplyDescription(desc)
-				end)
-			end
-
-			if not applied and desc then
-				local okModel, tempModel = pcall(function()
-					return Players:CreateHumanoidModelFromDescription(desc, hum.RigType)
-				end)
-				if okModel and tempModel and token == applyToken then
-					copyAppearanceFallback(tempModel, char)
-					tempModel:Destroy()
-				end
-			end
-
-			if token == applyToken then
-				applyFakeAccessories(char, hum)
-				notify("Avatar diterapkan (@" .. tostring(selectedUsername) .. ")")
-			end
-		end)
-	end
-
-	local function resetAvatar()
-		applyToken += 1
-		clearVisuals()
-		local char = LP.Character
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if char then
-			local head = char:FindFirstChild("Head")
-			if head and head:IsA("BasePart") then
-				head.Transparency = 0
-				for _, d in ipairs(head:GetDescendants()) do
-					if d:IsA("Decal") then d.Transparency = 0 end
-				end
-			end
-		end
-		if hum then
-			task.spawn(function()
-				local ok, origDesc = pcall(function()
-					return Players:GetHumanoidDescriptionFromUserId(LP.UserId)
-				end)
-				if ok and origDesc and hum.Parent then
-					pcall(function() hum:ApplyDescription(origDesc) end)
-				end
-			end)
-		end
-	end
-
-	-- UI TOGGLE ROW
-	local avatarRow = Add("Larp Avatar")
-	local avatarToggle = avatarRow:Toggle(false, function(state)
-		enabled = state
-		if state then
-			applyAvatar()
-		else
-			resetAvatar()
-			notify("Larp Avatar dimatikan")
-		end
-	end)
-
-	-- SAVE SYSTEM HOOK
-	FeatureRegistry["Larp Avatar#2"] = {
-		Get = function()
-			return {
-				UserId = selectedUserId,
-				Username = selectedUsername,
-				Accessories = selectedAccessories,
-			}
-		end,
-		Set = function(data)
-			if type(data) ~= "table" then return end
-			selectedUserId = tonumber(data.UserId) or LP.UserId
-			selectedUsername = tostring(data.Username or LP.Name)
-			selectedAccessories = type(data.Accessories) == "table" and data.Accessories or {}
-			if enabled then applyAvatar() end
-		end,
-	}
-
-	-- MAIN POPUP
-	local overlay = make("Frame", {
-		Name = "LarpAvatarOverlay",
-		Size = UDim2.fromScale(1, 1),
-		BackgroundColor3 = Color3.new(0, 0, 0),
-		BackgroundTransparency = 0.35,
-		BorderSizePixel = 0,
-		Visible = false,
-		ZIndex = 80,
-	}, gui)
-
-	local panel = make("Frame", {
-		Name = "LarpAvatarPanel",
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.new(0, 470, 0, 340),
-		BackgroundColor3 = C.Window,
-		BorderSizePixel = 0,
-		ZIndex = 81,
-	}, overlay)
-	corner(panel, 10)
-	stroke(panel, C.Border, 1)
-
-	make("TextLabel", {
-		Position = UDim2.new(0, 14, 0, 10),
-		Size = UDim2.new(1, -28, 0, 22),
-		BackgroundTransparency = 1,
-		Text = "LARP AVATAR",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 14,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 82,
-	}, panel)
-
-	make("TextLabel", {
-		Position = UDim2.new(0, 14, 0, 32),
-		Size = UDim2.new(1, -28, 0, 16),
-		BackgroundTransparency = 1,
-		Text = "Target / My Avatar + Multi Fake Accessories",
-		TextColor3 = C.TextDim,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 10,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 82,
-	}, panel)
-
-	local searchBox = make("TextBox", {
-		Position = UDim2.new(0, 14, 0, 58),
-		Size = UDim2.new(0, 270, 0, 30),
-		BackgroundColor3 = C.SearchBg,
-		BorderSizePixel = 0,
-		Text = "",
-		PlaceholderText = "Masukkan username target...",
-		PlaceholderColor3 = C.TextDim,
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 11,
-		ClearTextOnFocus = false,
-		ZIndex = 82,
-	}, panel)
-	corner(searchBox, 6)
-	stroke(searchBox, C.Border, 1)
-
-	local searchBtn = make("TextButton", {
-		Position = UDim2.new(0, 292, 0, 58),
-		Size = UDim2.new(0, 76, 0, 30),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "SEARCH",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		ZIndex = 82,
-	}, panel)
-	corner(searchBtn, 6)
-
-	local ownBtn = make("TextButton", {
-		Position = UDim2.new(0, 374, 0, 58),
-		Size = UDim2.new(0, 82, 0, 30),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "MY AVATAR",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 9,
-		ZIndex = 82,
-	}, panel)
-	corner(ownBtn, 6)
-
-	local viewport = make("ViewportFrame", {
-		Position = UDim2.new(0, 14, 0, 100),
-		Size = UDim2.new(0, 190, 0, 190),
-		BackgroundColor3 = C.Panel,
-		BorderSizePixel = 0,
-		ZIndex = 82,
-	}, panel)
-	corner(viewport, 8)
-	stroke(viewport, C.Border, 1)
-
-	local world = Instance.new("WorldModel")
-	world.Parent = viewport
-
-	local camera = Instance.new("Camera")
-	camera.Parent = viewport
-	viewport.CurrentCamera = camera
-
-	local previewModel
-
-	local function showPreview(userId)
-		task.spawn(function()
-			local desc = getFullDescription(userId)
-			if not desc then
-				notify("Preview gagal")
+			local hasWork = FA.Target ~= nil or #FA_SelectedItems() > 0
+			if not hasWork then
+				if bk then FA_Restore(char) end
 				return
 			end
-
-			local ok, model = pcall(function()
-				return Players:CreateHumanoidModelFromDescription(
-					desc,
-					Enum.HumanoidRigType.R15
-				)
-			end)
-			if not ok or not model then return end
-
-			if previewModel then previewModel:Destroy() end
-			previewModel = model
-			model.Parent = world
-
-			applyFakeAccessories(model, model:FindFirstChildOfClass("Humanoid"))
-
-			local root = model:FindFirstChild("HumanoidRootPart")
-			if root then
-				model:PivotTo(CFrame.new(0, 0, 0))
-				camera.CFrame = CFrame.lookAt(
-					Vector3.new(0, 2, 7),
-					Vector3.new(0, 2, 0)
-				)
+			local sig = FA_Sig()
+			if bk and bk.Sig == sig then
+				if FA_Verify(char, bk) then return end
+				if os.clock() - bk.Time < 2.5 then return end
 			end
-		end)
-	end
-
-	make("TextLabel", {
-		Position = UDim2.new(0, 14, 0, 296),
-		Size = UDim2.new(0, 190, 0, 18),
-		BackgroundTransparency = 1,
-		Text = "PREVIEW AVATAR",
-		TextColor3 = C.TextDim,
-		Font = Enum.Font.GothamBold,
-		TextSize = 9,
-		ZIndex = 82,
-	}, panel)
-
-	local accessoryBtn = make("TextButton", {
-		Position = UDim2.new(0, 216, 0, 100),
-		Size = UDim2.new(0, 240, 0, 32),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "  FAKE ACCESSORIES  >",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 82,
-	}, panel)
-	corner(accessoryBtn, 6)
-
-	local selectedInfo = make("TextLabel", {
-		Position = UDim2.new(0, 216, 0, 138),
-		Size = UDim2.new(0, 240, 0, 42),
-		BackgroundTransparency = 1,
-		Text = "Target: @" .. LP.Name .. " (You)",
-		TextColor3 = C.TextDim,
-		Font = Enum.Font.GothamMedium,
-		TextSize = 10,
-		TextWrapped = true,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 82,
-	}, panel)
-
-	local cancelBtn = make("TextButton", {
-		Position = UDim2.new(0, 216, 1, -42),
-		Size = UDim2.new(0, 112, 0, 28),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "CANCEL",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		ZIndex = 82,
-	}, panel)
-	corner(cancelBtn, 6)
-
-	local useBtn = make("TextButton", {
-		Position = UDim2.new(0, 344, 1, -42),
-		Size = UDim2.new(0, 112, 0, 28),
-		BackgroundColor3 = C.White,
-		BorderSizePixel = 0,
-		Text = "USE AVATAR",
-		TextColor3 = C.Window,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		ZIndex = 82,
-	}, panel)
-	corner(useBtn, 6)
-
-	-- ACCESSORY LIST POPUP (MULTI / CHECK ALL)
-	local accessoryPanel = make("Frame", {
-		AnchorPoint = Vector2.new(0.5, 0.5),
-		Position = UDim2.fromScale(0.5, 0.5),
-		Size = UDim2.new(0, 330, 0, 340),
-		BackgroundColor3 = C.Window,
-		BorderSizePixel = 0,
-		Visible = false,
-		ZIndex = 90,
-	}, overlay)
-	corner(accessoryPanel, 10)
-	stroke(accessoryPanel, C.Border, 1)
-
-	make("TextLabel", {
-		Position = UDim2.new(0, 12, 0, 10),
-		Size = UDim2.new(1, -130, 0, 22),
-		BackgroundTransparency = 1,
-		Text = "FAKE ACCESSORIES",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		ZIndex = 91,
-	}, accessoryPanel)
-
-	local checkAllBtn = make("TextButton", {
-		Position = UDim2.new(1, -112, 0, 10),
-		Size = UDim2.new(0, 100, 0, 22),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "CHECK ALL",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 9,
-		ZIndex = 91,
-	}, accessoryPanel)
-	corner(checkAllBtn, 5)
-
-	local accessoryList = make("ScrollingFrame", {
-		Position = UDim2.new(0, 10, 0, 40),
-		Size = UDim2.new(1, -20, 1, -88),
-		BackgroundTransparency = 1,
-		BorderSizePixel = 0,
-		ScrollBarThickness = 3,
-		ScrollBarImageColor3 = C.TextDim,
-		CanvasSize = UDim2.new(0, 0, 0, 0),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ZIndex = 91,
-	}, accessoryPanel)
-	make("UIListLayout", {
-		Padding = UDim.new(0, 4),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, accessoryList)
-
-	local checkRows = {}
-
-	local function refreshCheckUI()
-		local allSelected = true
-		for _, item in ipairs(ACCESSORIES) do
-			local id = item[2]
-			local active = selectedAccessories[id] == true
-			if not active then allSelected = false end
-			local r = checkRows[id]
-			if r then
-				r.tick.Text = active and "✓" or "□"
-				r.btn.BackgroundTransparency = active and 0.1 or 0.4
-				r.lbl.TextColor3 = active and C.Text or C.TextDim
+			if hum.RigType == Enum.HumanoidRigType.R15 then
+				local deadline = os.clock() + 6
+				for _, n in ipairs({ "UpperTorso", "LowerTorso", "Head", "LeftFoot", "RightFoot", "LeftHand", "RightHand" }) do
+					while not char:FindFirstChild(n) and os.clock() < deadline do task.wait(0.2) end
+				end
 			end
+			local tpl = FA.Template
+			if not tpl or tpl.Sig ~= sig then
+				if os.clock() - FA.TplFailAt < 6 then return end
+				local built = FA_BuildTemplate(sig)
+				if not built then
+					FA.TplFailAt = os.clock()
+					if FA.FailNotified ~= sig then
+						FA.FailNotified = sig
+						FA_Notify("Fake Avatar", "Gagal memuat item")
+					end
+					return
+				end
+				if FA.Template and FA.Template.Model then pcall(function() FA.Template.Model:Destroy() end) end
+				FA.Template = built
+				tpl = built
+			end
+			if FA_LP.Character ~= char or not char.Parent or hum.Health <= 0 then
+				FA.Dirty = true
+				return
+			end
+			if not FA.Enabled then return end
+			if bk then FA_Restore(char) end
+			FA_ApplyTemplate(char, hum, tpl)
 		end
-		checkAllBtn.Text = allSelected and "UNCHECK ALL" or "CHECK ALL"
-	end
 
-	for i, item in ipairs(ACCESSORIES) do
-		local id = item[2]
-		local b = make("TextButton", {
-			Size = UDim2.new(1, 0, 0, 28),
-			BackgroundColor3 = C.Button,
-			BackgroundTransparency = 0.4,
-			BorderSizePixel = 0,
-			Text = "",
-			LayoutOrder = i,
-			ZIndex = 92,
-		}, accessoryList)
-		corner(b, 5)
+		local function FA_Run()
+			if FA.Busy then FA.Dirty = true; return end
+			FA.Busy = true
+			local guard = 0
+			repeat
+				FA.Dirty = false
+				guard = guard + 1
+				local ok, err = pcall(FA_Cycle)
+				if not ok then
+					warn("[FluxHub] Fake Avatar: " .. tostring(err))
+					task.wait(0.5)
+				end
+			until not FA.Dirty or guard >= 4 or not gui.Parent
+			FA.Busy = false
+		end
 
-		local tick = make("TextLabel", {
-			Position = UDim2.new(0, 8, 0, 0),
-			Size = UDim2.new(0, 22, 1, 0),
-			BackgroundTransparency = 1,
-			Text = selectedAccessories[id] and "✓" or "□",
-			TextColor3 = C.Text,
-			Font = Enum.Font.GothamBold,
-			TextSize = 14,
-			ZIndex = 93,
-		}, b)
+		local FA_SchedToken = 0
+		local function FA_Schedule(delay)
+			FA_SchedToken = FA_SchedToken + 1
+			local mine = FA_SchedToken
+			task.delay(delay or 0.35, function()
+				if mine == FA_SchedToken and gui.Parent then FA_Run() end
+			end)
+		end
 
-		local lbl = make("TextLabel", {
-			Position = UDim2.new(0, 34, 0, 0),
-			Size = UDim2.new(1, -42, 1, 0),
-			BackgroundTransparency = 1,
-			Text = item[1],
-			TextColor3 = C.TextDim,
-			Font = Enum.Font.GothamMedium,
-			TextSize = 10,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextTruncate = Enum.TextTruncate.AtEnd,
-			ZIndex = 93,
-		}, b)
+		----------------------------------------------------------------
+		-- KOMPONEN UI
+		----------------------------------------------------------------
+		local function FA_Btn(parent, text, primary)
+			local b = make("TextButton", { Name = "FABtn", Size = UDim2.new(0, 0, 0, 24), AutomaticSize = Enum.AutomaticSize.X, BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = primary and 0.75 or 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 11, ZIndex = 6 }, parent)
+			corner(b, 6)
+			make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, b)
+			if primary then stroke(b, C.White, 1, 0.4) end
+			hoverEffect(b, primary and 0.75 or 0.2, primary and 0.6 or 0.05, primary and 0.4 or 0)
+			return b
+		end
 
-		checkRows[id] = { btn = b, tick = tick, lbl = lbl }
+		local function FA_Controls(name)
+			local card = FA_Page:FindFirstChild("Row_" .. name)
+			local top = card and card:FindFirstChild("Top")
+			return top and top:FindFirstChild("Controls")
+		end
 
-		track(b.MouseButton1Click:Connect(function()
-			playClick()
-			if selectedAccessories[id] then
-				selectedAccessories[id] = nil
+		local function FA_Window(name, w, h, z, title, subtitle)
+			local vp0 = viewportSize()
+			local winW = math.min(w, vp0.X - 16)
+			local winH = math.min(h, vp0.Y - 16)
+			local win = make("Frame", { Name = name, Position = UDim2.new(0, math.floor((vp0.X - winW) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = z }, gui)
+			corner(win, 10)
+			stroke(win, C.Border, 1)
+			local scale = make("UIScale", { Scale = 1 }, win)
+			local head = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = z + 1 }, win)
+			make("TextLabel", { Position = UDim2.new(0, 14, 0, 6), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = title, TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = z + 2 }, head)
+			make("TextLabel", { Position = UDim2.new(0, 14, 0, 24), Size = UDim2.new(1, -28, 0, 12), BackgroundTransparency = 1, Text = subtitle, TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = z + 2 }, head)
+			makeDrag({ Handles = { head }, Target = win, Size = Vector2.new(winW, winH), Threshold = 4 })
+			return win, winW, winH, scale, head
+		end
+
+		local function FA_Show(win, scale, show)
+			if show then
+				scale.Scale = 0.94
+				win.Visible = true
+				tw(scale, 0.18, { Scale = 1 }, Enum.EasingStyle.Quint)
 			else
-				selectedAccessories[id] = true
+				win.Visible = false
 			end
-			refreshCheckUI()
-			showPreview(selectedUserId)
-			if enabled then applyAvatar() end
+		end
+
+		local function FA_Footer(win, winW, text, index, count, primary, z)
+			local gap = 6
+			local w = math.floor((winW - 20 - gap * (count - 1)) / count)
+			local b = make("TextButton", { Position = UDim2.new(0, 10 + (index - 1) * (w + gap), 1, -38), Size = UDim2.new(0, w, 0, 28), BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = primary and 0 or 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = primary and C.Window or C.Text, Font = Enum.Font.GothamBold, TextSize = 11, ZIndex = z }, win)
+			corner(b, 7)
+			hoverEffect(b, primary and 0 or 0.2, primary and 0.12 or 0.05, primary and 0.25 or 0)
+			return b
+		end
+
+		----------------------------------------------------------------
+		-- ROW DI TAB VISUAL
+		----------------------------------------------------------------
+		Title("Fake Avatar")
+		local mainRow = Add("Fake Avatar")
+		local FA_Toggle = mainRow:Toggle(false, function(state)
+			FA.Enabled = state and true or false
+			if FA.Enabled then FA_Schedule(0.25) else task.spawn(FA_Run) end
+		end)
+
+		Add("Username Target")
+		local userControls = FA_Controls("Username Target")
+		local FA_Input, FA_SearchBtn, FA_ClearBtn
+		if userControls then
+			FA_Input = make("TextBox", { Name = "UsernameInput", Size = UDim2.new(0, 120, 0, 22), BackgroundColor3 = C.SearchBg, BackgroundTransparency = 0.2, BorderSizePixel = 0, Text = "", PlaceholderText = "Username Roblox", PlaceholderColor3 = C.TextDim, TextColor3 = C.Text, Font = Enum.Font.GothamMedium, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, LayoutOrder = 0, ZIndex = 6 }, userControls)
+			corner(FA_Input, 6)
+			stroke(FA_Input, C.Border, 1, 0.3)
+			make("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, FA_Input)
+			FA_SearchBtn = FA_Btn(userControls, "Search", true)
+			FA_SearchBtn.LayoutOrder = 1
+			FA_ClearBtn = FA_Btn(userControls, "Clear", false)
+			FA_ClearBtn.LayoutOrder = 2
+		end
+
+		Add("Fake Accessories")
+		local accControls = FA_Controls("Fake Accessories")
+		local FA_SelBtn = accControls and FA_Btn(accControls, "Select (0)", false)
+		if FA_SelBtn then FA_SelBtn.LayoutOrder = 0 end
+
+		local function FA_UpdateCount()
+			if FA_SelBtn then FA_SelBtn.Text = "Select (" .. tostring(#FA_SelectedItems()) .. ")" end
+		end
+
+		----------------------------------------------------------------
+		-- JENDELA PREVIEW KARAKTER
+		----------------------------------------------------------------
+		local Pv = { Token = 0, Yaw = 0, Drag = false, Last = nil, Model = nil, Target = nil, Pivot = Vector3.new(0, 0, 0), Center = Vector3.new(0, 3, 0) }
+		local pvWin, pvW, pvH, pvScale = FA_Window("FakeAvatarPreview", 340, 262, 50, "FAKE AVATAR", "Preview karakter target")
+		local vpW = 150
+		local vpH = pvH - 42 - 52
+		local vpHolder = make("Frame", { Name = "ViewHolder", Position = UDim2.new(1, -(vpW + 12), 0, 46), Size = UDim2.new(0, vpW, 0, vpH), BackgroundColor3 = C.SearchBg, BackgroundTransparency = 0.2, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 51 }, pvWin)
+		corner(vpHolder, 8)
+		stroke(vpHolder, C.Border, 1, 0.3)
+		Pv.View = make("ViewportFrame", { Name = "View", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, Ambient = Color3.fromRGB(190, 190, 190), LightColor = Color3.fromRGB(255, 255, 255), LightDirection = Vector3.new(-0.5, -1, -0.6), ZIndex = 52 }, vpHolder)
+		Pv.Cam = make("Camera", { FieldOfView = 35 }, Pv.View)
+		Pv.View.CurrentCamera = Pv.Cam
+		Pv.Status = make("TextLabel", { Name = "Status", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 11, ZIndex = 54 }, vpHolder)
+		Pv.Hit = make("TextButton", { Name = "Hit", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 55 }, vpHolder)
+
+		local infoW = pvW - vpW - 12 - 14 - 10
+		make("TextLabel", { Position = UDim2.new(0, 14, 0, 50), Size = UDim2.new(0, infoW, 0, 12), BackgroundTransparency = 1, Text = "USERNAME", TextColor3 = C.TextDim, Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52 }, pvWin)
+		Pv.Name = make("TextLabel", { Position = UDim2.new(0, 14, 0, 64), Size = UDim2.new(0, infoW, 0, 18), BackgroundTransparency = 1, Text = "-", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 52 }, pvWin)
+		make("TextLabel", { Position = UDim2.new(0, 14, 0, 92), Size = UDim2.new(0, infoW, 0, 12), BackgroundTransparency = 1, Text = "USER ID", TextColor3 = C.TextDim, Font = Enum.Font.GothamBold, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 52 }, pvWin)
+		Pv.Id = make("TextLabel", { Position = UDim2.new(0, 14, 0, 106), Size = UDim2.new(0, infoW, 0, 16), BackgroundTransparency = 1, Text = "-", TextColor3 = C.Text, Font = Enum.Font.GothamMedium, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 52 }, pvWin)
+		make("TextLabel", { Position = UDim2.new(0, 14, 0, 136), Size = UDim2.new(0, infoW, 0, 36), BackgroundTransparency = 1, Text = "Geser pada karakter untuk memutar tampilan.", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 10, TextWrapped = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 52 }, pvWin)
+
+		local pvCancel = FA_Footer(pvWin, pvW, "Cancel", 1, 2, false, 52)
+		local pvUse = FA_Footer(pvWin, pvW, "Use", 2, 2, true, 52)
+
+		local function FA_RotatePreview()
+			if Pv.Model then
+				pcall(function() Pv.Model:PivotTo(CFrame.new(Pv.Pivot) * CFrame.Angles(0, Pv.Yaw, 0)) end)
+			end
+		end
+
+		track(Pv.Hit.InputBegan:Connect(function(input)
+			if isPressInput(input) then
+				Pv.Drag = true
+				Pv.Last = pointerOf(input)
+			end
 		end))
-	end
+		track(UserInputService.InputChanged:Connect(function(input)
+			if not Pv.Drag then return end
+			if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+				local p = pointerOf(input)
+				if Pv.Last then
+					Pv.Yaw = Pv.Yaw + (p.X - Pv.Last.X) * 0.012
+					FA_RotatePreview()
+				end
+				Pv.Last = p
+			end
+		end))
+		track(UserInputService.InputEnded:Connect(function(input)
+			if isPressInput(input) then Pv.Drag = false end
+		end))
 
-	track(checkAllBtn.MouseButton1Click:Connect(function()
-		playClick()
-		local allSelected = true
-		for _, item in ipairs(ACCESSORIES) do
-			if not selectedAccessories[item[2]] then
-				allSelected = false
-				break
+		local function FA_ClearPreviewModel()
+			if Pv.Model then
+				pcall(function() Pv.Model:Destroy() end)
+				Pv.Model = nil
 			end
 		end
-		if allSelected then
-			table.clear(selectedAccessories)
-		else
-			for _, item in ipairs(ACCESSORIES) do
-				selectedAccessories[item[2]] = true
-			end
-		end
-		refreshCheckUI()
-		showPreview(selectedUserId)
-		if enabled then applyAvatar() end
-	end))
 
-	local closeAccessories = make("TextButton", {
-		Position = UDim2.new(0, 10, 1, -38),
-		Size = UDim2.new(0.5, -14, 0, 26),
-		BackgroundColor3 = C.Button,
-		BorderSizePixel = 0,
-		Text = "CLOSE",
-		TextColor3 = C.Text,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		ZIndex = 92,
-	}, accessoryPanel)
-	corner(closeAccessories, 6)
-
-	local continueAccessories = make("TextButton", {
-		Position = UDim2.new(0.5, 4, 1, -38),
-		Size = UDim2.new(0.5, -14, 0, 26),
-		BackgroundColor3 = C.White,
-		BorderSizePixel = 0,
-		Text = "CONTINUE",
-		TextColor3 = C.Window,
-		Font = Enum.Font.GothamBold,
-		TextSize = 10,
-		ZIndex = 92,
-	}, accessoryPanel)
-	corner(continueAccessories, 6)
-
-	track(searchBtn.MouseButton1Click:Connect(function()
-		playClick()
-		local username = searchBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-		if username == "" then
-			notify("Masukkan username terlebih dahulu")
-			return
+		local function FA_ClosePreview()
+			Pv.Token = Pv.Token + 1
+			Pv.Drag = false
+			FA_Show(pvWin, pvScale, false)
+			FA_ClearPreviewModel()
 		end
 
-		searchBtn.Text = "..."
-		task.spawn(function()
-			local ok, userId = pcall(function()
-				return Players:GetUserIdFromNameAsync(username)
+		local function FA_OpenPreview(target)
+			Pv.Token = Pv.Token + 1
+			local mine = Pv.Token
+			Pv.Target = target
+			Pv.Yaw = 0
+			Pv.Drag = false
+			FA_ClearPreviewModel()
+			Pv.Name.Text = "@" .. tostring(target.Name)
+			Pv.Id.Text = tostring(target.Id)
+			Pv.Status.Text = "Memuat karakter..."
+			FA_Show(pvWin, pvScale, true)
+			task.spawn(function()
+				local model = FA_MakeModel(target.Desc)
+				if mine ~= Pv.Token then
+					if model then pcall(function() model:Destroy() end) end
+					return
+				end
+				if not model then
+					Pv.Status.Text = "Preview gagal dimuat"
+					return
+				end
+				local ok = pcall(function()
+					model:PivotTo(CFrame.new(0, 0, 0))
+					local cf, size = model:GetBoundingBox()
+					Pv.Center = cf.Position
+					Pv.Pivot = model:GetPivot().Position
+					local dist = (size.Y * 0.5) / math.tan(math.rad(Pv.Cam.FieldOfView * 0.5)) * 1.12 + size.Z * 0.5 + 1
+					Pv.Cam.CFrame = CFrame.lookAt(Pv.Center + Vector3.new(0, 0, -dist), Pv.Center)
+					model.Parent = Pv.View
+				end)
+				if not ok then
+					pcall(function() model:Destroy() end)
+					Pv.Status.Text = "Preview gagal dimuat"
+					return
+				end
+				Pv.Model = model
+				Pv.Status.Text = ""
 			end)
-			searchBtn.Text = "SEARCH"
+		end
 
-			if not ok or not userId then
-				notify("Username tidak ditemukan")
+		----------------------------------------------------------------
+		-- PENCARIAN USERNAME
+		----------------------------------------------------------------
+		local FA_SearchToken = 0
+		local function FA_DoSearch()
+			if not FA_Input then return end
+			local name = FA_Clean(FA_Input.Text)
+			if not name then
+				FA_Notify("Fake Avatar", "Username tidak valid")
 				return
 			end
-
-			selectedUserId = userId
-			selectedUsername = username
-			selectedInfo.Text = "Target: @" .. username
-			showPreview(userId)
-		end)
-	end))
-
-	track(ownBtn.MouseButton1Click:Connect(function()
-		playClick()
-		selectedUserId = LP.UserId
-		selectedUsername = LP.Name
-		selectedInfo.Text = "Target: @" .. LP.Name .. " (You)"
-		showPreview(LP.UserId)
-	end))
-
-	track(accessoryBtn.MouseButton1Click:Connect(function()
-		playClick()
-		refreshCheckUI()
-		accessoryPanel.Visible = true
-	end))
-
-	track(closeAccessories.MouseButton1Click:Connect(function()
-		playClick()
-		accessoryPanel.Visible = false
-	end))
-
-	track(continueAccessories.MouseButton1Click:Connect(function()
-		playClick()
-		accessoryPanel.Visible = false
-		showPreview(selectedUserId)
-		if enabled then applyAvatar() end
-	end))
-
-	track(cancelBtn.MouseButton1Click:Connect(function()
-		playClick()
-		overlay.Visible = false
-		accessoryPanel.Visible = false
-	end))
-
-	track(useBtn.MouseButton1Click:Connect(function()
-		playClick()
-		overlay.Visible = false
-		accessoryPanel.Visible = false
-		avatarToggle.Set(true)
-		applyAvatar()
-	end))
-
-	local openRow = Add("Larp Avatar Settings")
-	openRow:Button({ "OPEN" }, function()
-		playClick()
-		refreshCheckUI()
-		overlay.Visible = true
-		showPreview(selectedUserId)
-	end)
-
-	if charConn then pcall(function() charConn:Disconnect() end) end
-	charConn = track(LP.CharacterAdded:Connect(function()
-		clearVisuals()
-		if enabled then
-			task.wait(1)
-			applyAvatar()
+			FA_SearchToken = FA_SearchToken + 1
+			local mine = FA_SearchToken
+			FA_Notify("Fake Avatar", "Mencari @" .. name)
+			task.spawn(function()
+				local target, err = FA_Lookup(name)
+				if mine ~= FA_SearchToken then return end
+				if not target then
+					FA_Notify("Fake Avatar", err or "Gagal mencari")
+					return
+				end
+				FA_OpenPreview(target)
+			end)
 		end
-	end))
 
-	refreshCheckUI()
+		if FA_SearchBtn then track(FA_SearchBtn.MouseButton1Click:Connect(function() playClick(); FA_DoSearch() end)) end
+		if FA_Input then track(FA_Input.FocusLost:Connect(function(enter) if enter then FA_DoSearch() end end)) end
+
+		track(pvCancel.MouseButton1Click:Connect(function()
+			playClick()
+			FA_ClosePreview()
+		end))
+		track(pvUse.MouseButton1Click:Connect(function()
+			playClick()
+			if not Pv.Target then return end
+			FA.Target = Pv.Target
+			if FA_Input then FA_Input.Text = Pv.Target.Name end
+			FA_ClosePreview()
+			if not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
+		end))
+		if FA_ClearBtn then
+			track(FA_ClearBtn.MouseButton1Click:Connect(function()
+				playClick()
+				FA.Target = nil
+				if FA_Input then FA_Input.Text = "" end
+				FA_Schedule(0.1)
+			end))
+		end
+
+		----------------------------------------------------------------
+		-- JENDELA LIST FAKE ACCESSORIES
+		----------------------------------------------------------------
+		local Lb = { Pending = {}, Boxes = {} }
+		local lbWin, lbW, lbH, lbScale, lbHead = FA_Window("FakeAccessoriesList", 300, 392, 50, "FAKE ACCESSORIES", "Centang item yang ingin dipakai")
+		local lbList = make("ScrollingFrame", { Name = "List", Position = UDim2.new(0, 10, 0, 46), Size = UDim2.new(1, -20, 1, -94), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 52 }, lbWin)
+		make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, lbList)
+		make("UIPadding", { PaddingRight = UDim.new(0, 6) }, lbList)
+
+		local lbAll = make("TextButton", { Name = "SelectAll", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 10), Size = UDim2.new(0, 78, 0, 22), BackgroundColor3 = C.Button, BackgroundTransparency = 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = "Select All", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = 54 }, lbHead)
+		corner(lbAll, 6)
+		hoverEffect(lbAll, 0.2, 0.05, 0)
+
+		local function FA_RefreshBoxes()
+			local all = true
+			for _, it in ipairs(FA_ITEMS) do
+				local ui = Lb.Boxes[it.Name]
+				local on = Lb.Pending[it.Name] and true or false
+				if not on then all = false end
+				if ui then
+					ui.Tick.Visible = on
+					ui.Box.BackgroundColor3 = on and C.White or C.Button
+					ui.Box.BackgroundTransparency = on and 0 or 0.3
+					ui.BoxStroke.Transparency = on and 1 or 0.8
+					ui.Label.TextColor3 = on and C.Text or C.TextDim
+					ui.Row.BackgroundTransparency = on and 0.35 or 0.55
+				end
+			end
+			lbAll.Text = all and "Clear All" or "Select All"
+		end
+
+		for i, it in ipairs(FA_ITEMS) do
+			local row = make("TextButton", { Name = "Item_" .. it.Name, Size = UDim2.new(1, 0, 0, 30), BackgroundColor3 = C.Button, BackgroundTransparency = 0.55, BorderSizePixel = 0, AutoButtonColor = false, Text = "", LayoutOrder = i, ZIndex = 53 }, lbList)
+			corner(row, 7)
+			local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 8, 0.5, 0), Size = UDim2.new(0, 16, 0, 16), BackgroundColor3 = C.Button, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 54 }, row)
+			corner(box, 4)
+			local boxStroke = stroke(box, C.White, 1, 0.8)
+			local tick = make("Frame", { Name = "Tick", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false, ZIndex = 55 }, box)
+			for _, bar in ipairs({ { 5, 9, 5, 45 }, { 9.5, 7.5, 9, -45 } }) do
+				make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, bar[1], 0, bar[2]), Size = UDim2.new(0, bar[3], 0, 2), BackgroundColor3 = C.Window, BorderSizePixel = 0, Rotation = bar[4], ZIndex = 56 }, tick)
+			end
+			local label = make("TextLabel", { Name = "Label", Position = UDim2.new(0, 32, 0, 0), Size = UDim2.new(1, -(32 + 70), 1, 0), BackgroundTransparency = 1, Text = it.Name, TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 54 }, row)
+			make("TextLabel", { Name = "Tag", AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.new(0, 62, 0, 14), BackgroundTransparency = 1, Text = it.Tag or "", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 54 }, row)
+			Lb.Boxes[it.Name] = { Row = row, Box = box, BoxStroke = boxStroke, Tick = tick, Label = label }
+			track(row.MouseButton1Click:Connect(function()
+				playClick()
+				local turnOn = not Lb.Pending[it.Name]
+				Lb.Pending[it.Name] = turnOn or nil
+				if turnOn and it.Slot then
+					for _, other in ipairs(FA_ITEMS) do
+						if other ~= it and other.Slot == it.Slot then Lb.Pending[other.Name] = nil end
+					end
+				end
+				FA_RefreshBoxes()
+			end))
+		end
+
+		track(lbAll.MouseButton1Click:Connect(function()
+			playClick()
+			local all = true
+			for _, it in ipairs(FA_ITEMS) do
+				if not Lb.Pending[it.Name] then all = false; break end
+			end
+			Lb.Pending = {}
+			if not all then
+				local usedSlot = {}
+				for _, it in ipairs(FA_ITEMS) do
+					if it.Slot then
+						if not usedSlot[it.Slot] then usedSlot[it.Slot] = true; Lb.Pending[it.Name] = true end
+					else
+						Lb.Pending[it.Name] = true
+					end
+				end
+			end
+			FA_RefreshBoxes()
+		end))
+
+		local lbClose = FA_Footer(lbWin, lbW, "Close", 1, 2, false, 52)
+		local lbContinue = FA_Footer(lbWin, lbW, "Continue", 2, 2, true, 52)
+
+		local function FA_OpenList()
+			Lb.Pending = {}
+			for name, v in pairs(FA.Selected) do if v then Lb.Pending[name] = true end end
+			FA_RefreshBoxes()
+			FA_Show(lbWin, lbScale, true)
+		end
+
+		track(lbClose.MouseButton1Click:Connect(function()
+			playClick()
+			FA_Show(lbWin, lbScale, false)
+		end))
+		track(lbContinue.MouseButton1Click:Connect(function()
+			playClick()
+			FA.Selected = {}
+			for name, v in pairs(Lb.Pending) do if v then FA.Selected[name] = true end end
+			FA_UpdateCount()
+			FA_Show(lbWin, lbScale, false)
+			if #FA_SelectedItems() > 0 and not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
+		end))
+		if FA_SelBtn then track(FA_SelBtn.MouseButton1Click:Connect(function() playClick(); FA_OpenList() end)) end
+
+		----------------------------------------------------------------
+		-- REGISTRASI SAVE / LOAD (Misc > Save Manager)
+		----------------------------------------------------------------
+		local itemsApi = {}
+		function itemsApi.Get()
+			local out = {}
+			for _, it in ipairs(FA_ITEMS) do
+				if FA.Selected[it.Name] then out[#out + 1] = it.Name end
+			end
+			return out
+		end
+		function itemsApi.Set(v)
+			if type(v) ~= "table" then return end
+			local picked = {}
+			for _, name in pairs(v) do
+				if type(name) == "string" then picked[name] = true end
+			end
+			FA.Selected = {}
+			for _, it in ipairs(FA_ITEMS) do
+				if picked[it.Name] then FA.Selected[it.Name] = true end
+			end
+			FA_UpdateCount()
+			if lbWin.Visible then
+				Lb.Pending = {}
+				for name, on in pairs(FA.Selected) do if on then Lb.Pending[name] = true end end
+				FA_RefreshBoxes()
+			end
+			FA_Schedule(0.4)
+		end
+		FeatureRegistry["Fake Avatar Items"] = itemsApi
+
+		local targetApi = {}
+		local targetLoadToken = 0
+		function targetApi.Get()
+			return FA.Target and FA.Target.Name or ""
+		end
+		function targetApi.Set(v)
+			if type(v) ~= "string" then return end
+			targetLoadToken = targetLoadToken + 1
+			local mine = targetLoadToken
+			local clean = FA_Clean(v)
+			if v == "" or not clean then
+				FA.Target = nil
+				if FA_Input then FA_Input.Text = "" end
+				FA_Schedule(0.4)
+				return
+			end
+			task.spawn(function()
+				local target = nil
+				for _ = 1, 3 do
+					target = FA_Lookup(clean)
+					if target or mine ~= targetLoadToken then break end
+					task.wait(1)
+				end
+				if mine ~= targetLoadToken then return end
+				if target then
+					FA.Target = target
+					if FA_Input then FA_Input.Text = target.Name end
+				end
+				FA_Schedule(0.3)
+			end)
+		end
+		FeatureRegistry["Fake Avatar Target"] = targetApi
+
+		----------------------------------------------------------------
+		-- RESPAWN, WATCHDOG, CLEANUP
+		----------------------------------------------------------------
+		track(FA_LP.CharacterAdded:Connect(function(char)
+			task.spawn(function()
+				pcall(function()
+					char:WaitForChild("Humanoid", 15)
+					char:WaitForChild("HumanoidRootPart", 15)
+					char:WaitForChild("Head", 15)
+				end)
+				task.wait(1.2)
+				if FA.Enabled and gui.Parent then FA_Run() end
+			end)
+		end))
+
+		task.spawn(function()
+			while gui.Parent do
+				task.wait(1.5)
+				if FA.Enabled or next(FA.Backups) ~= nil then task.spawn(FA_Run) end
+			end
+			FA.Enabled = false
+			pcall(function()
+				local ch = FA_LP.Character
+				if ch then FA_Restore(ch) end
+			end)
+			pcall(function()
+				if FA.Template and FA.Template.Model then FA.Template.Model:Destroy() end
+			end)
+		end)
+	end
+
+	local okFA, errFA = pcall(FA_Install)
+	if not okFA then warn("[FluxHub] Fake Avatar: " .. tostring(errFA)) end
 end
 end) 
 
