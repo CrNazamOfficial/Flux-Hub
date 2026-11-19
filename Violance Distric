@@ -7150,7 +7150,544 @@ end)
 			WS_RestoreAll()
 		end
 	end)
+
+Title ("Fake Avatar")
+-- ============================================================
+-- LARP AVATAR | FLUX HUB
+-- Tempel di dalam fungsi RunTab tab pilihanmu
+-- ============================================================
+do
+    local LP = Players.LocalPlayer
+    local selectedUserId = LP.UserId
+    local selectedUsername = LP.Name
+    local enabled = false
+    local selectedAccessories = {}
+    local currentDescription = nil
+    local applyToken = 0
+
+    local ACCESSORIES = {
+        {"Headless Horseman", 15093053680},
+        {"Korblox Deathspeaker Kanan", 139607718},
+        {"Korblox Deathspeaker Kiri", 139607673},
+        {"Fiery Horns of the Netherworld", 215718515},
+        {"Frozen Horns of the Frigid Planes", 74891470},
+        {"Poisoned Horns of the Toxic Wasteland", 1744060292},
+        {"St Patrick's Day Fairy", 226189871},
+        {"Winter Fairy", 141742418},
+        {"Fall Fairy", 128217885},
+        {"8-Bit Royal Crown", 10159600649},
+        {"8-Bit HP Bar", 10159610478},
+        {"8-Bit Tabby Cat", 10159617728},
+        {"8-Bit Roblox Coin", 10159622004},
+        {"8-Bit Extra Life", 10159606132},
+    }
+
+    local function notify(msg)
+        pcall(showNotif, "Larp Avatar", msg, ICONS.Logo, 2)
+    end
+
+    local function buildDescription(userId)
+        local ok, desc = pcall(function()
+            return Players:GetHumanoidDescriptionFromUserId(userId)
+        end)
+        if not ok or not desc then return nil end
+
+        local accessories = {}
+        pcall(function()
+            accessories = desc:GetAccessories(true)
+        end)
+
+        for _, item in ipairs(ACCESSORIES) do
+            if selectedAccessories[item[2]] then
+                table.insert(accessories, {
+                    AssetId = item[2],
+                    AccessoryType = Enum.AccessoryType.Hat,
+                    IsLayered = false,
+                })
+            end
+        end
+
+        pcall(function()
+            desc:SetAccessories(accessories, true)
+        end)
+
+        return desc
+    end
+
+    local function applyAvatar()
+        applyToken += 1
+        local token = applyToken
+
+        task.spawn(function()
+            local desc = buildDescription(selectedUserId)
+            if token ~= applyToken then return end
+            if not desc then
+                notify("Gagal mengambil avatar")
+                return
+            end
+
+            currentDescription = desc
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if not hum then
+                notify("Karakter belum tersedia")
+                return
+            end
+
+            local ok = pcall(function()
+                hum:ApplyDescription(desc)
+            end)
+
+            if ok then
+                notify("Avatar berhasil diterapkan")
+            else
+                notify("Gagal menerapkan avatar")
+            end
+        end)
+    end
+
+    -- UI ROW
+    local avatarRow = Add("Larp Avatar")
+    local avatarToggle = avatarRow:Toggle(false, function(state)
+        enabled = state
+        if state then
+            applyAvatar()
+        else
+            applyToken += 1
+            selectedUserId = LP.UserId
+            selectedUsername = LP.Name
+            currentDescription = nil
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                pcall(function()
+                    hum:ApplyDescription(
+                        Players:GetHumanoidDescriptionFromUserId(LP.UserId)
+                    )
+                end)
+            end
+            notify("Larp Avatar dimatikan")
+        end
+    end)
+
+    -- SAVE MANAGEMENT
+    FeatureRegistry["Larp Avatar#2"] = {
+        Get = function()
+            return {
+                UserId = selectedUserId,
+                Username = selectedUsername,
+                Accessories = selectedAccessories,
+            }
+        end,
+        Set = function(data)
+            if type(data) ~= "table" then return end
+            selectedUserId = tonumber(data.UserId) or LP.UserId
+            selectedUsername = tostring(data.Username or LP.Name)
+            selectedAccessories = type(data.Accessories) == "table"
+                and data.Accessories or {}
+            if enabled then applyAvatar() end
+        end,
+    }
+
+    -- MAIN POPUP
+    local overlay = make("Frame", {
+        Name = "LarpAvatarOverlay",
+        Size = UDim2.fromScale(1, 1),
+        BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0.35,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 80,
+    }, gui)
+
+    local panel = make("Frame", {
+        Name = "LarpAvatarPanel",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.new(0, 470, 0, 340),
+        BackgroundColor3 = C.Window,
+        BorderSizePixel = 0,
+        ZIndex = 81,
+    }, overlay)
+    corner(panel, 10)
+    stroke(panel, C.Border, 1)
+
+    make("TextLabel", {
+        Position = UDim2.new(0, 14, 0, 10),
+        Size = UDim2.new(1, -28, 0, 22),
+        BackgroundTransparency = 1,
+        Text = "LARP AVATAR",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 82,
+    }, panel)
+
+    make("TextLabel", {
+        Position = UDim2.new(0, 14, 0, 32),
+        Size = UDim2.new(1, -28, 0, 16),
+        BackgroundTransparency = 1,
+        Text = "Search username • Preview avatar • Customize",
+        TextColor3 = C.TextDim,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 82,
+    }, panel)
+
+    local searchBox = make("TextBox", {
+        Position = UDim2.new(0, 14, 0, 58),
+        Size = UDim2.new(0, 270, 0, 30),
+        BackgroundColor3 = C.SearchBg,
+        BorderSizePixel = 0,
+        Text = "",
+        PlaceholderText = "Masukkan username Roblox...",
+        PlaceholderColor3 = C.TextDim,
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 11,
+        ClearTextOnFocus = false,
+        ZIndex = 82,
+    }, panel)
+    corner(searchBox, 6)
+    stroke(searchBox, C.Border, 1)
+
+    local searchBtn = make("TextButton", {
+        Position = UDim2.new(0, 292, 0, 58),
+        Size = UDim2.new(0, 76, 0, 30),
+        BackgroundColor3 = C.Button,
+        BorderSizePixel = 0,
+        Text = "SEARCH",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        ZIndex = 82,
+    }, panel)
+    corner(searchBtn, 6)
+
+    local ownBtn = make("TextButton", {
+        Position = UDim2.new(0, 374, 0, 58),
+        Size = UDim2.new(0, 82, 0, 30),
+        BackgroundColor3 = C.Button,
+        BorderSizePixel = 0,
+        Text = "MY AVATAR",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 9,
+        ZIndex = 82,
+    }, panel)
+    corner(ownBtn, 6)
+
+    local viewport = make("ViewportFrame", {
+        Position = UDim2.new(0, 14, 0, 100),
+        Size = UDim2.new(0, 190, 0, 190),
+        BackgroundColor3 = C.Panel,
+        BorderSizePixel = 0,
+        ZIndex = 82,
+    }, panel)
+    corner(viewport, 8)
+    stroke(viewport, C.Border, 1)
+
+    local world = Instance.new("WorldModel")
+    world.Parent = viewport
+
+    local camera = Instance.new("Camera")
+    camera.Parent = viewport
+    viewport.CurrentCamera = camera
+
+    local previewModel
+    local previewRotation = 0
+
+    local function showPreview(userId)
+        task.spawn(function()
+            local desc = buildDescription(userId)
+            if not desc then
+                notify("Preview avatar gagal")
+                return
+            end
+
+            local ok, model = pcall(function()
+                return Players:CreateHumanoidModelFromDescription(
+                    desc,
+                    Enum.HumanoidRigType.R15
+                )
+            end)
+            if not ok or not model then return end
+
+            if previewModel then previewModel:Destroy() end
+            previewModel = model
+            model.Parent = world
+
+            local root = model:FindFirstChild("HumanoidRootPart")
+            if root then
+                model:PivotTo(CFrame.new(0, 0, 0))
+                camera.CFrame = CFrame.lookAt(
+                    Vector3.new(0, 2, 7),
+                    Vector3.new(0, 2, 0)
+                )
+            end
+        end)
+    end
+
+    local info = make("TextLabel", {
+        Position = UDim2.new(0, 14, 0, 296),
+        Size = UDim2.new(0, 190, 0, 18),
+        BackgroundTransparency = 1,
+        Text = "PREVIEW AVATAR",
+        TextColor3 = C.TextDim,
+        Font = Enum.Font.GothamBold,
+        TextSize = 9,
+        ZIndex = 82,
+    }, panel)
+
+    local accessoryBtn = make("TextButton", {
+        Position = UDim2.new(0, 216, 0, 100),
+        Size = UDim2.new(0, 240, 0, 32),
+        BackgroundColor3 = C.Button,
+        BorderSizePixel = 0,
+        Text = "  FAKE ACCESSORIES  >",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 82,
+    }, panel)
+    corner(accessoryBtn, 6)
+
+    local selectedInfo = make("TextLabel", {
+        Position = UDim2.new(0, 216, 0, 138),
+        Size = UDim2.new(0, 240, 0, 42),
+        BackgroundTransparency = 1,
+        Text = "Pilih avatar sendiri atau cari username Roblox.",
+        TextColor3 = C.TextDim,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 10,
+        TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 82,
+    }, panel)
+
+    local cancelBtn = make("TextButton", {
+        Position = UDim2.new(0, 216, 1, -42),
+        Size = UDim2.new(0, 112, 0, 28),
+        BackgroundColor3 = C.Button,
+        BorderSizePixel = 0,
+        Text = "CANCEL",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        ZIndex = 82,
+    }, panel)
+    corner(cancelBtn, 6)
+
+    local useBtn = make("TextButton", {
+        Position = UDim2.new(0, 344, 1, -42),
+        Size = UDim2.new(0, 112, 0, 28),
+        BackgroundColor3 = C.White,
+        BorderSizePixel = 0,
+        Text = "USE AVATAR",
+        TextColor3 = C.Window,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        ZIndex = 82,
+    }, panel)
+    corner(useBtn, 6)
+
+    -- ACCESSORY LIST POPUP
+    local accessoryPanel = make("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.fromScale(0.5, 0.5),
+        Size = UDim2.new(0, 330, 0, 330),
+        BackgroundColor3 = C.Window,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 90,
+    }, overlay)
+    corner(accessoryPanel, 10)
+    stroke(accessoryPanel, C.Border, 1)
+
+    make("TextLabel", {
+        Position = UDim2.new(0, 12, 0, 10),
+        Size = UDim2.new(1, -24, 0, 22),
+        BackgroundTransparency = 1,
+        Text = "FAKE ACCESSORIES",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 91,
+    }, accessoryPanel)
+
+    local accessoryList = make("ScrollingFrame", {
+        Position = UDim2.new(0, 10, 0, 40),
+        Size = UDim2.new(1, -20, 1, -88),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = C.TextDim,
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 91,
+    }, accessoryPanel)
+    make("UIListLayout", {
+        Padding = UDim.new(0, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, accessoryList)
+
+    for i, item in ipairs(ACCESSORIES) do
+        local b = make("TextButton", {
+            Size = UDim2.new(1, 0, 0, 28),
+            BackgroundColor3 = C.Button,
+            BackgroundTransparency = 0.4,
+            BorderSizePixel = 0,
+            Text = "",
+            LayoutOrder = i,
+            ZIndex = 92,
+        }, accessoryList)
+        corner(b, 5)
+
+        local tick = make("TextLabel", {
+            Position = UDim2.new(0, 8, 0, 0),
+            Size = UDim2.new(0, 22, 1, 0),
+            BackgroundTransparency = 1,
+            Text = selectedAccessories[item[2]] and "✓" or "□",
+            TextColor3 = C.Text,
+            Font = Enum.Font.GothamBold,
+            TextSize = 14,
+            ZIndex = 93,
+        }, b)
+
+        make("TextLabel", {
+            Position = UDim2.new(0, 34, 0, 0),
+            Size = UDim2.new(1, -42, 1, 0),
+            BackgroundTransparency = 1,
+            Text = item[1],
+            TextColor3 = C.TextDim,
+            Font = Enum.Font.GothamMedium,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            ZIndex = 93,
+        }, b)
+
+        track(b.MouseButton1Click:Connect(function()
+            playClick()
+            selectedAccessories[item[2]] = not selectedAccessories[item[2]]
+            tick.Text = selectedAccessories[item[2]] and "✓" or "□"
+            showPreview(selectedUserId)
+        end))
+    end
+
+    local closeAccessories = make("TextButton", {
+        Position = UDim2.new(0, 10, 1, -38),
+        Size = UDim2.new(0.5, -14, 0, 26),
+        BackgroundColor3 = C.Button,
+        BorderSizePixel = 0,
+        Text = "CLOSE",
+        TextColor3 = C.Text,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        ZIndex = 92,
+    }, accessoryPanel)
+    corner(closeAccessories, 6)
+
+    local continueAccessories = make("TextButton", {
+        Position = UDim2.new(0.5, 4, 1, -38),
+        Size = UDim2.new(0.5, -14, 0, 26),
+        BackgroundColor3 = C.White,
+        BorderSizePixel = 0,
+        Text = "CONTINUE",
+        TextColor3 = C.Window,
+        Font = Enum.Font.GothamBold,
+        TextSize = 10,
+        ZIndex = 92,
+    }, accessoryPanel)
+    corner(continueAccessories, 6)
+
+    track(searchBtn.MouseButton1Click:Connect(function()
+        playClick()
+        local username = searchBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+        if username == "" then
+            notify("Masukkan username terlebih dahulu")
+            return
+        end
+
+        searchBtn.Text = "..."
+        task.spawn(function()
+            local ok, userId = pcall(function()
+                return Players:GetUserIdFromNameAsync(username)
+            end)
+            searchBtn.Text = "SEARCH"
+
+            if not ok or not userId then
+                notify("Username tidak ditemukan")
+                return
+            end
+
+            selectedUserId = userId
+            selectedUsername = username
+            selectedInfo.Text = "Username: @" .. username
+            showPreview(userId)
+        end)
+    end))
+
+    track(ownBtn.MouseButton1Click:Connect(function()
+        playClick()
+        selectedUserId = LP.UserId
+        selectedUsername = LP.Name
+        selectedInfo.Text = "Username: @" .. LP.Name .. " (You)"
+        showPreview(LP.UserId)
+    end))
+
+    track(accessoryBtn.MouseButton1Click:Connect(function()
+        playClick()
+        accessoryPanel.Visible = true
+    end))
+
+    track(closeAccessories.MouseButton1Click:Connect(function()
+        playClick()
+        accessoryPanel.Visible = false
+    end))
+
+    track(continueAccessories.MouseButton1Click:Connect(function()
+        playClick()
+        accessoryPanel.Visible = false
+        showPreview(selectedUserId)
+    end))
+
+    track(cancelBtn.MouseButton1Click:Connect(function()
+        playClick()
+        overlay.Visible = false
+        accessoryPanel.Visible = false
+    end))
+
+    track(useBtn.MouseButton1Click:Connect(function()
+        playClick()
+        overlay.Visible = false
+        accessoryPanel.Visible = false
+        avatarToggle.Set(true)
+    end))
+
+    local openRow = Add("Larp Avatar Settings")
+    openRow:Button({"OPEN"}, function()
+        playClick()
+        overlay.Visible = true
+        showPreview(selectedUserId)
+    end)
+
+    track(LP.CharacterAdded:Connect(function()
+        if enabled then
+            task.wait(1)
+            applyAvatar()
+        end
+    end))
+
+    showPreview(LP.UserId)
+end
 end)
+
+-- RUN TAB PANEL
 
 RunTab("Panel", function(Add, Title, AddFeature)
 	Title("Features")
