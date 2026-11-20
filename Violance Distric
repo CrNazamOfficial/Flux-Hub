@@ -7151,8 +7151,7 @@ end)
 		end
 	end)
 
-Title ("Fake Avatar")
--- FAKE AVATAR + FAKE ACCESSORIES
+-- FAKE AVATAR + FAKE ACCESSORIES (v2: R6 + R15)
 -- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
 -- tepat sebelum baris "end)" penutup tab Visual.
 do
@@ -7160,6 +7159,12 @@ do
 		local FA_Page = Pages["Visual"]
 		local FA_LP = Players.LocalPlayer
 		if not FA_Page or not FA_LP then return end
+		local FA_RS = game:GetService("RunService")
+
+		----------------------------------------------------------------
+		-- PENGATURAN
+		----------------------------------------------------------------
+		local FA_COPY_PROPORTION = true -- true = ukuran/proporsi badan ikut target (R15)
 
 		----------------------------------------------------------------
 		-- DATA ITEM (nama tampil, asset id, slot untuk bagian tubuh)
@@ -7196,6 +7201,7 @@ do
 			LeftLeg = { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" },
 			RightLeg = { "RightUpperLeg", "RightLowerLeg", "RightFoot" },
 		}
+		local FA_R6_NAMES = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
 
 		local FA = {
 			Enabled = false,
@@ -7207,14 +7213,16 @@ do
 			TplFailAt = -100,
 			Backups = setmetatable({}, { __mode = "k" }),
 			Guard = setmetatable({}, { __mode = "k" }),
+			Hidden = setmetatable({}, { __mode = "k" }),
 			Resolved = {},
+			LastReport = "",
 		}
 
 		----------------------------------------------------------------
 		-- UTILITAS
 		----------------------------------------------------------------
 		local function FA_Notify(title, sub)
-			pcall(showNotif, title, sub, ICONS.Logo, 1.4)
+			pcall(showNotif, title, sub, ICONS.Logo, 1.6)
 		end
 
 		local function FA_IdOf(s)
@@ -7238,8 +7246,23 @@ do
 			return list
 		end
 
-		local function FA_Sig()
-			local parts = { FA.Target and tostring(FA.Target.Id) or "0" }
+		local function FA_RigOf(char, hum)
+			if char then
+				if char:FindFirstChild("UpperTorso") or char:FindFirstChild("LeftUpperLeg") then return "R15" end
+				if char:FindFirstChild("Torso") and char:FindFirstChild("Left Leg") then return "R6" end
+			end
+			if hum and hum.RigType == Enum.HumanoidRigType.R6 then return "R6" end
+			return "R15"
+		end
+
+		local function FA_MyRig()
+			local ch = FA_LP.Character
+			local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+			return FA_RigOf(ch, hum)
+		end
+
+		local function FA_Sig(rig)
+			local parts = { rig or "R15", FA.Target and tostring(FA.Target.Id) or "0" }
 			for _, it in ipairs(FA_SelectedItems()) do parts[#parts + 1] = tostring(it.Id) end
 			return table.concat(parts, "|")
 		end
@@ -7256,12 +7279,17 @@ do
 				if FA_BODY_FIELD[t] then kind, field = "Body", FA_BODY_FIELD[t]
 				elseif FA_ACC_FIELD[t] then kind, field = "Acc", FA_ACC_FIELD[t] end
 			end
+			if item.Slot then
+				-- item bagian tubuh: slot dari data dipakai, tipe katalog hanya konfirmasi
+				local res = { Kind = "Body", Field = (kind == "Body") and field or item.Slot }
+				if kind == "Body" then FA.Resolved[item.Id] = res end
+				return res
+			end
 			if kind then
 				local res = { Kind = kind, Field = field }
 				FA.Resolved[item.Id] = res
 				return res
 			end
-			if item.Slot then return { Kind = "Body", Field = item.Slot } end
 			return { Kind = "Acc", Field = "HatAccessory" }
 		end
 
@@ -7316,14 +7344,15 @@ do
 			return desc, slots
 		end
 
-		local function FA_MakeModel(desc)
+		local function FA_MakeModel(desc, rig)
+			local rigEnum = (rig == "R6") and Enum.HumanoidRigType.R6 or Enum.HumanoidRigType.R15
 			for _ = 1, 2 do
 				local ok, model = pcall(function()
-					return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15, Enum.AssetTypeVerification.Always)
+					return Players:CreateHumanoidModelFromDescription(desc, rigEnum, Enum.AssetTypeVerification.Always)
 				end)
 				if not (ok and typeof(model) == "Instance") then
 					ok, model = pcall(function()
-						return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+						return Players:CreateHumanoidModelFromDescription(desc, rigEnum)
 					end)
 				end
 				if ok and typeof(model) == "Instance" then
@@ -7365,8 +7394,7 @@ do
 				end
 			end
 			if any then return holder end
-			pcall(function() holder:Destroy() end)
-			return nil
+			return holder
 		end
 
 		local function FA_FixSlots(model, slots)
@@ -7400,24 +7428,76 @@ do
 			end
 		end
 
-		local function FA_BuildTemplate(sig)
+		-- bagian kaki (paha, betis, telapak) dari asset Korblox: dipakai sebagai overlay
+		local function FA_LegParts(field, id)
+			local side = (field == "LeftLeg") and "Left" or "Right"
+			local names = { side .. "UpperLeg", side .. "LowerLeg", side .. "Foot" }
+			local out = {}
+			local okS, ref = pcall(function()
+				local d = Instance.new("HumanoidDescription")
+				d[field] = id
+				return Players:CreateHumanoidModelFromDescription(d, Enum.HumanoidRigType.R15)
+			end)
+			if okS and typeof(ref) == "Instance" then
+				for _, n in ipairs(names) do
+					local p = ref:FindFirstChild(n)
+					if p and p:IsA("MeshPart") then
+						local okC, c = pcall(function() return p:Clone() end)
+						if okC and c then out[#out + 1] = c end
+					end
+				end
+				pcall(function() ref:Destroy() end)
+			end
+			if #out == 0 then
+				local obj = nil
+				local ok, lst = pcall(function() return game:GetObjects("rbxassetid://" .. tostring(id)) end)
+				if ok and type(lst) == "table" then obj = lst[1] end
+				if not obj then
+					local ok2, o2 = pcall(function() return game:GetService("InsertService"):LoadAsset(id) end)
+					if ok2 then obj = o2 end
+				end
+				if obj then
+					for _, n in ipairs(names) do
+						local p = obj:FindFirstChild(n, true)
+						if p and p:IsA("MeshPart") then
+							local okC, c = pcall(function() return p:Clone() end)
+							if okC and c then out[#out + 1] = c end
+						end
+					end
+					pcall(function() obj:Destroy() end)
+				end
+			end
+			return out
+		end
+
+		local function FA_BuildTemplate(sig, rig)
 			local desc, slots = FA_BuildDesc()
-			local model = FA_MakeModel(desc)
+			local model = FA_MakeModel(desc, rig)
 			local full = FA.Target ~= nil
 			if model then
-				if next(slots) ~= nil then pcall(FA_FixSlots, model, slots) end
+				if rig == "R15" and next(slots) ~= nil then pcall(FA_FixSlots, model, slots) end
 			else
-				model = FA_FallbackModel()
 				full = false
-				slots = {}
+				model = FA_FallbackModel()
+			end
+			local legs = {}
+			for _, f in ipairs({ "LeftLeg", "RightLeg" }) do
+				if slots[f] ~= nil then legs[f] = FA_LegParts(f, slots[f]) end
 			end
 			pcall(function() desc:Destroy() end)
-			if not model then return nil end
-			return { Sig = sig, Model = model, Slots = slots, Full = full }
+			return { Sig = sig, Rig = rig, Model = model, Slots = slots, Full = full, Legs = legs }
+		end
+
+		local function FA_DestroyTemplate(tpl)
+			if not tpl then return end
+			pcall(function() tpl.Model:Destroy() end)
+			for _, list in pairs(tpl.Legs or {}) do
+				for _, p in ipairs(list) do pcall(function() p:Destroy() end) end
+			end
 		end
 
 		----------------------------------------------------------------
-		-- OPERASI PART (copy / swap / restore)
+		-- OPERASI PART (copy / swap / overlay / restore)
 		----------------------------------------------------------------
 		local function FA_IsLook(c)
 			return c:IsA("Decal") or c:IsA("Texture") or c:IsA("SurfaceAppearance") or c:IsA("DataModelMesh")
@@ -7440,7 +7520,7 @@ do
 			from.Parent = nil
 		end
 
-		local function FA_ReplacePart(bk, char, dst, src)
+		local function FA_ReplacePart(bk, char, dst, src, useSrcSize)
 			local ok, new = pcall(function() return src:Clone() end)
 			if not ok or not new then return nil end
 			for _, c in ipairs(new:GetChildren()) do
@@ -7453,7 +7533,7 @@ do
 				new.Anchored = false
 				new.CanCollide = dst.CanCollide
 				new.Massless = dst.Massless
-				new.Size = dst.Size
+				new.Size = useSrcSize and src.Size or dst.Size
 			end)
 			local okSwap = pcall(FA_Swap, char, dst, new)
 			if not okSwap then return nil end
@@ -7470,17 +7550,13 @@ do
 		end
 
 		local function FA_CopyLook(bk, src, dst)
-			local isHead = dst.Name == "Head"
-			local function wanted(c)
-				return c:IsA("SurfaceAppearance") or (isHead and c:IsA("Decal"))
-			end
 			local fresh = {}
 			for _, c in ipairs(src:GetChildren()) do
-				if wanted(c) then fresh[#fresh + 1] = c end
+				if c:IsA("SurfaceAppearance") then fresh[#fresh + 1] = c end
 			end
-			if #fresh == 0 and not isHead then return end
+			if #fresh == 0 then return end
 			for _, c in ipairs(dst:GetChildren()) do
-				if wanted(c) then
+				if c:IsA("SurfaceAppearance") then
 					bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = dst }
 					c.Parent = nil
 				end
@@ -7494,28 +7570,223 @@ do
 			end
 		end
 
-		local function FA_CopyPart(bk, char, src, dst, withColor)
-			if not (src and dst and src:IsA("BasePart") and dst:IsA("BasePart")) then return end
+		local function FA_CopyFace(bk, src, dst)
+			local sf = src:FindFirstChild("face") or src:FindFirstChildWhichIsA("Decal")
+			local df = dst:FindFirstChild("face") or dst:FindFirstChildWhichIsA("Decal")
+			if not sf or not sf:IsA("Decal") then return end
+			if df and df:IsA("Decal") then
+				bk.Faces[#bk.Faces + 1] = { Decal = df, Tex = df.Texture }
+				pcall(function() df.Texture = sf.Texture end)
+			else
+				local ok, cl = pcall(function() return sf:Clone() end)
+				if ok and cl then
+					cl.Parent = dst
+					bk.Added[#bk.Added + 1] = cl
+				end
+			end
+		end
+
+		local function FA_CopyHeadMesh(bk, src, dst)
+			local sm = src:FindFirstChildOfClass("SpecialMesh")
+			local dm = dst:FindFirstChildOfClass("SpecialMesh")
+			if not sm then return end
+			if dm then
+				bk.Meshes[#bk.Meshes + 1] = { Inst = dm, MeshType = dm.MeshType, MeshId = dm.MeshId, TextureId = dm.TextureId, Scale = dm.Scale, Offset = dm.Offset }
+				pcall(function() dm.MeshType = sm.MeshType end)
+				pcall(function() dm.MeshId = sm.MeshId end)
+				pcall(function() dm.TextureId = sm.TextureId end)
+				pcall(function() dm.Scale = sm.Scale end)
+				pcall(function() dm.Offset = sm.Offset end)
+			else
+				local ok, cl = pcall(function() return sm:Clone() end)
+				if ok and cl then
+					cl.Parent = dst
+					bk.Added[#bk.Added + 1] = cl
+				end
+			end
+		end
+
+		local function FA_CopyPart(bk, char, src, dst, full)
+			if not (src and dst and src:IsA("BasePart") and dst:IsA("BasePart")) then return nil end
 			local final = dst
+			local useSize = full and FA_COPY_PROPORTION
 			if src:IsA("MeshPart") and dst:IsA("MeshPart") then
 				FA_SaveProps(bk, dst)
-				local size = dst.Size
 				pcall(function() dst.MeshId = src.MeshId end)
 				pcall(function() dst.TextureID = src.TextureID end)
-				pcall(function() if dst.Size ~= size then dst.Size = size end end)
-				if withColor then pcall(function() dst.Color = src.Color end) end
-				if dst.Name == "Head" then pcall(function() dst.Transparency = src.Transparency end) end
+				if full then pcall(function() dst.Color = src.Color end) end
+				if useSize then pcall(function() dst.Size = src.Size end) end
 				if FA_IdOf(dst.MeshId) ~= FA_IdOf(src.MeshId) then
-					local new = FA_ReplacePart(bk, char, dst, src)
+					local new = FA_ReplacePart(bk, char, dst, src, useSize)
 					if new then final = new end
 				else
 					pcall(FA_CopyLook, bk, src, dst)
 				end
 			else
-				local new = FA_ReplacePart(bk, char, dst, src)
+				local new = FA_ReplacePart(bk, char, dst, src, useSize)
 				if new then final = new end
 			end
 			if final:IsA("MeshPart") then bk.Want[final] = FA_IdOf(final.MeshId) end
+			return final
+		end
+
+		local function FA_CopyProportions(bk, char, model)
+			for _, refPart in ipairs(model:GetChildren()) do
+				if refPart:IsA("BasePart") and refPart.Name ~= "HumanoidRootPart" then
+					local part = char:FindFirstChild(refPart.Name)
+					if part and part:IsA("BasePart") then
+						for _, a in ipairs(refPart:GetChildren()) do
+							if a:IsA("Attachment") then
+								local ca = part:FindFirstChild(a.Name)
+								if ca and ca:IsA("Attachment") and bk.Atts[ca] == nil then
+									bk.Atts[ca] = ca.CFrame
+									ca.CFrame = a.CFrame
+								end
+							end
+						end
+					end
+				end
+			end
+			for _, j in ipairs(model:GetDescendants()) do
+				if j:IsA("Motor6D") and j.Part1 and j.Name ~= "Root" then
+					local p1 = char:FindFirstChild(j.Part1.Name)
+					local cur = p1 and p1:FindFirstChild(j.Name)
+					if cur and cur:IsA("Motor6D") and bk.Joints[cur] == nil then
+						bk.Joints[cur] = { C0 = cur.C0, C1 = cur.C1 }
+						cur.C0 = j.C0
+						cur.C1 = j.C1
+					end
+				end
+			end
+		end
+
+		local function FA_R6Body(bk, char, model, skipHead)
+			for _, n in ipairs(FA_R6_NAMES) do
+				local part = char:FindFirstChild(n)
+				local sp = model:FindFirstChild(n)
+				if part and sp and part:IsA("BasePart") and sp:IsA("BasePart") then
+					if bk.Colors[part] == nil then bk.Colors[part] = part.Color end
+					pcall(function() part.Color = sp.Color end)
+					bk.Body = bk.Body + 1
+				end
+			end
+			if not skipHead then
+				local sh = model:FindFirstChild("Head")
+				local dh = char:FindFirstChild("Head")
+				if sh and dh then
+					pcall(FA_CopyHeadMesh, bk, sh, dh)
+					pcall(FA_CopyFace, bk, sh, dh)
+				end
+			end
+		end
+
+		-- sembunyikan part asli (Transparency 1, dijaga tiap frame lewat Heartbeat)
+		local function FA_Hide(bk, part)
+			if bk.HideOrig[part] == nil then bk.HideOrig[part] = part.Transparency end
+			FA.Hidden[part] = true
+			part.Transparency = 1
+		end
+
+		local function FA_HideHead(bk, char)
+			local head = char:FindFirstChild("Head")
+			if head and head:IsA("BasePart") then
+				FA_Hide(bk, head)
+				return true
+			end
+			return false
+		end
+
+		local function FA_Weld(tg, c)
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = tg
+			w.Part1 = c
+			w.Parent = c
+		end
+
+		local function FA_PrepOverlay(c, name)
+			for _, ch in ipairs(c:GetChildren()) do
+				if ch:IsA("Attachment") or ch:IsA("JointInstance") or ch:IsA("WeldConstraint") then
+					pcall(function() ch:Destroy() end)
+				end
+			end
+			c.Name = name
+			c.Anchored = false
+			c.CanCollide = false
+			c.CanQuery = false
+			c.CanTouch = false
+			c.Massless = true
+			if c.TextureID ~= "" or c:FindFirstChildOfClass("SurfaceAppearance") then
+				pcall(function() c.Color = Color3.new(1, 1, 1) end)
+			end
+			c:SetAttribute("FA_Keep", true)
+		end
+
+		-- R15: tiap bagian kaki asset di-weld ke bagian kaki karakter, kaki asli disembunyikan
+		local function FA_OverlayR15(bk, char, parts)
+			local n = 0
+			for _, src in ipairs(parts) do
+				local tg = char:FindFirstChild(src.Name)
+				if tg and tg:IsA("BasePart") then
+					local cf = tg.CFrame
+					local best, bestD = nil, math.huge
+					for _, a in ipairs(src:GetChildren()) do
+						if a:IsA("Attachment") then
+							local ta = tg:FindFirstChild(a.Name)
+							if ta and ta:IsA("Attachment") then
+								local c2 = ta.WorldCFrame * a.CFrame:Inverse()
+								local d = (c2.Position - tg.Position).Magnitude
+								if d < bestD then bestD = d; best = c2 end
+							end
+						end
+					end
+					if best and bestD <= 8 then cf = best end
+					local ok, c = pcall(function() return src:Clone() end)
+					if ok and c then
+						FA_PrepOverlay(c, "FA_" .. src.Name)
+						c.CFrame = cf
+						c.Parent = char
+						FA_Weld(tg, c)
+						bk.Added[#bk.Added + 1] = c
+						FA_Hide(bk, tg)
+						n = n + 1
+					end
+				end
+			end
+			return n
+		end
+
+		-- R6: tiga bagian kaki R15 disusun jadi satu kaki, di-weld ke kaki R6, kaki asli disembunyikan
+		local function FA_OverlayR6(bk, char, side, parts)
+			local tg = char:FindFirstChild(side .. " Leg")
+			if not tg or not tg:IsA("BasePart") or #parts == 0 then return 0 end
+			local acuan = parts[1].CFrame
+			local lokal = {}
+			local minV = Vector3.new(math.huge, math.huge, math.huge)
+			local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+			for i, p in ipairs(parts) do
+				local lc = acuan:ToObjectSpace(p.CFrame)
+				lokal[i] = lc
+				local h = p.Size / 2
+				minV = minV:Min(lc.Position - h)
+				maxV = maxV:Max(lc.Position + h)
+			end
+			local pusat = (minV + maxV) / 2
+			local s = tg.Size.Y / math.max((maxV - minV).Y, 0.01)
+			local n = 0
+			for i, p in ipairs(parts) do
+				local ok, c = pcall(function() return p:Clone() end)
+				if ok and c then
+					FA_PrepOverlay(c, "FA_" .. p.Name)
+					c.Size = p.Size * s
+					c.CFrame = tg.CFrame * CFrame.new((lokal[i].Position - pusat) * s) * lokal[i].Rotation
+					c.Parent = char
+					FA_Weld(tg, c)
+					bk.Added[#bk.Added + 1] = c
+					n = n + 1
+				end
+			end
+			if n > 0 then FA_Hide(bk, tg) end
+			return n
 		end
 
 		local function FA_Restore(char)
@@ -7527,6 +7798,10 @@ do
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			for i = #bk.Added, 1, -1 do
 				pcall(function() bk.Added[i]:Destroy() end)
+			end
+			for part, orig in pairs(bk.HideOrig) do
+				FA.Hidden[part] = nil
+				pcall(function() if part.Parent then part.Transparency = orig end end)
 			end
 			for i = #bk.Swapped, 1, -1 do
 				local s = bk.Swapped[i]
@@ -7543,6 +7818,34 @@ do
 						part.Color = p.Color
 						part.Transparency = p.Transparency
 						part.Size = p.Size
+					end
+				end)
+			end
+			for part, col in pairs(bk.Colors) do
+				pcall(function() if part.Parent then part.Color = col end end)
+			end
+			for _, m in ipairs(bk.Meshes) do
+				pcall(function()
+					if m.Inst.Parent then
+						m.Inst.MeshType = m.MeshType
+						m.Inst.MeshId = m.MeshId
+						m.Inst.TextureId = m.TextureId
+						m.Inst.Scale = m.Scale
+						m.Inst.Offset = m.Offset
+					end
+				end)
+			end
+			for _, f in ipairs(bk.Faces) do
+				pcall(function() if f.Decal.Parent then f.Decal.Texture = f.Tex end end)
+			end
+			for a, cf in pairs(bk.Atts) do
+				pcall(function() if a.Parent then a.CFrame = cf end end)
+			end
+			for j, v in pairs(bk.Joints) do
+				pcall(function()
+					if j.Parent then
+						j.C0 = v.C0
+						j.C1 = v.C1
 					end
 				end)
 			end
@@ -7599,23 +7902,38 @@ do
 			w.Parent = handle
 		end
 
+		local function FA_IsClothing(c)
+			return c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") or c:IsA("CharacterMesh")
+		end
+
 		local function FA_ApplyTemplate(char, hum, tpl)
-			local bk = { Props = {}, Removed = {}, Added = {}, Swapped = {}, Want = {}, Sig = tpl.Sig, Time = os.clock() }
+			local rig = tpl.Rig
+			local bk = {
+				Props = {}, Removed = {}, Added = {}, Swapped = {}, Want = {}, HideOrig = {},
+				Colors = {}, Meshes = {}, Faces = {}, Atts = {}, Joints = {},
+				Sig = tpl.Sig, Time = os.clock(), Acc = 0, Body = 0, Over = 0,
+			}
 			FA.Backups[char] = bk
 			local model = tpl.Model
-			local isR15 = hum.RigType == Enum.HumanoidRigType.R15
+			local skip = {
+				Head = tpl.Slots.Head ~= nil,
+				LeftLeg = tpl.Slots.LeftLeg ~= nil,
+				RightLeg = tpl.Slots.RightLeg ~= nil,
+			}
+
+			-- 1) pakaian, warna kulit, CharacterMesh (avatar target)
 			if tpl.Full then
 				for _, c in ipairs(char:GetChildren()) do
 					if c:IsA("Accessory") then
 						bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = char, Acc = true }
 						c.Parent = nil
-					elseif c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") then
+					elseif FA_IsClothing(c) then
 						bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = char }
 						c.Parent = nil
 					end
 				end
 				for _, c in ipairs(model:GetChildren()) do
-					if c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") then
+					if FA_IsClothing(c) then
 						local ok, cl = pcall(function() return c:Clone() end)
 						if ok and cl then
 							cl.Parent = char
@@ -7624,6 +7942,56 @@ do
 					end
 				end
 			end
+
+			-- 2) bentuk badan dan muka (avatar target)
+			if tpl.Full then
+				if rig == "R15" then
+					for slot, names in pairs(FA_R15) do
+						if not skip[slot] then
+							for _, n in ipairs(names) do
+								local okp, res = pcall(FA_CopyPart, bk, char, model:FindFirstChild(n), char:FindFirstChild(n), true)
+								if okp and res then bk.Body = bk.Body + 1 end
+							end
+						end
+					end
+					if not skip.Head then
+						local sh = model:FindFirstChild("Head")
+						local dh = char:FindFirstChild("Head")
+						if sh and dh then pcall(FA_CopyFace, bk, sh, dh) end
+					end
+					if FA_COPY_PROPORTION then pcall(FA_CopyProportions, bk, char, model) end
+				else
+					pcall(FA_R6Body, bk, char, model, skip.Head)
+				end
+			end
+
+			-- 3) item bagian tubuh: Headless dan Korblox
+			if skip.Head then
+				if FA_HideHead(bk, char) then bk.Over = bk.Over + 1 end
+			end
+			for _, f in ipairs({ "LeftLeg", "RightLeg" }) do
+				if skip[f] then
+					local side = (f == "LeftLeg") and "Left" or "Right"
+					local parts = (tpl.Legs and tpl.Legs[f]) or {}
+					local n = 0
+					if rig == "R15" then
+						local okO, cnt = pcall(FA_OverlayR15, bk, char, parts)
+						if okO and cnt then n = cnt end
+						if n == 0 then
+							for _, nm in ipairs(FA_R15[f]) do
+								local okp, res = pcall(FA_CopyPart, bk, char, model:FindFirstChild(nm), char:FindFirstChild(nm), false)
+								if okp and res then n = n + 1 end
+							end
+						end
+					else
+						local okO, cnt = pcall(FA_OverlayR6, bk, char, side, parts)
+						if okO and cnt then n = cnt end
+					end
+					bk.Over = bk.Over + n
+				end
+			end
+
+			-- 4) aksesoris
 			for _, c in ipairs(model:GetChildren()) do
 				if c:IsA("Accessory") then
 					local ok, cl = pcall(function() return c:Clone() end)
@@ -7638,6 +8006,7 @@ do
 						pcall(function() hum:AddAccessory(cl) end)
 						if cl.Parent ~= char then pcall(function() cl.Parent = char end) end
 						bk.Added[#bk.Added + 1] = cl
+						bk.Acc = bk.Acc + 1
 					end
 				end
 			end
@@ -7645,21 +8014,21 @@ do
 			for _, inst in ipairs(bk.Added) do
 				if inst:IsA("Accessory") and inst.Parent == char then pcall(FA_EnsureWeld, char, inst) end
 			end
-			if isR15 then
-				for slot, names in pairs(FA_R15) do
-					if tpl.Full or tpl.Slots[slot] then
-						for _, n in ipairs(names) do
-							pcall(FA_CopyPart, bk, char, model:FindFirstChild(n), char:FindFirstChild(n), tpl.Full)
-						end
-					end
-				end
-			end
 			pcall(function() char:SetAttribute("FA_Sig", tpl.Sig) end)
+
+			local key = tpl.Sig .. "|" .. tostring(char)
+			if FA.LastReport ~= key then
+				FA.LastReport = key
+				FA_Notify("Fake Avatar", rig .. " | badan " .. tostring(bk.Body) .. " | item " .. tostring(bk.Over) .. " | acc " .. tostring(bk.Acc))
+			end
 		end
 
 		local function FA_Verify(char, bk)
 			for _, inst in ipairs(bk.Added) do
-				if inst:IsA("Accessory") and inst.Parent ~= char then return false end
+				if (inst:IsA("Accessory") or inst:GetAttribute("FA_Keep")) and inst.Parent ~= char then return false end
+			end
+			for part in pairs(bk.HideOrig) do
+				if not part.Parent or not char:IsAncestorOf(part) then return false end
 			end
 			for part, want in pairs(bk.Want) do
 				if not part.Parent or not char:IsAncestorOf(part) then return false end
@@ -7686,7 +8055,8 @@ do
 				if bk then FA_Restore(char) end
 				return
 			end
-			local sig = FA_Sig()
+			local rig = FA_RigOf(char, hum)
+			local sig = FA_Sig(rig)
 			if bk and bk.Sig == sig then
 				if FA_Verify(char, bk) then return end
 				if os.clock() - bk.Time < 2.5 then return end
@@ -7704,16 +8074,18 @@ do
 					return
 				end
 			end
-			if hum.RigType == Enum.HumanoidRigType.R15 then
-				local deadline = os.clock() + 6
-				for _, n in ipairs({ "UpperTorso", "LowerTorso", "Head", "LeftFoot", "RightFoot", "LeftHand", "RightHand" }) do
-					while not char:FindFirstChild(n) and os.clock() < deadline do task.wait(0.2) end
-				end
+			local need = { "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg" }
+			if rig == "R15" then
+				need = { "UpperTorso", "LowerTorso", "Head", "LeftFoot", "RightFoot", "LeftHand", "RightHand" }
+			end
+			local deadline = os.clock() + 6
+			for _, n in ipairs(need) do
+				while not char:FindFirstChild(n) and os.clock() < deadline do task.wait(0.2) end
 			end
 			local tpl = FA.Template
 			if not tpl or tpl.Sig ~= sig then
 				if os.clock() - FA.TplFailAt < 6 then return end
-				local built = FA_BuildTemplate(sig)
+				local built = FA_BuildTemplate(sig, rig)
 				if not built then
 					FA.TplFailAt = os.clock()
 					if FA.FailNotified ~= sig then
@@ -7722,7 +8094,7 @@ do
 					end
 					return
 				end
-				if FA.Template and FA.Template.Model then pcall(function() FA.Template.Model:Destroy() end) end
+				FA_DestroyTemplate(FA.Template)
 				FA.Template = built
 				tpl = built
 			end
@@ -7929,7 +8301,7 @@ do
 			Pv.Status.Text = "Memuat karakter..."
 			FA_Show(pvWin, pvScale, true)
 			task.spawn(function()
-				local model = FA_MakeModel(target.Desc)
+				local model = FA_MakeModel(target.Desc, FA_MyRig())
 				if mine ~= Pv.Token then
 					if model then pcall(function() model:Destroy() end) end
 					return
@@ -8172,8 +8544,14 @@ do
 		FeatureRegistry["Fake Avatar Target"] = targetApi
 
 		----------------------------------------------------------------
-		-- RESPAWN, WATCHDOG, CLEANUP
+		-- RESPAWN, HEARTBEAT, WATCHDOG, CLEANUP
 		----------------------------------------------------------------
+		track(FA_RS.Heartbeat:Connect(function()
+			for part in pairs(FA.Hidden) do
+				if part.Parent and part.Transparency ~= 1 then part.Transparency = 1 end
+			end
+		end))
+
 		track(FA_LP.CharacterAdded:Connect(function(char)
 			task.spawn(function()
 				pcall(function()
@@ -8196,9 +8574,7 @@ do
 				local ch = FA_LP.Character
 				if ch then FA_Restore(ch) end
 			end)
-			pcall(function()
-				if FA.Template and FA.Template.Model then FA.Template.Model:Destroy() end
-			end)
+			pcall(function() FA_DestroyTemplate(FA.Template) end)
 		end)
 	end
 
@@ -8206,7 +8582,6 @@ do
 	if not okFA then warn("[FluxHub] Fake Avatar: " .. tostring(errFA)) end
 end
 end)
-
 -- RUN TAB PANEL
 
 RunTab("Panel", function(Add, Title, AddFeature)
