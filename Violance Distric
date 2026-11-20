@@ -7206,6 +7206,7 @@ do
 			Template = nil,
 			TplFailAt = -100,
 			Backups = setmetatable({}, { __mode = "k" }),
+			Guard = setmetatable({}, { __mode = "k" }),
 			Resolved = {},
 		}
 
@@ -7303,7 +7304,7 @@ do
 				local r = FA_Resolve(it)
 				if r.Kind == "Body" then
 					pcall(function() desc[r.Field] = it.Id end)
-					slots[r.Field] = true
+					slots[r.Field] = it.Id
 				else
 					pcall(function()
 						local cur = desc[r.Field]
@@ -7318,8 +7319,13 @@ do
 		local function FA_MakeModel(desc)
 			for _ = 1, 2 do
 				local ok, model = pcall(function()
-					return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+					return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15, Enum.AssetTypeVerification.Always)
 				end)
+				if not (ok and typeof(model) == "Instance") then
+					ok, model = pcall(function()
+						return Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+					end)
+				end
 				if ok and typeof(model) == "Instance" then
 					for _, d in ipairs(model:GetDescendants()) do
 						if d:IsA("LuaSourceContainer") then
@@ -7363,11 +7369,44 @@ do
 			return nil
 		end
 
+		local function FA_FixSlots(model, slots)
+			for field, id in pairs(slots) do
+				local names = FA_R15[field]
+				if names and type(id) == "number" then
+					local okS, ref = pcall(function()
+						local d = Instance.new("HumanoidDescription")
+						d[field] = id
+						return Players:CreateHumanoidModelFromDescription(d, Enum.HumanoidRigType.R15)
+					end)
+					if okS and typeof(ref) == "Instance" then
+						for _, n in ipairs(names) do
+							local part = model:FindFirstChild(n)
+							local refPart = ref:FindFirstChild(n)
+							if part and refPart and part:IsA("MeshPart") and refPart:IsA("MeshPart") then
+								if part.MeshId ~= refPart.MeshId then pcall(function() part.MeshId = refPart.MeshId end) end
+								if part.TextureID ~= refPart.TextureID then pcall(function() part.TextureID = refPart.TextureID end) end
+								local refSA = refPart:FindFirstChildOfClass("SurfaceAppearance")
+								local curSA = part:FindFirstChildOfClass("SurfaceAppearance")
+								if refSA and (not curSA or curSA.ColorMap ~= refSA.ColorMap) then
+									if curSA then curSA:Destroy() end
+									local okC, cl = pcall(function() return refSA:Clone() end)
+									if okC and cl then cl.Parent = part end
+								end
+							end
+						end
+						pcall(function() ref:Destroy() end)
+					end
+				end
+			end
+		end
+
 		local function FA_BuildTemplate(sig)
 			local desc, slots = FA_BuildDesc()
 			local model = FA_MakeModel(desc)
 			local full = FA.Target ~= nil
-			if not model then
+			if model then
+				if next(slots) ~= nil then pcall(FA_FixSlots, model, slots) end
+			else
 				model = FA_FallbackModel()
 				full = false
 				slots = {}
@@ -7519,6 +7558,47 @@ do
 			end
 		end
 
+		local function FA_EnsureWeld(char, acc)
+			local handle = acc:FindFirstChild("Handle")
+			if not handle or not handle:IsA("BasePart") then return end
+			for _, d in ipairs(handle:GetChildren()) do
+				if d:IsA("JointInstance") and d.Part1 == handle and d.Part0 and d.Part0:IsDescendantOf(char) then return end
+			end
+			local att0, att1 = nil, nil
+			for _, a in ipairs(handle:GetChildren()) do
+				if a:IsA("Attachment") and not att1 then
+					for _, p in ipairs(char:GetChildren()) do
+						if p:IsA("BasePart") then
+							local x = p:FindFirstChild(a.Name)
+							if x and x:IsA("Attachment") then
+								att0, att1 = x, a
+								break
+							end
+						end
+					end
+				end
+			end
+			local w = Instance.new("Weld")
+			w.Name = "AccessoryWeld"
+			if att0 and att1 then
+				w.Part0 = att0.Parent
+				w.Part1 = handle
+				w.C0 = att0.CFrame
+				w.C1 = att1.CFrame
+			else
+				local head = char:FindFirstChild("Head")
+				if not head then
+					w:Destroy()
+					return
+				end
+				w.Part0 = head
+				w.Part1 = handle
+				w.C0 = CFrame.new(0, head.Size.Y / 2, 0)
+				w.C1 = CFrame.new()
+			end
+			w.Parent = handle
+		end
+
 		local function FA_ApplyTemplate(char, hum, tpl)
 			local bk = { Props = {}, Removed = {}, Added = {}, Swapped = {}, Want = {}, Sig = tpl.Sig, Time = os.clock() }
 			FA.Backups[char] = bk
@@ -7560,6 +7640,10 @@ do
 						bk.Added[#bk.Added + 1] = cl
 					end
 				end
+			end
+			task.wait()
+			for _, inst in ipairs(bk.Added) do
+				if inst:IsA("Accessory") and inst.Parent == char then pcall(FA_EnsureWeld, char, inst) end
 			end
 			if isR15 then
 				for slot, names in pairs(FA_R15) do
@@ -7606,6 +7690,19 @@ do
 			if bk and bk.Sig == sig then
 				if FA_Verify(char, bk) then return end
 				if os.clock() - bk.Time < 2.5 then return end
+				local g = FA.Guard[char]
+				if not g or os.clock() - g.T0 > 60 then
+					g = { T0 = os.clock(), N = 0, Told = false }
+					FA.Guard[char] = g
+				end
+				g.N = g.N + 1
+				if g.N > 6 then
+					if not g.Told then
+						g.Told = true
+						FA_Notify("Fake Avatar", "Game mereset tampilan berulang, jeda otomatis")
+					end
+					return
+				end
 			end
 			if hum.RigType == Enum.HumanoidRigType.R15 then
 				local deadline = os.clock() + 6
@@ -7722,7 +7819,12 @@ do
 		local mainRow = Add("Fake Avatar")
 		local FA_Toggle = mainRow:Toggle(false, function(state)
 			FA.Enabled = state and true or false
-			if FA.Enabled then FA_Schedule(0.25) else task.spawn(FA_Run) end
+			if FA.Enabled then
+				FA.Guard = setmetatable({}, { __mode = "k" })
+				FA_Schedule(0.25)
+			else
+				task.spawn(FA_Run)
+			end
 		end)
 
 		Add("Username Target")
@@ -8103,7 +8205,7 @@ do
 	local okFA, errFA = pcall(FA_Install)
 	if not okFA then warn("[FluxHub] Fake Avatar: " .. tostring(errFA)) end
 end
-end) 
+end)
 
 -- RUN TAB PANEL
 
