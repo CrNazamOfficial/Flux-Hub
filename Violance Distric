@@ -7151,9 +7151,11 @@ end)
 		end
 	end)
 
--- FAKE AVATAR + FAKE ACCESSORIES (v5)
-Title("Fake Avatar")
+-- FAKE AVATAR + FAKE ACCESSORIES (v6)
+-- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
+-- tepat sebelum baris "end)" penutup tab Visual.
 
+Title("Fake Avatar")
 do
 	local function FA_Install()
 		local FA_Page = Pages["Visual"]
@@ -7165,6 +7167,7 @@ do
 		local FA_COPY_PROPORTION = true
 		local FA_FILE = "FluxHub_FakeAvatar.json"
 		local FA_MAX_SLOT = 10
+		local FA_SCALE = (type(SIZE_FACTOR) == "number") and SIZE_FACTOR or 0.6
 
 		local FA_ITEMS = {
 			{ Name = "Headless Horseman", Id = 15093053680, Slot = "Head", Tag = "Head" },
@@ -7221,6 +7224,7 @@ do
 			Slots = {},
 			Shown = 0,
 			Input = nil,
+			OwnDesc = nil,
 		}
 
 		----------------------------------------------------------------
@@ -7384,6 +7388,11 @@ do
 			return nil
 		end
 
+		local function FA_OwnDescCached()
+			if not FA.OwnDesc then FA.OwnDesc = FA_OwnDesc() end
+			return FA.OwnDesc
+		end
+
 		----------------------------------------------------------------
 		-- SNAPSHOT AVATAR (simpan / bangun ulang HumanoidDescription)
 		----------------------------------------------------------------
@@ -7493,12 +7502,13 @@ do
 		----------------------------------------------------------------
 		-- BUILD DESCRIPTION DAN TEMPLATE MODEL
 		----------------------------------------------------------------
-		local function FA_BuildDesc()
+		local function FA_BuildDesc(baseDesc)
 			local desc = nil
-			if FA.Target and FA.Target.Desc then
-				local ok, c = pcall(function() return FA.Target.Desc:Clone() end)
+			local src = baseDesc or (FA.Target and FA.Target.Desc)
+			if src then
+				local ok, c = pcall(function() return src:Clone() end)
 				if ok and c then desc = c end
-				if not desc then
+				if not desc and not baseDesc and FA.Target then
 					local ok2, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(FA.Target.Id) end)
 					if ok2 and d then desc = d end
 				end
@@ -7613,7 +7623,7 @@ do
 		end
 
 		local function FA_BuildTemplate(sig, rig)
-			local desc, slots = FA_BuildDesc()
+			local desc, slots = FA_BuildDesc(nil)
 			local model = FA_MakeModel(desc, rig)
 			local full = FA.Target ~= nil
 			if not model then
@@ -7641,6 +7651,10 @@ do
 		----------------------------------------------------------------
 		local function FA_IsLook(c)
 			return c:IsA("Decal") or c:IsA("Texture") or c:IsA("SurfaceAppearance") or c:IsA("DataModelMesh")
+		end
+
+		local function FA_IsClothing(c)
+			return c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") or c:IsA("CharacterMesh")
 		end
 
 		local function FA_Swap(char, from, to)
@@ -7932,6 +7946,7 @@ do
 			FA.Backups[char] = nil
 			pcall(function() char:SetAttribute("FA_Sig", nil) end)
 			if not bk then return end
+			if bk.Conn then pcall(function() bk.Conn:Disconnect() end) end
 			local hum = char:FindFirstChildOfClass("Humanoid")
 			for i = #bk.Added, 1, -1 do
 				pcall(function() bk.Added[i]:Destroy() end)
@@ -7998,6 +8013,27 @@ do
 			end
 		end
 
+		-- sapu aksesori dan pakaian asli yang ditambahkan game setelah fake avatar terpasang
+		local function FA_Sweep(char, bk)
+			if not bk or not bk.Full or FA.Backups[char] ~= bk then return end
+			local own = {}
+			for _, a in ipairs(bk.Added) do own[a] = true end
+			for _, c in ipairs(char:GetChildren()) do
+				if not own[c] and (c:IsA("Accessory") or FA_IsClothing(c)) then
+					local dup = false
+					for _, r in ipairs(bk.Removed) do
+						if r.Inst.ClassName == c.ClassName and r.Inst.Name == c.Name then dup = true; break end
+					end
+					if dup then
+						pcall(function() c:Destroy() end)
+					else
+						bk.Removed[#bk.Removed + 1] = { Inst = c, Parent = char, Acc = c:IsA("Accessory") }
+						c.Parent = nil
+					end
+				end
+			end
+		end
+
 		local function FA_EnsureWeld(char, acc)
 			local handle = acc:FindFirstChild("Handle")
 			if not handle or not handle:IsA("BasePart") then return end
@@ -8039,16 +8075,12 @@ do
 			w.Parent = handle
 		end
 
-		local function FA_IsClothing(c)
-			return c:IsA("Shirt") or c:IsA("Pants") or c:IsA("ShirtGraphic") or c:IsA("BodyColors") or c:IsA("CharacterMesh")
-		end
-
 		local function FA_ApplyTemplate(char, hum, tpl)
 			local rig = tpl.Rig
 			local bk = {
 				Props = {}, Removed = {}, Added = {}, Swapped = {}, Want = {}, HideOrig = {},
 				Colors = {}, Meshes = {}, Faces = {}, Atts = {}, Joints = {},
-				Sig = tpl.Sig, Time = os.clock(), Acc = 0, Body = 0, Over = 0,
+				Sig = tpl.Sig, Time = os.clock(), Acc = 0, Body = 0, Over = 0, Full = tpl.Full,
 			}
 			FA.Backups[char] = bk
 			local model = tpl.Model
@@ -8149,6 +8181,16 @@ do
 			end
 			pcall(function() char:SetAttribute("FA_Sig", tpl.Sig) end)
 
+			if tpl.Full then
+				FA_Sweep(char, bk)
+				bk.Conn = char.ChildAdded:Connect(function(c)
+					if FA.Backups[char] ~= bk then return end
+					if c:IsA("Accessory") or FA_IsClothing(c) then
+						task.defer(FA_Sweep, char, bk)
+					end
+				end)
+			end
+
 			local key = tpl.Sig .. "|" .. tostring(char)
 			if FA.LastReport ~= key then
 				FA.LastReport = key
@@ -8158,7 +8200,7 @@ do
 
 		local function FA_Verify(char, bk)
 			for _, inst in ipairs(bk.Added) do
-				if (inst:IsA("Accessory") or inst:GetAttribute("FA_Keep")) and inst.Parent ~= char then return false end
+				if (inst:IsA("Accessory") or FA_IsClothing(inst) or inst:GetAttribute("FA_Keep")) and inst.Parent ~= char then return false end
 			end
 			for part in pairs(bk.HideOrig) do
 				if not part.Parent or not char:IsAncestorOf(part) then return false end
@@ -8191,6 +8233,7 @@ do
 			local rig = FA_RigOf(char, hum)
 			local sig = FA_Sig(rig)
 			if bk and bk.Sig == sig then
+				FA_Sweep(char, bk)
 				if FA_Verify(char, bk) then return end
 				if os.clock() - bk.Time < 2.5 then return end
 				local g = FA.Guard[char]
@@ -8278,13 +8321,17 @@ do
 				FA_Run()
 				local hum = char:FindFirstChildOfClass("Humanoid")
 				local bk = FA.Backups[char]
-				if bk and bk.Sig == FA_Sig(FA_RigOf(char, hum)) and FA_Verify(char, bk) then return end
+				if bk and bk.Sig == FA_Sig(FA_RigOf(char, hum)) and FA_Verify(char, bk) then
+					task.wait(2)
+					FA_Sweep(char, bk)
+					return
+				end
 				task.wait(1)
 			end
 		end
 
 		----------------------------------------------------------------
-		-- KOMPONEN UI
+		-- KOMPONEN UI (ukuran logis, diskalakan sama dengan menu utama)
 		----------------------------------------------------------------
 		local WARN_COLOR = Color3.fromRGB(255, 196, 64)
 
@@ -8298,18 +8345,18 @@ do
 		end
 
 		local function FA_Small(parent, text, w, primary, h)
-			local b = make("TextButton", { Size = UDim2.new(0, w, 0, h or 22), BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = primary and 0.75 or 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 9, ZIndex = 49 }, parent)
-			corner(b, 6)
+			local b = make("TextButton", { Size = UDim2.new(0, w, 0, h or 30), BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = primary and 0.75 or 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 49 }, parent)
+			corner(b, 8)
 			if primary then stroke(b, C.White, 1, 0.4) end
 			hoverEffect(b, primary and 0.75 or 0.2, primary and 0.6 or 0.05, primary and 0.4 or 0)
 			return b
 		end
 
 		local function FA_Field(parent, placeholder, z, h)
-			local t = make("TextBox", { Size = UDim2.new(1, 0, 0, h or 22), BackgroundColor3 = C.SearchBg, BackgroundTransparency = 0.2, BorderSizePixel = 0, Text = "", PlaceholderText = placeholder, PlaceholderColor3 = C.TextDim, TextColor3 = C.Text, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = z }, parent)
-			corner(t, 6)
-			stroke(t, C.Border, 1, 0.3)
-			make("UIPadding", { PaddingLeft = UDim.new(0, 7), PaddingRight = UDim.new(0, 7) }, t)
+			local t = make("TextBox", { Size = UDim2.new(1, 0, 0, h or 32), BackgroundColor3 = C.SearchBg, BackgroundTransparency = 0, BorderSizePixel = 0, Text = "", PlaceholderText = placeholder, PlaceholderColor3 = C.TextDim, TextColor3 = C.Text, Font = Enum.Font.GothamMedium, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, ClearTextOnFocus = false, ZIndex = z }, parent)
+			corner(t, 8)
+			stroke(t, C.Border, 1, 0)
+			make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10) }, t)
 			return t
 		end
 
@@ -8318,8 +8365,15 @@ do
 		end
 
 		local function FA_Section(parent, text, x, y, z)
-			make("Frame", { Position = UDim2.new(0, x, 0, y + 1), Size = UDim2.new(0, 2, 0, 9), BackgroundColor3 = C.Accent, BorderSizePixel = 0, ZIndex = z }, parent)
-			return FA_Text(parent, UDim2.new(0, x + 8, 0, y), UDim2.new(1, -(x + 12), 0, 11), text, C.TextDim, Enum.Font.GothamBold, 8, z)
+			make("Frame", { Position = UDim2.new(0, x, 0, y + 1), Size = UDim2.new(0, 3, 0, 12), BackgroundColor3 = C.Accent, BorderSizePixel = 0, ZIndex = z }, parent)
+			return FA_Text(parent, UDim2.new(0, x + 11, 0, y), UDim2.new(1, -(x + 22), 0, 14), text, C.TextDim, Enum.Font.GothamBold, 11, z)
+		end
+
+		local function FA_Card(parent, x, y, w, h, z, order)
+			local f = make("Frame", { Position = UDim2.new(0, x, 0, y), Size = UDim2.new(0, w, 0, h), BackgroundColor3 = C.Panel, BorderSizePixel = 0, LayoutOrder = order or 0, ZIndex = z }, parent)
+			corner(f, 12)
+			stroke(f, C.PanelBorder, 1, 0)
+			return f
 		end
 
 		local function FA_Controls(name)
@@ -8330,50 +8384,50 @@ do
 
 		local function FA_Window(name, w, h, z, title, subtitle)
 			local vp0 = viewportSize()
-			local winW = math.min(w, vp0.X - 16)
-			local winH = math.min(h, vp0.Y - 16)
-			local win = make("Frame", { Name = name, Position = UDim2.new(0, math.floor((vp0.X - winW) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = z }, gui)
-			corner(win, 10)
-			stroke(win, C.Border, 1)
-			local scale = make("UIScale", { Scale = 1 }, win)
-			local head = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = z + 1 }, win)
-			FA_Text(head, UDim2.new(0, 12, 0, 5), UDim2.new(1, -90, 0, 15), title, C.Text, Enum.Font.GothamBold, 12, z + 2)
-			FA_Text(head, UDim2.new(0, 12, 0, 21), UDim2.new(1, -90, 0, 11), subtitle, C.TextDim, Enum.Font.GothamMedium, 9, z + 2)
-			make("Frame", { Position = UDim2.new(0, 10, 1, -1), Size = UDim2.new(1, -20, 0, 1), BackgroundColor3 = C.Border, BackgroundTransparency = 0.5, BorderSizePixel = 0, ZIndex = z + 1 }, head)
-			makeDrag({ Handles = { head }, Target = win, Size = Vector2.new(winW, winH), Threshold = 4 })
+			local winW = math.min(w, (vp0.X - 16) / FA_SCALE)
+			local winH = math.min(h, (vp0.Y - 16) / FA_SCALE)
+			local win = make("Frame", { Name = name, Position = UDim2.new(0, math.floor((vp0.X - winW * FA_SCALE) / 2), 0, math.floor((vp0.Y - winH * FA_SCALE) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = z }, gui)
+			corner(win, 14)
+			stroke(win, C.Border, 1, 0)
+			local scale = make("UIScale", { Scale = FA_SCALE }, win)
+			local head = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = z + 1 }, win)
+			FA_Text(head, UDim2.new(0, 18, 0, 10), UDim2.new(1, -90, 0, 20), title, C.Text, Enum.Font.GothamBold, 16, z + 2)
+			FA_Text(head, UDim2.new(0, 18, 0, 32), UDim2.new(1, -90, 0, 14), subtitle, C.TextDim, Enum.Font.GothamMedium, 11, z + 2)
+			make("Frame", { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Divider, BorderSizePixel = 0, ZIndex = z + 1 }, head)
+			makeDrag({ Handles = { head }, Target = win, Size = Vector2.new(winW * FA_SCALE, winH * FA_SCALE), Threshold = 4 })
 			return win, winW, winH, scale, head
 		end
 
 		local function FA_HeadClose(head, z)
-			local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 7), Size = UDim2.new(0, 22, 0, 22), BackgroundColor3 = C.Button, BackgroundTransparency = 0.3, BorderSizePixel = 0, AutoButtonColor = false, Text = "X", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = z + 3 }, head)
-			corner(b, 6)
-			hoverEffect(b, 0.3, 0.1, 0)
+			local b = make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 13), Size = UDim2.new(0, 30, 0, 30), BackgroundColor3 = C.Button, BorderSizePixel = 0, AutoButtonColor = false, Text = "X", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, ZIndex = z + 3 }, head)
+			corner(b, 8)
+			hoverEffect(b, 0, 0.15, 0.3)
 			return b
 		end
 
 		local function FA_Show(win, scale, show)
 			if show then
-				scale.Scale = 0.94
+				scale.Scale = FA_SCALE * 0.94
 				win.Visible = true
-				tw(scale, 0.18, { Scale = 1 }, Enum.EasingStyle.Quint)
+				tw(scale, 0.18, { Scale = FA_SCALE }, Enum.EasingStyle.Quint)
 			else
 				win.Visible = false
 			end
 		end
 
 		local function FA_Footer(win, winW, text, index, count, primary, z)
-			local gap = 6
-			local w = math.floor((winW - 20 - gap * (count - 1)) / count)
-			local b = make("TextButton", { Position = UDim2.new(0, 10 + (index - 1) * (w + gap), 1, -34), Size = UDim2.new(0, w, 0, 26), BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = primary and 0 or 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = primary and C.Window or C.Text, Font = Enum.Font.GothamBold, TextSize = 10, ZIndex = z }, win)
-			corner(b, 7)
-			hoverEffect(b, primary and 0 or 0.2, primary and 0.12 or 0.05, primary and 0.25 or 0)
+			local gap = 10
+			local w = math.floor((winW - 36 - gap * (count - 1)) / count)
+			local b = make("TextButton", { Position = UDim2.new(0, 18 + (index - 1) * (w + gap), 1, -50), Size = UDim2.new(0, w, 0, 36), BackgroundColor3 = primary and C.Accent or C.Button, BackgroundTransparency = 0, BorderSizePixel = 0, AutoButtonColor = false, Text = text, TextColor3 = primary and C.Window or C.Text, Font = Enum.Font.GothamBold, TextSize = 13, ZIndex = z }, win)
+			corner(b, 9)
+			hoverEffect(b, 0, primary and 0.12 or 0.2, primary and 0.25 or 0.35)
 			return b
 		end
 
 		----------------------------------------------------------------
 		-- ROW DI TAB VISUAL: hanya toggle dan tombol Settings
 		----------------------------------------------------------------
-		local FA_OpenList, FA_OpenSettings, FA_RefreshInfo, FA_SyncList, FA_RefreshSlots
+		local FA_OpenList, FA_OpenSettings, FA_RefreshInfo, FA_SyncList, FA_RefreshSlots, FA_RefreshPreview
 		local targetLoadToken = 0
 
 		local mainRow = Add("Fake Avatar")
@@ -8398,33 +8452,97 @@ do
 		end
 
 		----------------------------------------------------------------
-		-- JENDELA PREVIEW KARAKTER
+		-- JENDELA SETTINGS: kiri preview, tengah target dan item, kanan save slot
 		----------------------------------------------------------------
-		local Pv = { Token = 0, Yaw = 0, Drag = false, Last = nil, Model = nil, Target = nil, Pivot = Vector3.new(0, 0, 0), Center = Vector3.new(0, 3, 0) }
-		local pvWin, pvW, pvH, pvScale = FA_Window("FakeAvatarPreview", 330, 228, 60, "PREVIEW TARGET", "Karakter yang akan dipakai")
-		local vpW = 132
-		local vpH = pvH - 44 - 42
-		local vpHolder = make("Frame", { Name = "ViewHolder", Position = UDim2.new(1, -(vpW + 10), 0, 44), Size = UDim2.new(0, vpW, 0, vpH), BackgroundColor3 = C.SearchBg, BackgroundTransparency = 0.25, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 61 }, pvWin)
-		corner(vpHolder, 8)
-		stroke(vpHolder, C.Border, 1, 0.4)
-		Pv.View = make("ViewportFrame", { Name = "View", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, Ambient = Color3.fromRGB(190, 190, 190), LightColor = Color3.fromRGB(255, 255, 255), LightDirection = Vector3.new(-0.5, -1, -0.6), ZIndex = 62 }, vpHolder)
+		local stWin, stW, stH, stScale, stHead = FA_Window("FakeAvatarSettings", 780, 470, 46, "FAKE AVATAR", "Preview, target, item, dan save slot")
+		local stClose = FA_HeadClose(stHead, 47)
+		local padX, gap = 18, 14
+		local bodyY = 70
+		local bodyH = stH - bodyY - 18
+		local leftW, midW = 236, 222
+		local rightW = stW - padX * 2 - leftW - midW - gap * 2
+		local midX = padX + leftW + gap
+		local rightX = midX + midW + gap
+
+		-- panel preview (kiri)
+		local pvCard = FA_Card(stWin, padX, bodyY, leftW, bodyH, 47)
+		FA_Section(pvCard, "PREVIEW", 14, 12, 48)
+		local vpHolder = make("Frame", { Name = "ViewHolder", Position = UDim2.new(0, 12, 0, 36), Size = UDim2.new(0, leftW - 24, 0, bodyH - 150), BackgroundColor3 = C.SearchBg, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 48 }, pvCard)
+		corner(vpHolder, 10)
+		stroke(vpHolder, C.Border, 1, 0)
+		local Pv = { Token = 0, Yaw = 0, Drag = false, Last = nil, Model = nil, Pending = nil, Pivot = Vector3.new(0, 0, 0), Center = Vector3.new(0, 3, 0) }
+		Pv.View = make("ViewportFrame", { Name = "View", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, Ambient = Color3.fromRGB(190, 190, 190), LightColor = Color3.fromRGB(255, 255, 255), LightDirection = Vector3.new(-0.5, -1, -0.6), ZIndex = 49 }, vpHolder)
 		Pv.Cam = make("Camera", { FieldOfView = 35 }, Pv.View)
 		Pv.View.CurrentCamera = Pv.Cam
-		Pv.Status = make("TextLabel", { Name = "Status", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 10, ZIndex = 64 }, vpHolder)
-		Pv.Hit = make("TextButton", { Name = "Hit", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 65 }, vpHolder)
+		Pv.Status = make("TextLabel", { Name = "Status", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 12, ZIndex = 51 }, vpHolder)
+		Pv.Hit = make("TextButton", { Name = "Hit", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Text = "", AutoButtonColor = false, ZIndex = 52 }, vpHolder)
+		local pvName = FA_Text(pvCard, UDim2.new(0, 14, 0, bodyH - 106), UDim2.new(1, -28, 0, 20), "Karakter sendiri", C.Text, Enum.Font.GothamBold, 14, 48)
+		local pvSub = FA_Text(pvCard, UDim2.new(0, 14, 0, bodyH - 84), UDim2.new(1, -28, 0, 16), "Geser untuk memutar", C.TextDim, Enum.Font.GothamMedium, 11, 48)
+		local btnUse = FA_Small(pvCard, "Use", math.floor((leftW - 24 - 8) / 2), true, 34)
+		btnUse.Position = UDim2.new(0, 12, 0, bodyH - 52)
+		local btnCancel = FA_Small(pvCard, "Cancel", math.floor((leftW - 24 - 8) / 2), false, 34)
+		btnCancel.Position = UDim2.new(0, 12 + math.floor((leftW - 24 - 8) / 2) + 8, 0, bodyH - 52)
+		btnUse.Visible = false
+		btnCancel.Visible = false
 
-		local infoW = pvW - vpW - 10 - 12 - 10
-		FA_Section(pvWin, "USERNAME", 12, 48, 62)
-		Pv.Name = FA_Text(pvWin, UDim2.new(0, 12, 0, 62), UDim2.new(0, infoW, 0, 18), "-", C.Text, Enum.Font.GothamBold, 13, 62)
-		FA_Section(pvWin, "USER ID", 12, 90, 62)
-		Pv.Id = FA_Text(pvWin, UDim2.new(0, 12, 0, 104), UDim2.new(0, infoW, 0, 16), "-", C.Text, Enum.Font.GothamMedium, 11, 62)
-		local pvHint = FA_Text(pvWin, UDim2.new(0, 12, 0, 132), UDim2.new(0, infoW, 0, 30), "Geser pada karakter untuk memutar.", C.TextDim, Enum.Font.GothamMedium, 9, 62)
-		pvHint.TextWrapped = true
-		pvHint.TextYAlignment = Enum.TextYAlignment.Top
+		-- panel tengah: target
+		local cardT = FA_Card(stWin, midX, bodyY, midW, 192, 47)
+		FA_Section(cardT, "TARGET AVATAR", 14, 12, 48)
+		FA.Input = FA_Field(cardT, "Username Roblox", 48, 34)
+		FA.Input.Position = UDim2.new(0, 14, 0, 36)
+		FA.Input.Size = UDim2.new(1, -28, 0, 34)
+		local halfW = math.floor((midW - 28 - 8) / 2)
+		local btnSearch = FA_Small(cardT, "Search", halfW, true, 32)
+		btnSearch.Position = UDim2.new(0, 14, 0, 80)
+		local btnClear = FA_Small(cardT, "Clear", halfW, false, 32)
+		btnClear.Position = UDim2.new(0, 14 + halfW + 8, 0, 80)
+		make("Frame", { Position = UDim2.new(0, 14, 0, 126), Size = UDim2.new(1, -28, 0, 1), BackgroundColor3 = C.Divider, BorderSizePixel = 0, ZIndex = 48 }, cardT)
+		FA_Text(cardT, UDim2.new(0, 14, 0, 138), UDim2.new(0, 56, 0, 14), "TARGET", C.TextDim, Enum.Font.GothamBold, 10, 48)
+		local stTarget = FA_Text(cardT, UDim2.new(0, 76, 0, 136), UDim2.new(1, -90, 0, 18), "", C.Text, Enum.Font.GothamBold, 12, 48)
+		FA_Text(cardT, UDim2.new(0, 14, 0, 162), UDim2.new(0, 56, 0, 14), "STATUS", C.TextDim, Enum.Font.GothamBold, 10, 48)
+		local stStatus = FA_Text(cardT, UDim2.new(0, 76, 0, 160), UDim2.new(1, -90, 0, 18), "", C.Text, Enum.Font.GothamBold, 12, 48)
 
-		local pvCancel = FA_Footer(pvWin, pvW, "Cancel", 1, 2, false, 62)
-		local pvUse = FA_Footer(pvWin, pvW, "Use", 2, 2, true, 62)
+		-- panel tengah: item
+		local cardA = FA_Card(stWin, midX, bodyY + 192 + gap, midW, bodyH - 192 - gap, 47)
+		FA_Section(cardA, "FAKE ACCESSORIES", 14, 12, 48)
+		local stAccInfo = FA_Text(cardA, UDim2.new(0, 14, 0, 38), UDim2.new(1, -28, 0, 20), "", C.Text, Enum.Font.GothamBold, 14, 48)
+		local stAccNames = FA_Text(cardA, UDim2.new(0, 14, 0, 62), UDim2.new(1, -28, 0, 16), "", C.TextDim, Enum.Font.GothamMedium, 11, 48)
+		local btnPick = FA_Small(cardA, "Pilih Item", midW - 28, true, 34)
+		btnPick.AnchorPoint = Vector2.new(0, 1)
+		btnPick.Position = UDim2.new(0, 14, 1, -14)
 
+		-- panel kanan: save slot
+		local slCard = FA_Card(stWin, rightX, bodyY, rightW, bodyH, 47)
+		FA_Section(slCard, "SAVE SLOT", 14, 14, 48)
+		local slotCount = FA_Text(slCard, UDim2.new(0, 108, 0, 13), UDim2.new(0, 50, 0, 16), "0/10", C.Text, Enum.Font.GothamBold, 12, 48)
+		local btnAddSlot = FA_Small(slCard, "+ Slot", 74, true, 28)
+		btnAddSlot.AnchorPoint = Vector2.new(1, 0)
+		btnAddSlot.Position = UDim2.new(1, -12, 0, 8)
+		local stScroll = make("ScrollingFrame", { Name = "Slots", Position = UDim2.new(0, 10, 0, 48), Size = UDim2.new(1, -20, 1, -58), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 48 }, slCard)
+		make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, stScroll)
+		make("UIPadding", { PaddingRight = UDim.new(0, 6) }, stScroll)
+		local slotHint = make("TextLabel", { Size = UDim2.new(1, 0, 0, 60), BackgroundTransparency = 1, Text = "Belum ada slot.\nTekan + Slot untuk membuat slot baru.", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 11, TextWrapped = true, LayoutOrder = 1, ZIndex = 49 }, stScroll)
+
+		FA_RefreshInfo = function()
+			stTarget.Text = FA_TargetText()
+			local st = FA_StatusText()
+			stStatus.Text = st
+			if st == "Aktif" then stStatus.TextColor3 = C.Text
+			elseif st == "Off" then stStatus.TextColor3 = C.TextDim
+			else stStatus.TextColor3 = WARN_COLOR end
+			local n = #FA_SelectedItems()
+			stAccInfo.Text = tostring(n) .. " item dipilih"
+			if n == 0 then
+				stAccNames.Text = "Belum ada item"
+			else
+				local names = FA_ItemNames()
+				local txt = names[1]
+				if n > 1 then txt = txt .. " +" .. tostring(n - 1) end
+				stAccNames.Text = txt
+			end
+		end
+
+		-- preview karakter (rotasi dengan geser)
 		local function FA_RotatePreview()
 			if Pv.Model then
 				pcall(function() Pv.Model:PivotTo(CFrame.new(Pv.Pivot) * CFrame.Angles(0, Pv.Yaw, 0)) end)
@@ -8459,27 +8577,39 @@ do
 			end
 		end
 
-		local function FA_ClosePreview()
-			Pv.Token = Pv.Token + 1
-			Pv.Drag = false
-			FA_Show(pvWin, pvScale, false)
-			FA_ClearPreviewModel()
-		end
-
-		local function FA_OpenPreview(target)
+		FA_RefreshPreview = function()
+			if not stWin.Visible then return end
 			Pv.Token = Pv.Token + 1
 			local mine = Pv.Token
-			Pv.Target = target
-			Pv.Yaw = 0
-			Pv.Drag = false
-			FA_ClearPreviewModel()
-			Pv.Name.Text = "@" .. tostring(target.Name)
-			Pv.Id.Text = tostring(target.Id)
+			local base = nil
+			if Pv.Pending then
+				pvName.Text = "@" .. tostring(Pv.Pending.Name)
+				pvSub.Text = "Preview, tekan Use untuk memakai"
+				base = Pv.Pending.Desc
+			elseif FA.Target then
+				pvName.Text = FA_TargetText()
+				pvSub.Text = "Target aktif, geser untuk memutar"
+				base = FA.Target.Desc
+			else
+				pvName.Text = "Karakter sendiri"
+				pvSub.Text = "Geser untuk memutar"
+			end
+			btnUse.Visible = Pv.Pending ~= nil
+			btnCancel.Visible = Pv.Pending ~= nil
 			Pv.Status.Text = "Memuat karakter..."
-			FA_Show(pvWin, pvScale, true)
 			task.spawn(function()
-				local model = FA_MakeModel(target.Desc, FA_MyRig())
-				if mine ~= Pv.Token then
+				task.wait(0.2)
+				if mine ~= Pv.Token then return end
+				if not base then base = FA_OwnDescCached() end
+				if mine ~= Pv.Token then return end
+				if not base then
+					Pv.Status.Text = "Preview tidak tersedia"
+					return
+				end
+				local desc = FA_BuildDesc(base)
+				local model = FA_MakeModel(desc, FA_MyRig())
+				pcall(function() desc:Destroy() end)
+				if mine ~= Pv.Token or not stWin.Visible then
 					if model then pcall(function() model:Destroy() end) end
 					return
 				end
@@ -8501,14 +8631,16 @@ do
 					Pv.Status.Text = "Preview gagal dimuat"
 					return
 				end
+				FA_ClearPreviewModel()
 				Pv.Model = model
+				Pv.Yaw = 0
 				Pv.Status.Text = ""
 			end)
 		end
 
+		-- pencarian username
 		local FA_SearchToken = 0
 		local function FA_DoSearch()
-			if not FA.Input then return end
 			local name = FA_Clean(FA.Input.Text)
 			if not name then
 				FA_Notify("Fake Avatar", "Username tidak valid")
@@ -8524,110 +8656,19 @@ do
 					FA_Notify("Fake Avatar", err or "Gagal mencari")
 					return
 				end
-				FA_OpenPreview(target)
+				Pv.Pending = target
+				FA_RefreshPreview()
 			end)
 		end
 
-		track(pvCancel.MouseButton1Click:Connect(function()
-			playClick()
-			FA_ClosePreview()
-		end))
-		track(pvUse.MouseButton1Click:Connect(function()
-			playClick()
-			if not Pv.Target then return end
-			targetLoadToken = targetLoadToken + 1
-			FA.Target = Pv.Target
-			if FA.Input then FA.Input.Text = Pv.Target.Name end
-			FA_ClosePreview()
-			FA_RefreshInfo()
-			if not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
-		end))
-
-		----------------------------------------------------------------
-		-- JENDELA SETTINGS (dua panel: kiri target dan item, kanan save slot)
-		----------------------------------------------------------------
-		local stWin, stW, stH, stScale, stHead = FA_Window("FakeAvatarSettings", 470, 282, 46, "FAKE AVATAR", "Target, item, dan save slot")
-		local stClose = FA_HeadClose(stHead, 47)
-		local leftW = 168
-		local rightX = leftW + 24
-		local rightW = stW - rightX - 10
-		local paneH = stH - 54
-
-		local leftPane = make("Frame", { Name = "Left", Position = UDim2.new(0, 10, 0, 44), Size = UDim2.new(0, leftW, 0, paneH), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 47 }, stWin)
-		make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, leftPane)
-		make("Frame", { Position = UDim2.new(0, leftW + 12, 0, 46), Size = UDim2.new(0, 1, 0, paneH - 4), BackgroundColor3 = C.Border, BackgroundTransparency = 0.5, BorderSizePixel = 0, ZIndex = 47 }, stWin)
-
-		local function FA_Card(parent, order, h)
-			local f = make("Frame", { Size = UDim2.new(1, 0, 0, h), BackgroundColor3 = C.Button, BackgroundTransparency = 0.6, BorderSizePixel = 0, LayoutOrder = order, ZIndex = 47 }, parent)
-			corner(f, 8)
-			stroke(f, C.Border, 1, 0.65)
-			return f
-		end
-
-		-- kartu target
-		local cardT = FA_Card(leftPane, 1, 122)
-		FA_Section(cardT, "TARGET AVATAR", 10, 9, 48)
-		FA.Input = FA_Field(cardT, "Username Roblox", 48, 22)
-		FA.Input.Position = UDim2.new(0, 10, 0, 26)
-		FA.Input.Size = UDim2.new(1, -20, 0, 22)
-		local btnSearch = FA_Small(cardT, "Search", 72, true, 22)
-		btnSearch.Position = UDim2.new(0, 10, 0, 54)
-		local btnClear = FA_Small(cardT, "Clear", 72, false, 22)
-		btnClear.Position = UDim2.new(0, 86, 0, 54)
-		make("Frame", { Position = UDim2.new(0, 10, 0, 85), Size = UDim2.new(1, -20, 0, 1), BackgroundColor3 = C.Border, BackgroundTransparency = 0.6, BorderSizePixel = 0, ZIndex = 48 }, cardT)
-		FA_Text(cardT, UDim2.new(0, 10, 0, 92), UDim2.new(0, 40, 0, 12), "TARGET", C.TextDim, Enum.Font.GothamBold, 8, 48)
-		local stTarget = FA_Text(cardT, UDim2.new(0, 54, 0, 91), UDim2.new(1, -62, 0, 14), "", C.Text, Enum.Font.GothamBold, 10, 48)
-		FA_Text(cardT, UDim2.new(0, 10, 0, 106), UDim2.new(0, 40, 0, 12), "STATUS", C.TextDim, Enum.Font.GothamBold, 8, 48)
-		local stStatus = FA_Text(cardT, UDim2.new(0, 54, 0, 105), UDim2.new(1, -62, 0, 14), "", C.Text, Enum.Font.GothamBold, 10, 48)
-
-		-- kartu item
-		local cardA = FA_Card(leftPane, 2, 92)
-		FA_Section(cardA, "FAKE ACCESSORIES", 10, 9, 48)
-		local stAccInfo = FA_Text(cardA, UDim2.new(0, 10, 0, 26), UDim2.new(1, -20, 0, 14), "", C.Text, Enum.Font.GothamBold, 11, 48)
-		local stAccNames = FA_Text(cardA, UDim2.new(0, 10, 0, 42), UDim2.new(1, -20, 0, 12), "", C.TextDim, Enum.Font.GothamMedium, 9, 48)
-		local btnPick = FA_Small(cardA, "Pilih Item", 148, true, 24)
-		btnPick.Position = UDim2.new(0, 10, 0, 60)
-
-		-- panel kanan: save slot
-		local rightHead = make("Frame", { Name = "RightHead", Position = UDim2.new(0, rightX, 0, 44), Size = UDim2.new(0, rightW, 0, 24), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 47 }, stWin)
-		FA_Section(rightHead, "SAVE SLOT", 0, 7, 48)
-		local slotCount = FA_Text(rightHead, UDim2.new(0, 70, 0, 5), UDim2.new(0, 40, 0, 14), "0/10", C.Text, Enum.Font.GothamBold, 10, 48)
-		local btnAddSlot = FA_Small(rightHead, "+ Slot", 62, true, 22)
-		btnAddSlot.AnchorPoint = Vector2.new(1, 0)
-		btnAddSlot.Position = UDim2.new(1, 0, 0, 1)
-
-		local stScroll = make("ScrollingFrame", { Name = "Slots", Position = UDim2.new(0, rightX, 0, 72), Size = UDim2.new(0, rightW, 0, paneH - 28), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 47 }, stWin)
-		make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, stScroll)
-		make("UIPadding", { PaddingRight = UDim.new(0, 6) }, stScroll)
-
-		local slotHint = make("TextLabel", { Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, Text = "Belum ada slot.\nTekan + Slot untuk membuat slot baru.", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 9, TextWrapped = true, LayoutOrder = 1, ZIndex = 48 }, stScroll)
-
-		FA_RefreshInfo = function()
-			stTarget.Text = FA_TargetText()
-			local st = FA_StatusText()
-			stStatus.Text = st
-			if st == "Aktif" then stStatus.TextColor3 = C.Text
-			elseif st == "Off" then stStatus.TextColor3 = C.TextDim
-			else stStatus.TextColor3 = WARN_COLOR end
-			local n = #FA_SelectedItems()
-			stAccInfo.Text = tostring(n) .. " item dipilih"
-			if n == 0 then
-				stAccNames.Text = "Belum ada item"
-			else
-				local names = FA_ItemNames()
-				local txt = names[1]
-				if n > 1 then txt = txt .. " +" .. tostring(n - 1) end
-				stAccNames.Text = txt
-			end
-		end
-
+		-- save slot
 		local SlotUI = {}
 		local Confirm = {}
 
 		local function FA_SlotInfoText(s)
 			if not s then return "Kosong, tekan Save" end
 			local who = s.Self and "Karakter sendiri" or (s.TargetName and ("@" .. s.TargetName) or "Tanpa avatar")
-			return who .. " | " .. tostring(#(s.Items or {})) .. " item"
+			return who .. "  |  " .. tostring(#(s.Items or {})) .. " item"
 		end
 
 		FA_RefreshSlots = function()
@@ -8657,7 +8698,7 @@ do
 				if FA.Target and FA.Target.Desc then
 					desc, tid, tname, isSelf = FA.Target.Desc, FA.Target.Id, FA.Target.Name, FA.Target.Self == true
 				else
-					desc = FA_OwnDesc()
+					desc = FA_OwnDescCached()
 					tid, tname, isSelf = FA_LP.UserId, FA_LP.Name, true
 				end
 				local snapshot = nil
@@ -8685,6 +8726,7 @@ do
 				return
 			end
 			targetLoadToken = targetLoadToken + 1
+			Pv.Pending = nil
 			if s.Desc and s.TargetId then
 				local ok, desc = pcall(FA_DataToDesc, s.Desc)
 				if not ok or not desc then
@@ -8700,6 +8742,7 @@ do
 			FA_SetSelected(s.Items)
 			if FA_SyncList then FA_SyncList() end
 			FA_RefreshInfo()
+			FA_RefreshPreview()
 			if not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
 			FA_Notify("Save Slot", "Slot " .. tostring(i) .. " dimuat")
 		end
@@ -8716,27 +8759,26 @@ do
 			for k in pairs(Confirm) do Confirm[k] = nil end
 		end
 
+		local rowInner = rightW - 20 - 6
+		local slotBtnW = math.floor((rowInner - 20 - 12) / 3)
 		for i = 1, FA_MAX_SLOT do
-			local row = make("Frame", { Name = "Slot" .. tostring(i), Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.Button, BackgroundTransparency = 0.6, BorderSizePixel = 0, LayoutOrder = 10 + i, Visible = false, ZIndex = 47 }, stScroll)
-			corner(row, 8)
-			stroke(row, C.Border, 1, 0.65)
-			local badge = make("Frame", { Position = UDim2.new(0, 8, 0, 8), Size = UDim2.new(0, 18, 0, 20), BackgroundColor3 = C.Accent, BackgroundTransparency = 0.8, BorderSizePixel = 0, ZIndex = 48 }, row)
-			corner(badge, 5)
-			local num = FA_Text(badge, UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 1, 0), tostring(i), C.Text, Enum.Font.GothamBold, 9, 49)
+			local row = make("Frame", { Name = "Slot" .. tostring(i), Size = UDim2.new(1, 0, 0, 92), BackgroundColor3 = C.Button, BackgroundTransparency = 0.45, BorderSizePixel = 0, LayoutOrder = 10 + i, Visible = false, ZIndex = 48 }, stScroll)
+			corner(row, 10)
+			stroke(row, C.PanelBorder, 1, 0)
+			local badge = make("Frame", { Position = UDim2.new(0, 10, 0, 10), Size = UDim2.new(0, 26, 0, 30), BackgroundColor3 = C.TabActive, BorderSizePixel = 0, ZIndex = 49 }, row)
+			corner(badge, 7)
+			local num = FA_Text(badge, UDim2.new(0, 0, 0, 0), UDim2.new(1, 0, 1, 0), tostring(i), C.Text, Enum.Font.GothamBold, 12, 50)
 			num.TextXAlignment = Enum.TextXAlignment.Center
-			local nameBox = FA_Field(row, "Nama slot " .. tostring(i), 48, 20)
-			nameBox.Position = UDim2.new(0, 32, 0, 8)
-			nameBox.Size = UDim2.new(1, -40, 0, 20)
-			local info = FA_Text(row, UDim2.new(0, 32, 0, 34), UDim2.new(1, -(32 + 104), 0, 14), "", C.TextDim, Enum.Font.GothamMedium, 9, 48)
-			local btnSave = FA_Small(row, "Save", 38, true, 20)
-			btnSave.AnchorPoint = Vector2.new(1, 0)
-			btnSave.Position = UDim2.new(1, -92, 0, 31)
-			local btnLoad = FA_Small(row, "Load", 38, false, 20)
-			btnLoad.AnchorPoint = Vector2.new(1, 0)
-			btnLoad.Position = UDim2.new(1, -50, 0, 31)
-			local btnDel = FA_Small(row, "Hapus", 38, false, 20)
-			btnDel.AnchorPoint = Vector2.new(1, 0)
-			btnDel.Position = UDim2.new(1, -8, 0, 31)
+			local nameBox = FA_Field(row, "Nama slot " .. tostring(i), 49, 30)
+			nameBox.Position = UDim2.new(0, 44, 0, 10)
+			nameBox.Size = UDim2.new(1, -54, 0, 30)
+			local info = FA_Text(row, UDim2.new(0, 12, 0, 46), UDim2.new(1, -24, 0, 14), "", C.TextDim, Enum.Font.GothamMedium, 11, 49)
+			local btnSave = FA_Small(row, "Save", slotBtnW, true, 26)
+			btnSave.Position = UDim2.new(0, 10, 0, 62)
+			local btnLoad = FA_Small(row, "Load", slotBtnW, false, 26)
+			btnLoad.Position = UDim2.new(0, 10 + slotBtnW + 6, 0, 62)
+			local btnDel = FA_Small(row, "Hapus", slotBtnW, false, 26)
+			btnDel.Position = UDim2.new(0, 10 + (slotBtnW + 6) * 2, 0, 62)
 			SlotUI[i] = { Row = row, Name = nameBox, Info = info, Del = btnDel }
 
 			track(btnSave.MouseButton1Click:Connect(function() playClick(); FA_SaveSlot(i) end))
@@ -8786,10 +8828,29 @@ do
 		track(btnClear.MouseButton1Click:Connect(function()
 			playClick()
 			targetLoadToken = targetLoadToken + 1
+			Pv.Pending = nil
 			FA.Target = nil
 			FA.Input.Text = ""
 			FA_RefreshInfo()
+			FA_RefreshPreview()
 			FA_Schedule(0.1)
+		end))
+		track(btnUse.MouseButton1Click:Connect(function()
+			playClick()
+			if not Pv.Pending then return end
+			targetLoadToken = targetLoadToken + 1
+			FA.Target = Pv.Pending
+			FA.Input.Text = FA.Target.Name
+			Pv.Pending = nil
+			FA_RefreshInfo()
+			FA_RefreshPreview()
+			if not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
+		end))
+		track(btnCancel.MouseButton1Click:Connect(function()
+			playClick()
+			Pv.Pending = nil
+			FA.Input.Text = (FA.Target and not FA.Target.Self) and FA.Target.Name or ""
+			FA_RefreshPreview()
 		end))
 		track(btnPick.MouseButton1Click:Connect(function()
 			playClick()
@@ -8797,6 +8858,9 @@ do
 		end))
 		track(stClose.MouseButton1Click:Connect(function()
 			playClick()
+			Pv.Token = Pv.Token + 1
+			Pv.Drag = false
+			FA_ClearPreviewModel()
 			FA_Show(stWin, stScale, false)
 		end))
 
@@ -8804,6 +8868,7 @@ do
 			FA_RefreshInfo()
 			FA_RefreshSlots()
 			FA_Show(stWin, stScale, true)
+			FA_RefreshPreview()
 		end
 
 		FA_RefreshInfo()
@@ -8813,14 +8878,14 @@ do
 		-- JENDELA LIST FAKE ACCESSORIES
 		----------------------------------------------------------------
 		local Lb = { Pending = {}, Boxes = {} }
-		local lbWin, lbW, lbH, lbScale, lbHead = FA_Window("FakeAccessoriesList", 290, 330, 60, "FAKE ACCESSORIES", "Centang item yang ingin dipakai")
-		local lbList = make("ScrollingFrame", { Name = "List", Position = UDim2.new(0, 10, 0, 44), Size = UDim2.new(1, -20, 1, -84), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 62 }, lbWin)
-		make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, lbList)
-		make("UIPadding", { PaddingRight = UDim.new(0, 6) }, lbList)
+		local lbWin, lbW, lbH, lbScale, lbHead = FA_Window("FakeAccessoriesList", 400, 450, 60, "FAKE ACCESSORIES", "Centang item yang ingin dipakai")
+		local lbList = make("ScrollingFrame", { Name = "List", Position = UDim2.new(0, 18, 0, 68), Size = UDim2.new(1, -36, 1, -138), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 62 }, lbWin)
+		make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, lbList)
+		make("UIPadding", { PaddingRight = UDim.new(0, 8) }, lbList)
 
-		local lbAll = make("TextButton", { Name = "SelectAll", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 8), Size = UDim2.new(0, 72, 0, 22), BackgroundColor3 = C.Button, BackgroundTransparency = 0.2, BorderSizePixel = 0, AutoButtonColor = false, Text = "Select All", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 9, ZIndex = 64 }, lbHead)
-		corner(lbAll, 6)
-		hoverEffect(lbAll, 0.2, 0.05, 0)
+		local lbAll = make("TextButton", { Name = "SelectAll", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14), Size = UDim2.new(0, 96, 0, 28), BackgroundColor3 = C.Button, BorderSizePixel = 0, AutoButtonColor = false, Text = "Select All", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 64 }, lbHead)
+		corner(lbAll, 8)
+		hoverEffect(lbAll, 0, 0.15, 0.3)
 
 		local function FA_RefreshBoxes()
 			local all = true
@@ -8831,27 +8896,27 @@ do
 				if ui then
 					ui.Tick.Visible = on
 					ui.Box.BackgroundColor3 = on and C.White or C.Button
-					ui.Box.BackgroundTransparency = on and 0 or 0.3
-					ui.BoxStroke.Transparency = on and 1 or 0.8
-					ui.Label.TextColor3 = on and C.Text or C.TextDim
-					ui.Row.BackgroundTransparency = on and 0.35 or 0.55
+					ui.BoxStroke.Transparency = on and 1 or 0.7
+					ui.Label.TextColor3 = on and C.Text or C.TabText
+					ui.Row.BackgroundTransparency = on and 0.2 or 0.45
 				end
 			end
 			lbAll.Text = all and "Clear All" or "Select All"
 		end
 
 		for i, it in ipairs(FA_ITEMS) do
-			local row = make("TextButton", { Name = "Item_" .. it.Name, Size = UDim2.new(1, 0, 0, 26), BackgroundColor3 = C.Button, BackgroundTransparency = 0.55, BorderSizePixel = 0, AutoButtonColor = false, Text = "", LayoutOrder = i, ZIndex = 63 }, lbList)
-			corner(row, 7)
-			local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 8, 0.5, 0), Size = UDim2.new(0, 14, 0, 14), BackgroundColor3 = C.Button, BackgroundTransparency = 0.3, BorderSizePixel = 0, ZIndex = 64 }, row)
-			corner(box, 4)
-			local boxStroke = stroke(box, C.White, 1, 0.8)
+			local row = make("TextButton", { Name = "Item_" .. it.Name, Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = C.Button, BackgroundTransparency = 0.45, BorderSizePixel = 0, AutoButtonColor = false, Text = "", LayoutOrder = i, ZIndex = 63 }, lbList)
+			corner(row, 9)
+			stroke(row, C.PanelBorder, 1, 0)
+			local box = make("Frame", { Name = "Box", AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 0), Size = UDim2.new(0, 20, 0, 20), BackgroundColor3 = C.Button, BorderSizePixel = 0, ZIndex = 64 }, row)
+			corner(box, 6)
+			local boxStroke = stroke(box, C.White, 1, 0.7)
 			local tick = make("Frame", { Name = "Tick", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, Visible = false, ZIndex = 65 }, box)
-			for _, bar in ipairs({ { 4, 8, 4, 45 }, { 8.5, 6.5, 8, -45 } }) do
-				make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, bar[1], 0, bar[2]), Size = UDim2.new(0, bar[3], 0, 2), BackgroundColor3 = C.Window, BorderSizePixel = 0, Rotation = bar[4], ZIndex = 66 }, tick)
+			for _, bar in ipairs({ { 6, 12, 6, 45 }, { 12, 10, 11, -45 } }) do
+				make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, bar[1], 0, bar[2]), Size = UDim2.new(0, bar[3], 0, 2.5), BackgroundColor3 = C.Window, BorderSizePixel = 0, Rotation = bar[4], ZIndex = 66 }, tick)
 			end
-			local label = FA_Text(row, UDim2.new(0, 30, 0, 0), UDim2.new(1, -(30 + 64), 1, 0), it.Name, C.TextDim, Enum.Font.GothamMedium, 10, 64)
-			local tag = FA_Text(row, UDim2.new(1, -64, 0, 0), UDim2.new(0, 56, 1, 0), it.Tag or "", C.TextDim, Enum.Font.GothamMedium, 8, 64)
+			local label = FA_Text(row, UDim2.new(0, 44, 0, 0), UDim2.new(1, -(44 + 88), 1, 0), it.Name, C.TabText, Enum.Font.GothamMedium, 13, 64)
+			local tag = FA_Text(row, UDim2.new(1, -88, 0, 0), UDim2.new(0, 78, 1, 0), it.Tag or "", C.TextDim, Enum.Font.GothamMedium, 11, 64)
 			tag.TextXAlignment = Enum.TextXAlignment.Right
 			Lb.Boxes[it.Name] = { Row = row, Box = box, BoxStroke = boxStroke, Tick = tick, Label = label }
 			track(row.MouseButton1Click:Connect(function()
@@ -8914,6 +8979,7 @@ do
 			FA.Selected = {}
 			for name, v in pairs(Lb.Pending) do if v then FA.Selected[name] = true end end
 			FA_RefreshInfo()
+			FA_RefreshPreview()
 			FA_Show(lbWin, lbScale, false)
 			if #FA_SelectedItems() > 0 and not FA_Toggle.Get() then FA_Toggle.Set(true) else FA_Schedule(0.1) end
 		end))
@@ -8930,6 +8996,7 @@ do
 			FA_SetSelected(v)
 			FA_SyncList()
 			FA_RefreshInfo()
+			FA_RefreshPreview()
 			FA_Schedule(0.4)
 		end
 		FeatureRegistry["Fake Avatar Items"] = itemsApi
@@ -8947,6 +9014,7 @@ do
 				FA.Target = nil
 				FA.Input.Text = ""
 				FA_RefreshInfo()
+				FA_RefreshPreview()
 				FA_Schedule(0.4)
 				return
 			end
@@ -8963,6 +9031,7 @@ do
 					FA.Input.Text = target.Name
 				end
 				FA_RefreshInfo()
+				FA_RefreshPreview()
 				FA_Schedule(0.3)
 			end)
 		end
