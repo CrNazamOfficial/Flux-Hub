@@ -9648,16 +9648,18 @@ task.spawn(function()
 	end
 end)
 
--- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI =====
+-- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v2) =====
 task.spawn(function()
 	local lp = Players.LocalPlayer
-	local mask = nil
-	local maskChar = nil
+	local mask, maskChar = nil, nil
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Include
+	rayParams.IgnoreWater = true
+	local tracked = setmetatable({}, { __mode = "k" })
+	local hidden = setmetatable({}, { __mode = "k" })
 
 	local function clearMask()
-		if mask then
-			pcall(function() mask:Destroy() end)
-		end
+		if mask then pcall(function() mask:Destroy() end) end
 		mask = nil
 		maskChar = nil
 	end
@@ -9678,11 +9680,111 @@ task.spawn(function()
 		maskChar = char
 	end
 
-	local charConn = lp.CharacterAdded:Connect(function(char)
-		task.wait(0.3)
-		if gui.Parent and lp.Character == char then
-			applyMask(char)
+	-- true jika titik dunia tertutup badan karakter sendiri dari sudut kamera
+	local function selfOccluded(pos)
+		local cam = workspace.CurrentCamera
+		local char = lp.Character
+		if not cam or not char or not char.Parent then return false end
+		local head = char:FindFirstChild("Head")
+		local camPos = cam.CFrame.Position
+		if head and (camPos - head.Position).Magnitude < 1.6 then return false end
+		rayParams.FilterDescendantsInstances = { char }
+		local origin = camPos
+		local dir = pos - origin
+		for _ = 1, 4 do
+			if dir.Magnitude < 0.1 then return false end
+			local hit = workspace:Raycast(origin, dir, rayParams)
+			if not hit then return false end
+			local inst = hit.Instance
+			if inst.Transparency < 0.9 and inst.LocalTransparencyModifier < 0.9 then return true end
+			local step = (hit.Position - origin) + dir.Unit * 0.05
+			origin = origin + step
+			dir = dir - step
 		end
+		return false
+	end
+	shared.FluxSelfOcc = selfOccluded
+
+	local function worldPoint(inst, kind)
+		local cam = workspace.CurrentCamera
+		if kind == "B" then
+			local ad = inst.Adornee or inst.Parent
+			local p = nil
+			if ad then
+				if ad:IsA("Attachment") then
+					p = ad.WorldPosition
+				elseif ad:IsA("BasePart") then
+					p = ad.Position
+				elseif ad:IsA("Model") then
+					p = ad:GetPivot().Position
+				end
+			end
+			if not p then return nil end
+			return p + inst.StudsOffsetWorldSpace + cam.CFrame:VectorToWorldSpace(inst.StudsOffset)
+		end
+		local ad = inst.Adornee
+		if ad and ad:IsA("BasePart") then return ad.CFrame:PointToWorldSpace(inst.CFrame.Position) end
+		if ad and ad:IsA("Model") then return ad:GetPivot().Position end
+		return nil
+	end
+
+	local function consider(d)
+		if d:IsA("BillboardGui") then
+			tracked[d] = "B"
+		elseif d:IsA("BoxHandleAdornment") or d:IsA("SphereHandleAdornment") or d:IsA("CylinderHandleAdornment")
+			or d:IsA("ConeHandleAdornment") or d:IsA("LineHandleAdornment") then
+			tracked[d] = "A"
+		end
+	end
+
+	local conns = {}
+	local function watch(root)
+		if not root then return end
+		for _, d in ipairs(root:GetDescendants()) do consider(d) end
+		conns[#conns + 1] = root.DescendantAdded:Connect(consider)
+	end
+	watch(workspace)
+	pcall(function() watch(lp:FindFirstChild("PlayerGui")) end)
+	pcall(function() if parentGui then watch(parentGui) end end)
+
+	local frame = 0
+	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
+		frame = frame + 1
+		if frame % 2 ~= 0 then return end
+		local char = lp.Character
+		for inst, kind in pairs(tracked) do
+			if not inst.Parent then
+				tracked[inst] = nil
+				hidden[inst] = nil
+			else
+				pcall(function()
+					local prop = (kind == "B") and "Enabled" or "Visible"
+					if not inst.AlwaysOnTop or (char and inst:IsDescendantOf(char)) then
+						if hidden[inst] then
+							hidden[inst] = nil
+							inst[prop] = true
+						end
+						return
+					end
+					local pos = worldPoint(inst, kind)
+					local occ = pos ~= nil and selfOccluded(pos)
+					if occ then
+						if not hidden[inst] and inst[prop] == true then
+							hidden[inst] = true
+							inst[prop] = false
+						end
+					elseif hidden[inst] then
+						hidden[inst] = nil
+						inst[prop] = true
+					end
+				end)
+			end
+		end
+	end)
+
+	conns[#conns + 1] = lp.CharacterAdded:Connect(function(char)
+		task.wait(0.3)
+		if gui.Parent and lp.Character == char then applyMask(char) end
 	end)
 
 	applyMask(lp.Character)
@@ -9697,7 +9799,15 @@ task.spawn(function()
 		end
 	end
 
-	pcall(function() charConn:Disconnect() end)
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	for inst in pairs(hidden) do
+		pcall(function()
+			if inst.Parent then
+				if inst:IsA("BillboardGui") then inst.Enabled = true else inst.Visible = true end
+			end
+		end)
+	end
+	shared.FluxSelfOcc = nil
 	clearMask()
 end)
 
