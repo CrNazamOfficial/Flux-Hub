@@ -1354,51 +1354,103 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	-- ============================================================
 	-- 2. SELF HEAL (logic asli)
 	-- ============================================================
-	local SH = { Enabled = false, LoopId = 0, AnimConn = nil }
-	local SH_ANIM = "95836365038528"
-	local SH_BUSY = { "isVaulting", "isRepairing", "isUnhooking", "isHealing", "isSliding" }
-	local function SH_IsKiller() local t = Players.LocalPlayer.Team; return t ~= nil and t.Name == "Killer" end
-	local function SH_BlockAnim()
-		local c = Players.LocalPlayer.Character
-		local h = c and c:FindFirstChildOfClass("Humanoid")
-		local a = h and h:FindFirstChildOfClass("Animator")
-		if not a then return end
-		for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
-			local an = tr.Animation
-			if an and string.find(an.AnimationId, SH_ANIM, 1, true) then pcall(function() tr:Stop(0) end) end
+local SH = { Enabled = false, LoopId = 0, Conns = {}, AnimConn = nil, Anim = nil, Remote = nil, FireAt = 0, Last = 0, Blocked = { ["95836365038528"] = true } }
+local SH_BUSY = { "isVaulting", "isRepairing", "isUnhooking", "isHealing", "isSliding" }
+local SH_INTERVAL = 3
+local SH_LEARN = 0.6
+local function SH_IsKiller()
+	local t = Players.LocalPlayer.Team
+	return t ~= nil and t.Name == "Killer"
+end
+local function SH_Remote()
+	local r = SH.Remote
+	if r and r.Parent then return r end
+	local f = ReplicatedStorage:FindFirstChild("Remotes")
+	f = f and f:FindFirstChild("Healing")
+	SH.Remote = f and f:FindFirstChild("HealEvent")
+	return SH.Remote
+end
+local function SH_Id(tr)
+	local an = tr.Animation
+	return an and string.match(tostring(an.AnimationId), "%d+") or nil
+end
+local function SH_Block(tr)
+	local id = SH_Id(tr)
+	if not id then return end
+	if SH.Blocked[id] then
+		pcall(function() tr:Stop(0) end)
+		return
+	end
+	if os.clock() - SH.FireAt < SH_LEARN then
+		local p = tr.Priority
+		if p ~= Enum.AnimationPriority.Idle and p ~= Enum.AnimationPriority.Movement and p ~= Enum.AnimationPriority.Core then
+			SH.Blocked[id] = true
+			pcall(function() tr:Stop(0) end)
 		end
 	end
-	local function SH_Step()
-		if SH_IsKiller() then return end
-		local c = Players.LocalPlayer.Character
-		if not c then return end
-		local root = c:FindFirstChild("HumanoidRootPart")
-		local h = c:FindFirstChildOfClass("Humanoid")
-		if not root or not h then return end
-		if h.Health <= 0 or h.Health >= h.MaxHealth then return end
-		local st = c:FindFirstChild("CheckInterractable")
-		if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return end end end
-		pcall(function()
-			local r = ReplicatedStorage:FindFirstChild("Remotes")
-			local hl = r and r:FindFirstChild("Healing")
-			local ev = hl and hl:FindFirstChild("HealEvent")
-			if ev then ev:FireServer(root, true) end
-		end)
+end
+local function SH_Sweep()
+	local a = SH.Anim
+	if not a or not a.Parent then return end
+	for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
+		local id = SH_Id(tr)
+		if id and SH.Blocked[id] then pcall(function() tr:Stop(0) end) end
 	end
-	local SH_Row = Add("Self Heal")
-	local SH_Toggle = SH_Row:Toggle(false, function(state)
-		if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
-		SH.Enabled = state
-		SH.LoopId = SH.LoopId + 1
-		if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
-		if state then
-			SH.AnimConn = RunService.Heartbeat:Connect(function() pcall(SH_BlockAnim) end)
-			local myId = SH.LoopId
-			task.spawn(function()
-				while SH.Enabled and myId == SH.LoopId do pcall(SH_Step); task.wait(3) end
-			end)
+end
+local function SH_Bind(char)
+	if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
+	SH.Anim = nil
+	if not char then return end
+	local myId = SH.LoopId
+	task.spawn(function()
+		local h = char:WaitForChild("Humanoid", 10)
+		local a = h and (h:FindFirstChildOfClass("Animator") or h:WaitForChild("Animator", 10))
+		if not a or not SH.Enabled or myId ~= SH.LoopId then return end
+		SH.Anim = a
+		SH.AnimConn = a.AnimationPlayed:Connect(function(tr) pcall(SH_Block, tr) end)
+	end)
+end
+local function SH_Step()
+	if SH_IsKiller() then return end
+	local c = Players.LocalPlayer.Character
+	local root = c and c:FindFirstChild("HumanoidRootPart")
+	local h = c and c:FindFirstChildOfClass("Humanoid")
+	if not root or not h or h.Health <= 0 or h.Health >= h.MaxHealth then return end
+	if c:GetAttribute("IsCarried") or c:GetAttribute("IsHooked") or c:GetAttribute("Knocked") or c:GetAttribute("Trapped") then return end
+	local st = c:FindFirstChild("CheckInterractable")
+	if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return end end end
+	local now = os.clock()
+	if now - SH.Last < SH_INTERVAL then return end
+	local ev = SH_Remote()
+	if not ev then return end
+	SH.Last = now
+	SH.FireAt = now
+	pcall(function() ev:FireServer(root, true, HttpService:GenerateGUID(false), c) end)
+end
+local SH_Row = Add("Self Heal")
+local SH_Toggle
+SH_Toggle = SH_Row:Toggle(false, function(state)
+	if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
+	SH.Enabled = state
+	SH.LoopId = SH.LoopId + 1
+	for _, c in ipairs(SH.Conns) do pcall(function() c:Disconnect() end) end
+	SH.Conns = {}
+	if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
+	SH.Anim = nil
+	if not state then return end
+	local myId = SH.LoopId
+	local lp = Players.LocalPlayer
+	SH.Last = 0
+	SH_Bind(lp.Character)
+	table.insert(SH.Conns, lp.CharacterAdded:Connect(function(ch) SH.Last = 0; SH_Bind(ch) end))
+	table.insert(SH.Conns, RunService.Heartbeat:Connect(function() pcall(SH_Sweep) end))
+	task.spawn(function()
+		while SH.Enabled and myId == SH.LoopId do
+			pcall(SH_Step)
+			task.wait(0.3)
 		end
 	end)
+end)
 
 	-- ============================================================
 	-- 3. GOD MODE (Improved: Full Absolute Protection)
@@ -2321,13 +2373,6 @@ do
 	local HIT_SOUND_NAMES = {}
 	for _, s in ipairs(HIT_SOUNDS) do table.insert(HIT_SOUND_NAMES, s.name) end
 
-	local FireRemote =
-		ReplicatedStorage
-		:WaitForChild("Remotes")
-		:WaitForChild("Items")
-		:WaitForChild(TOOL_NAME)
-		:WaitForChild("Fire")
-
 	--------------------------------------------------
 	-- UTIL
 	--------------------------------------------------
@@ -3017,7 +3062,10 @@ do
 			point = body.Position
 		end
 
-		local predicted = PredictPoint(fromPos, point, body)
+		local okPred, predicted = pcall(PredictPoint, fromPos, point, body)
+        if not okPred or typeof(predicted) ~= "Vector3" then
+        	predicted = point
+   end
 
 		pcall(MarkShot, body)
 
@@ -3031,62 +3079,49 @@ do
 		return d / m
 	end
 
-	SHARED.remote = FireRemote
 	SHARED.aim = SilentDirection
 
-	local function InstallHook()
-		if SHARED.hooked then
-			return true
-		end
+local function IsFire(self)
+	if typeof(self) ~= "Instance" or self.Name ~= "Fire" then return false end
+	local p = self.Parent
+	return p ~= nil and p.Name == TOOL_NAME
+end
 
-		if not (hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure) then
-			return false
-		end
-
-		local ok = pcall(function()
-			local old
-			old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-				local method = getnamecallmethod()
-
-				if method == "FireServer" and self == SHARED.remote then
-					local mine = false
-					if checkcaller then
-						mine = checkcaller()
-					end
-
-					if not mine then
-						local fn = SHARED.aim
-						if fn then
-							local args = table.pack(...)
-							local tool, dir = args[1], args[2]
-							if typeof(tool) == "Instance" and typeof(dir) == "Vector3" then
-								local okAim, newDir = pcall(fn)
-								if okAim and typeof(newDir) == "Vector3" then
-									args[2] = newDir -- Mengganti arah vektor tembakan ke titik prediksi
-									setnamecallmethod("FireServer")
-									-- Meneruskan seluruh argumen secara utuh (termasuk argumen ke-3, dst)
-									return old(self, table.unpack(args, 1, args.n))
-								end
-							end
-						end
-					end
-
-					setnamecallmethod("FireServer")
-					return old(self, ...)
-				end
-
-				return old(self, ...)
-			end))
-		end)
-
-		if ok then
-			SHARED.hooked = true
-		end
-
-		return ok
+local function InstallHook()
+	if SHARED.hooked then
+		return true
 	end
+	if not (hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure) then
+		return false
+	end
+	local ok = pcall(function()
+		local old
+		old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+			if getnamecallmethod() == "FireServer" and IsFire(self) and not (checkcaller and checkcaller()) then
+				local args = table.pack(...)
+				if typeof(args[1]) == "Instance" and typeof(args[2]) == "Vector3" then
+					local fn = SHARED.aim
+					local okAim, newDir = false, nil
+					if fn then okAim, newDir = pcall(fn) end
+					if okAim and typeof(newDir) == "Vector3" then
+						args[2] = newDir
+						setnamecallmethod("FireServer")
+						return old(self, table.unpack(args, 1, args.n))
+					end
+				end
+				setnamecallmethod("FireServer")
+				return old(self, ...)
+			end
+			return old(self, ...)
+		end))
+	end)
+	if ok then
+		SHARED.hooked = true
+	end
+	return ok
+end
 
-	local hookOk = InstallHook()
+local hookOk = InstallHook()
 
 	--------------------------------------------------
 	-- LOOP TARGET
