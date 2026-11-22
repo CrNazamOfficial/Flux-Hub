@@ -2978,6 +2978,17 @@ do
 			return nil
 		end
 
+		do
+			local myChar = GetCharacter()
+			if myChar then
+				if myChar:FindFirstChild(KILLER_MARKER_NAME, true) then return nil end
+				local okTag, isKiller = pcall(function() return myChar:HasTag("Killer") end)
+				if okTag and isKiller then return nil end
+			end
+			local t = PLAYER.Team
+			if t and t.Name == "Killer" then return nil end
+		end
+
 		local root = myRootRef
 		if not root or root.Parent == nil then
 			local char = GetCharacter()
@@ -3204,6 +3215,16 @@ do
 		myRootRef = nil
 		laserTarget = nil
 		ResetTrack()
+	end)
+	task.spawn(function()
+		while SHARED.gen == MY_GEN do
+			task.wait(2)
+			local char = GetCharacter()
+			if char then
+				local root = char:FindFirstChild("HumanoidRootPart")
+				if root and root ~= myRootRef then myRootRef = root end
+			end
+		end
 	end)
 
 	--------------------------------------------------
