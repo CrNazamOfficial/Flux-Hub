@@ -221,9 +221,43 @@ end
 local opened, minimized, busy, closing, revealed, buildDone = false, false, false, false, false, false
 local revealMenu, reclampAll
 local WIN_W, WIN_H, HEADER_H = 620, 368, 44
+local UIS = { Mult = 1, bound = {} }
+function UIS.main()
+	local vp = viewportSize()
+	local short = math.min(vp.X, vp.Y)
+	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	local f = (short * (touch and 0.5 or 0.36)) / WIN_H
+	f = math.clamp(f, 0.3, SIZE_FACTOR) * UIS.Mult
+	return math.max(f, 0.22)
+end
+function UIS.small()
+	return math.clamp(UIS.main() / SIZE_FACTOR, 0.5, 1.1)
+end
+-- skala seragam: bentuk tidak berubah, hanya mengecil sampai muat di layar
+function UIS.fit(w, h, base)
+	local k = UIS.small() * (base or 1)
+	if w and h then
+		local vp = viewportSize()
+		k = math.min(k, (vp.X - 16) / w, (vp.Y - 16) / h)
+	end
+	return math.max(k, 0.2)
+end
+function UIS.bind(s, base, w, h)
+	local e = { s = s, b = base or 1, w = w, h = h }
+	UIS.bound[#UIS.bound + 1] = e
+	s.Scale = UIS.fit(w, h, e.b)
+	return s
+end
+function UIS.refresh()
+	for i = #UIS.bound, 1, -1 do
+		local e = UIS.bound[i]
+		if e.s.Parent then e.s.Scale = UIS.fit(e.w, e.h, e.b) else table.remove(UIS.bound, i) end
+	end
+end
 local NOTIF_IN, NOTIF_HOLD, NOTIF_OUT = 0.4, 1.5, 0.35
 
 local notifHolder = make("Frame", { Name = "NotifHolder", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 70), Size = UDim2.new(0, 260, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 100 }, gui)
+UIS.bind(make("UIScale", {}, notifHolder), 1)
 make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder, HorizontalAlignment = Enum.HorizontalAlignment.Right }, notifHolder)
 
 local notifCount = 0
@@ -264,7 +298,7 @@ if not gui.Parent then return end
 
 local function calcScale()
 	local vp = viewportSize()
-	local scaleValue = math.min(SIZE_FACTOR, (vp.X * 0.94) / WIN_W, (vp.Y * 0.92) / WIN_H)
+	local scaleValue = math.min(UIS.main(), (vp.X * 0.94) / WIN_W, (vp.Y * 0.92) / WIN_H)
 	if scaleValue < 0.2 then scaleValue = 0.2 end
 	return scaleValue
 end
@@ -282,6 +316,7 @@ local floatLayer = make("Frame", { Name = "FloatLayer", Position = UDim2.new(0, 
 
 local function updateViewportScale()
 	targetScale = calcScale()
+	UIS.refresh()
 	rootW, rootH = WIN_W * targetScale, WIN_H * targetScale
 	root.Size = UDim2.fromOffset(rootW, rootH)
 	if opened and not closing then scale.Scale = targetScale end
@@ -6001,6 +6036,9 @@ local function GE_UpdateLabels()
 					local occ = shared.FluxSelfOcc
 					if occ and occ(wp) then show = false end
 				end
+					local occ = shared.FluxSelfOcc
+					if occ and occ(wp) then show = false end
+				end
 			end
 			if lbl.Visible ~= show then lbl.Visible = show end
 		end
@@ -6356,6 +6394,7 @@ local function MP_Build()
 		AutomaticSize = Enum.AutomaticSize.X,
 	}, sg)
 	corner(box, 4)
+	UIS.bind(make("UIScale", {}, box), 1)
 	make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1, Transparency = 0.2 }, box)
 	make("UIPadding", {
 		PaddingLeft = UDim.new(0, 5),
@@ -6609,6 +6648,7 @@ local function PK_Build()
 		BorderSizePixel = 0,
 		Active = true,
 	}, sg)
+	UIS.bind(make("UIScale", {}, box), 1)
 	local bar = make("Frame", {
 		Name = "Bar",
 		Position = UDim2.new(0, 0, 0, 1),
@@ -6740,14 +6780,11 @@ end)
 		WE.Scanned[win] = true
 		if bottom:GetAttribute("ESP_OrigTrans") == nil then bottom:SetAttribute("ESP_OrigTrans", bottom.Transparency) end
 		if bottom.Transparency > 0.5 then bottom.Transparency = 0.5 end
-		local box = Instance.new("BoxHandleAdornment")
-		box.Name = "WindowBox"; box.Adornee = bottom; box.Size = bottom.Size
-		box.Color3 = WE.Color; box.Transparency = 0.3; box.AlwaysOnTop = true; box.ZIndex = 5; box.Parent = bottom
 		local hl = Instance.new("Highlight")
 		hl.Adornee = bottom; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
-		hl.OutlineColor = WE.Color; hl.OutlineTransparency = 0.1
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = WE.ShowHL; hl.Parent = bottom
-		WE.Objects[win] = { box = box, bottom = bottom, hl = hl }
+		hl.OutlineTransparency = 1
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = true; hl.Parent = bottom
+		WE.Objects[win] = { bottom = bottom, hl = hl }
 	end
 	local function WE_Scan()
 		if not WE.Enabled then return end
@@ -6772,7 +6809,7 @@ end)
 			WE.Conns = {}
 		end
 	end)
-	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.box then d.box.Color3 = c end; if d.hl then d.hl.FillColor = c; d.hl.OutlineColor = c end end end)
+	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.hl then d.hl.FillColor = c end end end)
 
 -- ============================================================
 -- 11. SURVIVOR ESP
@@ -7152,7 +7189,7 @@ do
 		local FA_COPY_PROPORTION = true
 		local FA_FILE = "FluxHub_FakeAvatar.json"
 		local FA_MAX_SLOT = 10
-		local FA_SCALE = (type(SIZE_FACTOR) == "number") and SIZE_FACTOR or 0.6
+		local FA_SCALE = UIS.main()
 
 		local FA_ITEMS = {
 			{ Name = "Headless Horseman", Id = 15093053680, Slot = "Head", Tag = "Head" },
@@ -8369,17 +8406,18 @@ do
 
 		local function FA_Window(name, w, h, z, title, subtitle)
 			local vp0 = viewportSize()
-			local winW = math.min(w, (vp0.X - 16) / FA_SCALE)
-			local winH = math.min(h, (vp0.Y - 16) / FA_SCALE)
-			local win = make("Frame", { Name = name, Position = UDim2.new(0, math.floor((vp0.X - winW * FA_SCALE) / 2), 0, math.floor((vp0.Y - winH * FA_SCALE) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = z }, gui)
+			local winW, winH = w, h
+			local k = math.min(FA_SCALE, (vp0.X - 16) / w, (vp0.Y - 16) / h)
+			local win = make("Frame", { Name = name, Position = UDim2.new(0, math.floor((vp0.X - winW * k) / 2), 0, math.floor((vp0.Y - winH * k) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = z }, gui)
 			corner(win, 14)
 			stroke(win, C.Border, 1, 0)
-			local scale = make("UIScale", { Scale = FA_SCALE }, win)
+			local scale = make("UIScale", { Scale = k }, win)
+			scale:SetAttribute("K", k)
 			local head = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 56), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = z + 1 }, win)
 			FA_Text(head, UDim2.new(0, 18, 0, 10), UDim2.new(1, -90, 0, 20), title, C.Text, Enum.Font.GothamBold, 16, z + 2)
 			FA_Text(head, UDim2.new(0, 18, 0, 32), UDim2.new(1, -90, 0, 14), subtitle, C.TextDim, Enum.Font.GothamMedium, 11, z + 2)
 			make("Frame", { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.Divider, BorderSizePixel = 0, ZIndex = z + 1 }, head)
-			makeDrag({ Handles = { head }, Target = win, Size = Vector2.new(winW * FA_SCALE, winH * FA_SCALE), Threshold = 4 })
+			makeDrag({ Handles = { head }, Target = win, Size = Vector2.new(winW * k, winH * k), Threshold = 4 })
 			return win, winW, winH, scale, head
 		end
 
@@ -8392,9 +8430,10 @@ do
 
 		local function FA_Show(win, scale, show)
 			if show then
-				scale.Scale = FA_SCALE * 0.94
+				local k = scale:GetAttribute("K") or FA_SCALE
+				scale.Scale = k * 0.94
 				win.Visible = true
-				tw(scale, 0.18, { Scale = FA_SCALE }, Enum.EasingStyle.Quint)
+				tw(scale, 0.18, { Scale = k }, Enum.EasingStyle.Quint)
 			else
 				win.Visible = false
 			end
@@ -9085,10 +9124,11 @@ RunTab("Panel", function(Add, Title, AddFeature)
 	local checkApis = {}
 	local openTabBtn, lockTabBtn
 	local vp0 = viewportSize()
-	local winW = math.min(230, vp0.X - 16)
-	local winH = math.min(330, vp0.Y - 16)
-	local Win = make("Frame", { Name = "PanelSettingWindow", Position = UDim2.new(0, math.floor((vp0.X - winW) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 30 }, gui)
+	local winW, winH = 230, 330
+	local WK = UIS.fit(winW, winH)
+	local Win = make("Frame", { Name = "PanelSettingWindow", Position = UDim2.new(0, math.floor((vp0.Y - winH) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 30 }, gui)
 	corner(Win, 10); stroke(Win, C.Border, 1)
+	UIS.bind(make("UIScale", {}, Win), 1, winW, winH)
 	local WinHeader = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 31 }, Win)
 	make("TextLabel", { Position = UDim2.new(0, 14, 0, 6), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = "PANEL SETTING", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 32 }, WinHeader)
 	make("TextLabel", { Position = UDim2.new(0, 14, 0, 24), Size = UDim2.new(1, -28, 0, 12), BackgroundTransparency = 1, Text = "Centang fitur untuk memunculkan tombol", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 32 }, WinHeader)
@@ -9104,7 +9144,7 @@ RunTab("Panel", function(Add, Title, AddFeature)
 	local saveBtn = footerBtn("Save", 10, true)
 	local lockBtn = footerBtn("Lock", 10 + fw + 6, false)
 	local closeBtn = footerBtn("Close", 10 + (fw + 6) * 2, false)
-	makeDrag({ Handles = { WinHeader }, Target = Win, Size = Vector2.new(winW, winH), Threshold = 4 })
+	makeDrag({ Handles = { WinHeader }, Target = Win, Size = function() local k = UIS.fit(winW, winH); return Vector2.new(winW * k, winH * k) end, Threshold = 4 })
 	local function updateFloatVisual(name)
 	local fb = floatBtns[name]; if not fb then return end
 	local reg = ToggleRegistry[name]
@@ -9123,15 +9163,16 @@ RunTab("Panel", function(Add, Title, AddFeature)
 		for _ in pairs(floatBtns) do count = count + 1 end
 		local pos = savedPos[name] or { x = 16, y = 70 + count * (BTN_H + 8) }
 		local v = viewportSize()
-		local px = math.clamp(pos.x, 0, math.max(v.X - BTN_W, 0))
-		local py = math.clamp(pos.y, 0, math.max(v.Y - BTN_H, 0))
+		local px = math.clamp(pos.x, 0, math.max(v.X - BTN_W * UIS.small(), 0))
+		local py = math.clamp(pos.y, 0, math.max(v.Y - BTN_H * UIS.small(), 0))
 		local b = make("TextButton", { Name = "Float_" .. name, Position = UDim2.new(0, px, 0, py), Size = UDim2.new(0, BTN_W, 0, BTN_H), BackgroundColor3 = C.Window, BackgroundTransparency = 0.1, BorderSizePixel = 0, AutoButtonColor = false, Text = name, TextColor3 = C.TextDim, Font = Enum.Font.GothamBold, TextSize = 8, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 35 }, floatLayer)
 		corner(b, 3)
 		local st = stroke(b, C.TextDim, 2)
+		UIS.bind(make("UIScale", {}, b), 1)
 		make("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, b)
 		floatBtns[name] = { Button = b, Stroke = st, Last = nil }
 		makeDrag({
-			Handles = { b }, Target = b, Size = Vector2.new(BTN_W, BTN_H),
+        Handles = { b }, Target = b, Size = function() return Vector2.new(BTN_W * UIS.small(), BTN_H * UIS.small()) end,
 			CanDrag = function() return not locked end,
 			OnTap = function()
 	playClick()
@@ -9231,8 +9272,8 @@ end
 		end
 		if type(data.win) == "table" and tonumber(data.win.x) and tonumber(data.win.y) then
 			local v = viewportSize()
-			local wx = math.clamp(tonumber(data.win.x), 0, math.max(v.X - winW, 0))
-			local wy = math.clamp(tonumber(data.win.y), 0, math.max(v.Y - winH, 0))
+			local wx = math.clamp(tonumber(data.win.x), 0, math.max(v.X - winW * UIS.fit(winW, winH), 0))
+			local wy = math.clamp(tonumber(data.win.y), 0, math.max(v.Y - winH * UIS.fit(winW, winH), 0))
 			Win.Position = UDim2.new(0, wx, 0, wy)
 		end
 		if type(data.selected) == "table" then for _, name in ipairs(data.selected) do if isFeature[name] then setSelected(name, true) end end end
@@ -9345,14 +9386,15 @@ RunTab("Misc", function(Add, Title, AddFeature)
 		else b.BackgroundColor3 = C.Button; b.BackgroundTransparency = 0.85; b.TextColor3 = C.TextDim; b.TextTransparency = 0.5 end
 	end
 	local vp0 = viewportSize()
-	local winW = math.min(270, vp0.X - 16)
-	local winH = math.min(360, vp0.Y - 16)
-	local Win = make("Frame", { Name = "SaveManagerWindow", Position = UDim2.new(0, math.floor((vp0.X - winW) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 40 }, gui)
+	local winW, winH = 270, 360
+	local WK = UIS.fit(winW, winH)
+	local Win = make("Frame", { Name = "SaveManagerWindow", Position = UDim2.new(0, math.floor((vp0.Y - winH) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 40 }, gui)
 	corner(Win, 10); stroke(Win, C.Border, 1)
+	UIS.bind(make("UIScale", {}, Win), 1, winW, winH)
 	local WinHeader = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 41 }, Win)
 	make("TextLabel", { Position = UDim2.new(0, 14, 0, 6), Size = UDim2.new(1, -28, 0, 18), BackgroundTransparency = 1, Text = "SAVE MANAGER", TextColor3 = C.Text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 42 }, WinHeader)
 	make("TextLabel", { Position = UDim2.new(0, 14, 0, 24), Size = UDim2.new(1, -28, 0, 12), BackgroundTransparency = 1, Text = "Pilih save untuk Load / Delete / Auto", TextColor3 = C.TextDim, Font = Enum.Font.GothamMedium, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 42 }, WinHeader)
-	makeDrag({ Handles = { WinHeader }, Target = Win, Size = Vector2.new(winW, winH), Threshold = 4 })
+	makeDrag({ Handles = { WinHeader }, Target = Win, Size = function() local k = UIS.fit(winW, winH); return Vector2.new(winW * k, winH * k) end, Threshold = 4 })
 	local list = make("ScrollingFrame", { Name = "List", Position = UDim2.new(0, 10, 0, 46), Size = UDim2.new(1, -20, 1, -94), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.TextDim, ScrollBarImageTransparency = 0.4, CanvasSize = UDim2.new(0, 0, 0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 42 }, Win)
 	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 	make("UIPadding", { PaddingRight = UDim.new(0, 6) }, list)
@@ -9510,12 +9552,13 @@ local mini = make("ImageButton", {
 	Image = ICONS.Logo, ImageTransparency = 1, ScaleType = Enum.ScaleType.Fit, Visible = false, ZIndex = 45,
 }, gui)
 local function placeMini()
+UIS.bind(make("UIScale", {}, mini), 1)
 	local x, y
 	if iconPos then x, y = iconPos.X, iconPos.Y
 	else x = root.Position.X.Offset + 4; y = root.Position.Y.Offset + 2 end
 	local vp = viewportSize()
-	x = math.clamp(x, 0, math.max(vp.X - MINI_SIZE, 0))
-	y = math.clamp(y, 0, math.max(vp.Y - MINI_SIZE, 0))
+	x = math.clamp(x, 0, math.max(vp.X - MINI_SIZE * UIS.small(), 0))
+	y = math.clamp(y, 0, math.max(vp.Y - MINI_SIZE * UIS.small(), 0))
 	mini.Position = UDim2.fromOffset(x, y)
 end
 local function minimizeMenu()
@@ -9613,7 +9656,7 @@ for _, obj in ipairs(header:GetDescendants()) do
 end
 makeDrag({ Handles = headerHandles, Target = root, Size = function() return Vector2.new(rootW, rootH) end, Smooth = DRAG_SMOOTH, Threshold = 3 })
 makeDrag({
-	Handles = { mini }, Target = mini, Size = Vector2.new(MINI_SIZE, MINI_SIZE), Threshold = 6,
+	Handles = { mini }, Target = mini, Size = function() return Vector2.new(MINI_SIZE * UIS.small(), MINI_SIZE * UIS.small()) end, Threshold = 6,
 	OnTap = function() playClick(); restoreMenu() end,
 	OnDragEnd = function(x, y) iconPos = Vector2.new(x, y) end,
 })
@@ -9648,7 +9691,7 @@ task.spawn(function()
 	end
 end)
 
--- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v2) =====
+-- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v3) =====
 task.spawn(function()
 	local lp = Players.LocalPlayer
 	local mask, maskChar = nil, nil
@@ -9680,7 +9723,6 @@ task.spawn(function()
 		maskChar = char
 	end
 
-	-- true jika titik dunia tertutup badan karakter sendiri dari sudut kamera
 	local function selfOccluded(pos)
 		local cam = workspace.CurrentCamera
 		local char = lp.Character
@@ -9705,27 +9747,45 @@ task.spawn(function()
 	end
 	shared.FluxSelfOcc = selfOccluded
 
-	local function worldPoint(inst, kind)
+	local function anchorPoint(inst)
 		local cam = workspace.CurrentCamera
-		if kind == "B" then
-			local ad = inst.Adornee or inst.Parent
-			local p = nil
-			if ad then
-				if ad:IsA("Attachment") then
-					p = ad.WorldPosition
-				elseif ad:IsA("BasePart") then
-					p = ad.Position
-				elseif ad:IsA("Model") then
-					p = ad:GetPivot().Position
+		local ad = inst.Adornee or inst.Parent
+		local p = nil
+		if ad then
+			if ad:IsA("Attachment") then
+				p = ad.WorldPosition
+			elseif ad:IsA("BasePart") then
+				p = ad.Position
+			elseif ad:IsA("Model") then
+				p = ad:GetPivot().Position
+			end
+		end
+		if not p then return nil end
+		return p + inst.StudsOffsetWorldSpace + cam.CFrame:VectorToWorldSpace(inst.StudsOffset)
+	end
+
+	-- semua titik sampel adornment harus tertutup badan baru disembunyikan
+	local function adornFullyOccluded(inst)
+		local ad = inst.Adornee
+		local cf = nil
+		if ad and ad:IsA("BasePart") then cf = ad.CFrame * inst.CFrame
+		elseif ad and ad:IsA("Model") then cf = ad:GetPivot() end
+		if not cf then return false end
+		local pts = { cf.Position }
+		if inst:IsA("BoxHandleAdornment") then
+			local h = inst.Size / 2
+			for sx = -1, 1, 2 do
+				for sy = -1, 1, 2 do
+					for sz = -1, 1, 2 do
+						pts[#pts + 1] = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
+					end
 				end
 			end
-			if not p then return nil end
-			return p + inst.StudsOffsetWorldSpace + cam.CFrame:VectorToWorldSpace(inst.StudsOffset)
 		end
-		local ad = inst.Adornee
-		if ad and ad:IsA("BasePart") then return ad.CFrame:PointToWorldSpace(inst.CFrame.Position) end
-		if ad and ad:IsA("Model") then return ad:GetPivot().Position end
-		return nil
+		for _, p in ipairs(pts) do
+			if not selfOccluded(p) then return false end
+		end
+		return true
 	end
 
 	local function consider(d)
@@ -9766,8 +9826,13 @@ task.spawn(function()
 						end
 						return
 					end
-					local pos = worldPoint(inst, kind)
-					local occ = pos ~= nil and selfOccluded(pos)
+					local occ = false
+					if kind == "B" then
+						local pos = anchorPoint(inst)
+						occ = pos ~= nil and selfOccluded(pos)
+					else
+						occ = adornFullyOccluded(inst)
+					end
 					if occ then
 						if not hidden[inst] and inst[prop] == true then
 							hidden[inst] = true
