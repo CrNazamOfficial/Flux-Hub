@@ -6036,9 +6036,6 @@ local function GE_UpdateLabels()
 					local occ = shared.FluxSelfOcc
 					if occ and occ(wp) then show = false end
 				end
-					local occ = shared.FluxSelfOcc
-					if occ and occ(wp) then show = false end
-				end
 			end
 			if lbl.Visible ~= show then lbl.Visible = show end
 		end
@@ -8437,7 +8434,8 @@ do
 			else
 				win.Visible = false
 			end
-
+     end
+     
 		local function FA_Footer(win, winW, text, index, count, primary, z)
 			local gap = 10
 			local w = math.floor((winW - 36 - gap * (count - 1)) / count)
@@ -9125,7 +9123,7 @@ RunTab("Panel", function(Add, Title, AddFeature)
 	local vp0 = viewportSize()
 	local winW, winH = 230, 330
 	local WK = UIS.fit(winW, winH)
-	local Win = make("Frame", { Name = "PanelSettingWindow", Position = UDim2.new(0, math.floor((vp0.Y - winH) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 30 }, gui)
+	local Win = make("Frame", { Name = "PanelSettingWindow", Position = UDim2.new(0, math.floor((vp0.X - winW * WK) / 2), 0, math.floor((vp0.Y - winH * WK) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 30 }, gui)
 	corner(Win, 10); stroke(Win, C.Border, 1)
 	UIS.bind(make("UIScale", {}, Win), 1, winW, winH)
 	local WinHeader = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 31 }, Win)
@@ -9387,7 +9385,7 @@ RunTab("Misc", function(Add, Title, AddFeature)
 	local vp0 = viewportSize()
 	local winW, winH = 270, 360
 	local WK = UIS.fit(winW, winH)
-	local Win = make("Frame", { Name = "SaveManagerWindow", Position = UDim2.new(0, math.floor((vp0.Y - winH) / 2), 0, math.floor((vp0.Y - winH) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 40 }, gui)
+	local Win = make("Frame", { Name = "SaveManagerWindow", Position = UDim2.new(0, math.floor((vp0.X - winW * WK) / 2), 0, math.floor((vp0.Y - winH * WK) / 2)), Size = UDim2.new(0, winW, 0, winH), BackgroundColor3 = C.Window, BorderSizePixel = 0, Active = true, Visible = false, ZIndex = 40 }, gui)
 	corner(Win, 10); stroke(Win, C.Border, 1)
 	UIS.bind(make("UIScale", {}, Win), 1, winW, winH)
 	local WinHeader = make("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 41 }, Win)
@@ -9550,8 +9548,8 @@ local mini = make("ImageButton", {
 	BackgroundTransparency = 1, BorderSizePixel = 0, AutoButtonColor = false,
 	Image = ICONS.Logo, ImageTransparency = 1, ScaleType = Enum.ScaleType.Fit, Visible = false, ZIndex = 45,
 }, gui)
-local function placeMini()
 UIS.bind(make("UIScale", {}, mini), 1)
+local function placeMini()
 	local x, y
 	if iconPos then x, y = iconPos.X, iconPos.Y
 	else x = root.Position.X.Offset + 4; y = root.Position.Y.Offset + 2 end
