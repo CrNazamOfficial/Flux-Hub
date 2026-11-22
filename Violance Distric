@@ -1352,16 +1352,12 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	Title("Features")
 
 	-- ============================================================
-	-- 2. SELF HEAL (v2: HealEvent rekan + Bandage self-heal, sekaligus)
+	-- 2. SELF HEAL (logic asli)
 	-- ============================================================
-	local SH = { Enabled = false, LoopId = 0, AnimConn = nil, BandageReq = 0, MinHP = 50, MaxHP = 80 }
+	local SH = { Enabled = false, LoopId = 0, AnimConn = nil }
 	local SH_ANIM = "95836365038528"
-	local SH_BUSY = { "isVaulting", "isSliding", "isDroppingPallet", "isRepairing", "isHealing", "isUnhooking", "isExiting" }
-	local SH_CS = game:GetService("CollectionService")
-	local SH_BANDAGE_NAME = "Bandage"
-
+	local SH_BUSY = { "isVaulting", "isRepairing", "isUnhooking", "isHealing", "isSliding" }
 	local function SH_IsKiller() local t = Players.LocalPlayer.Team; return t ~= nil and t.Name == "Killer" end
-
 	local function SH_BlockAnim()
 		local c = Players.LocalPlayer.Character
 		local h = c and c:FindFirstChildOfClass("Humanoid")
@@ -1372,15 +1368,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 			if an and string.find(an.AnimationId, SH_ANIM, 1, true) then pcall(function() tr:Stop(0) end) end
 		end
 	end
-
-	local function SH_IsBusy(c)
-		if c:GetAttribute("Trapped") or c:GetAttribute("IsDead") or c:GetAttribute("IsCarried") or c:GetAttribute("IsHooked") then return true end
-		local st = c:FindFirstChild("CheckInterractable")
-		if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return true end end end
-		return false
-	end
-
-	-- cara lama: minta rekan menyembuhkan lewat remote Healing (tetap dipertahankan, berguna kalau ada bot/rekan AI yang merespons)
 	local function SH_Step()
 		if SH_IsKiller() then return end
 		local c = Players.LocalPlayer.Character
@@ -1389,7 +1376,8 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		local h = c:FindFirstChildOfClass("Humanoid")
 		if not root or not h then return end
 		if h.Health <= 0 or h.Health >= h.MaxHealth then return end
-		if SH_IsBusy(c) then return end
+		local st = c:FindFirstChild("CheckInterractable")
+		if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return end end end
 		pcall(function()
 			local r = ReplicatedStorage:FindFirstChild("Remotes")
 			local hl = r and r:FindFirstChild("Healing")
@@ -1397,33 +1385,6 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 			if ev then ev:FireServer(root, true) end
 		end)
 	end
-
-	-- cara baru: pakai item Bandage sendiri, benar-benar self-heal tanpa bantuan orang lain
-	local function SH_StepBandage()
-		if SH_IsKiller() then return end
-		local c = Players.LocalPlayer.Character
-		if not c then return end
-		local h = c:FindFirstChildOfClass("Humanoid")
-		if not h or h.Health <= 0 then return end
-		if h.Health < SH.MinHP or h.Health > SH.MaxHP then return end
-		if c:GetAttribute("Antiheal") then return end
-		local okS, silenced = pcall(function() return SH_CS:HasTag(c, "Silenced") end)
-		if okS and silenced then return end
-		if SH_IsBusy(c) then return end
-		local tool = c:FindFirstChild(SH_BANDAGE_NAME)
-		if not tool or not tool:IsA("Tool") then return end
-		local charge = tool:GetAttribute("charge")
-		if type(charge) == "number" and charge <= 0 then return end
-		SH.BandageReq = SH.BandageReq + 1
-		pcall(function()
-			local r = ReplicatedStorage:FindFirstChild("Remotes")
-			local items = r and r:FindFirstChild("Items")
-			local bd = items and items:FindFirstChild("Bandage")
-			local fire = bd and bd:FindFirstChild("Fire")
-			if fire then fire:FireServer(true, tool, SH.BandageReq) end
-		end)
-	end
-
 	local SH_Row = Add("Self Heal")
 	local SH_Toggle = SH_Row:Toggle(false, function(state)
 		if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
@@ -1436,16 +1397,9 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 			task.spawn(function()
 				while SH.Enabled and myId == SH.LoopId do pcall(SH_Step); task.wait(3) end
 			end)
-			task.spawn(function()
-				local myId = SH.LoopId
-				while SH.Enabled and myId == SH.LoopId do pcall(SH_StepBandage); task.wait(1) end
-			end)
 		end
 	end)
-	SH_Toggle.Extras = {
-		SH_Row:Stepper({ Min = 10, Max = 95, Step = 5, Default = 50 }, function(v) SH.MinHP = v end),
-		SH_Row:Stepper({ Min = 15, Max = 99, Step = 5, Default = 80 }, function(v) SH.MaxHP = v end),
-	}
+
 	-- ============================================================
 	-- 3. GOD MODE (Improved: Full Absolute Protection)
 	-- ============================================================
