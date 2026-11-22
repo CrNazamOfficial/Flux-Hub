@@ -8437,7 +8437,6 @@ do
 			else
 				win.Visible = false
 			end
-		end
 
 		local function FA_Footer(win, winW, text, index, count, primary, z)
 			local gap = 10
