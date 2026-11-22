@@ -1352,138 +1352,100 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	Title("Features")
 
 	-- ============================================================
-	-- 2. SELF HEAL (logic asli)
+	-- 2. SELF HEAL (v2: HealEvent rekan + Bandage self-heal, sekaligus)
 	-- ============================================================
-local SH = { Enabled = false, LoopId = 0, Conns = {}, AnimConn = nil, Anim = nil, FireAt = 0, Busy = false, Blocked = { ["95836365038528"] = true } }
-local SH_BUSY = { "isVaulting", "isRepairing", "isUnhooking", "isHealing", "isSliding" }
-local SH_LEARN = 0.8
-local SH_RETRY = 4
-local SH_Cache = {}
-local function SH_IsKiller()
-	local t = Players.LocalPlayer.Team
-	return t ~= nil and t.Name == "Killer"
-end
-local function SH_Rem(name, ...)
-	local c = SH_Cache[name]
-	if c and c.Parent then return c end
-	local n = ReplicatedStorage:FindFirstChild("Remotes")
-	for _, k in ipairs({ ... }) do n = n and n:FindFirstChild(k) end
-	SH_Cache[name] = n
-	return n
-end
-local function SH_Id(tr)
-	local an = tr.Animation
-	return an and string.match(tostring(an.AnimationId), "%d+") or nil
-end
-local function SH_Block(tr)
-	local id = SH_Id(tr)
-	if not id then return end
-	if SH.Blocked[id] then pcall(function() tr:Stop(0) end); return end
-	if SH.Busy or os.clock() - SH.FireAt < SH_LEARN then
-		local p = tr.Priority
-		if p ~= Enum.AnimationPriority.Idle and p ~= Enum.AnimationPriority.Movement and p ~= Enum.AnimationPriority.Core then
-			SH.Blocked[id] = true
-			pcall(function() tr:Stop(0) end)
-		end
-	end
-end
-local function SH_Sweep()
-	local a = SH.Anim
-	if not a or not a.Parent then return end
-	for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
-		local id = SH_Id(tr)
-		if id and SH.Blocked[id] then pcall(function() tr:Stop(0) end) end
-	end
-end
-local function SH_Bind(char)
-	if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
-	SH.Anim = nil
-	if not char then return end
-	local myId = SH.LoopId
-	task.spawn(function()
-		local h = char:WaitForChild("Humanoid", 10)
-		local a = h and (h:FindFirstChildOfClass("Animator") or h:WaitForChild("Animator", 10))
-		if not a or not SH.Enabled or myId ~= SH.LoopId then return end
-		SH.Anim = a
-		SH.AnimConn = a.AnimationPlayed:Connect(function(tr) pcall(SH_Block, tr) end)
-	end)
-end
-local function SH_Tool(c, h)
-	local t = c:FindFirstChild("Bandage")
-	if t and t:IsA("Tool") then return t, false end
-	local bp = Players.LocalPlayer:FindFirstChild("Backpack")
-	t = bp and bp:FindFirstChild("Bandage")
-	if t and t:IsA("Tool") then
-		pcall(function() h:EquipTool(t) end)
-		local t0 = os.clock()
-		while t.Parent ~= c and os.clock() - t0 < 0.6 do task.wait(0.03) end
-		if t.Parent == c then return t, true end
-	end
-	return nil, false
-end
-local function SH_Send(fire, em, tool, id)
-	SH.FireAt = os.clock()
-	pcall(function() fire:FireServer(true, tool, id) end)
-	if em then pcall(function() em:FireServer("StopEmote") end) end
-end
-local function SH_Cycle(myId)
-	if SH_IsKiller() then return end
-	local c = Players.LocalPlayer.Character
-	local h = c and c:FindFirstChildOfClass("Humanoid")
-	if not h or h.Health <= 0 or h.Health >= h.MaxHealth then return end
-	if c:GetAttribute("IsCarried") or c:GetAttribute("IsHooked") or c:GetAttribute("Knocked") or c:GetAttribute("Trapped") then return end
-	local st = c:FindFirstChild("CheckInterractable")
-	if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return end end end
-	local fire = SH_Rem("bandage", "Items", "Bandage", "Fire")
-	if not fire then return end
-	local tool, equipped = SH_Tool(c, h)
-	if not tool then return end
-	local em = SH_Rem("emote", "EmoteHandler")
-	local id = HttpService:GenerateGUID(false)
-	SH.Busy = true
-	SH_Send(fire, em, tool, id)
-	local t0 = os.clock()
-	local lastHp, lastUp = h.Health, os.clock()
-	while SH.Enabled and myId == SH.LoopId and os.clock() - t0 < 25 do
-		task.wait(0.1)
-		if h.Health <= 0 or h.Health >= h.MaxHealth or tool.Parent ~= c then break end
-		if h.Health > lastHp then
-			lastHp, lastUp = h.Health, os.clock()
-		elseif os.clock() - lastUp >= SH_RETRY then
-			id = HttpService:GenerateGUID(false)
-			SH_Send(fire, em, tool, id)
-			lastUp = os.clock()
-		end
-	end
-	SH.FireAt = os.clock()
-	SH.Busy = false
-	if equipped then pcall(function() h:UnequipTools() end) end
-end
-local SH_Row = Add("Self Heal")
-local SH_Toggle
-SH_Toggle = SH_Row:Toggle(false, function(state)
-	if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
-	SH.Enabled = state
-	SH.LoopId = SH.LoopId + 1
-	SH.Busy = false
-	for _, c in ipairs(SH.Conns) do pcall(function() c:Disconnect() end) end
-	SH.Conns = {}
-	if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
-	SH.Anim = nil
-	if not state then return end
-	local myId = SH.LoopId
-	local lp = Players.LocalPlayer
-	SH_Bind(lp.Character)
-	table.insert(SH.Conns, lp.CharacterAdded:Connect(function(ch) SH.Busy = false; SH_Bind(ch) end))
-	table.insert(SH.Conns, RunService.Heartbeat:Connect(function() pcall(SH_Sweep) end))
-	task.spawn(function()
-		while SH.Enabled and myId == SH.LoopId do
-			pcall(SH_Cycle, myId)
-			task.wait(0.3)
-		end
-	end)
-end)
+	local SH = { Enabled = false, LoopId = 0, AnimConn = nil, BandageReq = 0, MinHP = 50, MaxHP = 80 }
+	local SH_ANIM = "95836365038528"
+	local SH_BUSY = { "isVaulting", "isSliding", "isDroppingPallet", "isRepairing", "isHealing", "isUnhooking", "isExiting" }
+	local SH_CS = game:GetService("CollectionService")
+	local SH_BANDAGE_NAME = "Bandage"
 
+	local function SH_IsKiller() local t = Players.LocalPlayer.Team; return t ~= nil and t.Name == "Killer" end
+
+	local function SH_BlockAnim()
+		local c = Players.LocalPlayer.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		local a = h and h:FindFirstChildOfClass("Animator")
+		if not a then return end
+		for _, tr in ipairs(a:GetPlayingAnimationTracks()) do
+			local an = tr.Animation
+			if an and string.find(an.AnimationId, SH_ANIM, 1, true) then pcall(function() tr:Stop(0) end) end
+		end
+	end
+
+	local function SH_IsBusy(c)
+		if c:GetAttribute("Trapped") or c:GetAttribute("IsDead") or c:GetAttribute("IsCarried") or c:GetAttribute("IsHooked") then return true end
+		local st = c:FindFirstChild("CheckInterractable")
+		if st then for _, a in ipairs(SH_BUSY) do if st:GetAttribute(a) then return true end end end
+		return false
+	end
+
+	-- cara lama: minta rekan menyembuhkan lewat remote Healing (tetap dipertahankan, berguna kalau ada bot/rekan AI yang merespons)
+	local function SH_Step()
+		if SH_IsKiller() then return end
+		local c = Players.LocalPlayer.Character
+		if not c then return end
+		local root = c:FindFirstChild("HumanoidRootPart")
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if not root or not h then return end
+		if h.Health <= 0 or h.Health >= h.MaxHealth then return end
+		if SH_IsBusy(c) then return end
+		pcall(function()
+			local r = ReplicatedStorage:FindFirstChild("Remotes")
+			local hl = r and r:FindFirstChild("Healing")
+			local ev = hl and hl:FindFirstChild("HealEvent")
+			if ev then ev:FireServer(root, true) end
+		end)
+	end
+
+	-- cara baru: pakai item Bandage sendiri, benar-benar self-heal tanpa bantuan orang lain
+	local function SH_StepBandage()
+		if SH_IsKiller() then return end
+		local c = Players.LocalPlayer.Character
+		if not c then return end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if not h or h.Health <= 0 then return end
+		if h.Health < SH.MinHP or h.Health > SH.MaxHP then return end
+		if c:GetAttribute("Antiheal") then return end
+		local okS, silenced = pcall(function() return SH_CS:HasTag(c, "Silenced") end)
+		if okS and silenced then return end
+		if SH_IsBusy(c) then return end
+		local tool = c:FindFirstChild(SH_BANDAGE_NAME)
+		if not tool or not tool:IsA("Tool") then return end
+		local charge = tool:GetAttribute("charge")
+		if type(charge) == "number" and charge <= 0 then return end
+		SH.BandageReq = SH.BandageReq + 1
+		pcall(function()
+			local r = ReplicatedStorage:FindFirstChild("Remotes")
+			local items = r and r:FindFirstChild("Items")
+			local bd = items and items:FindFirstChild("Bandage")
+			local fire = bd and bd:FindFirstChild("Fire")
+			if fire then fire:FireServer(true, tool, SH.BandageReq) end
+		end)
+	end
+
+	local SH_Row = Add("Self Heal")
+	local SH_Toggle = SH_Row:Toggle(false, function(state)
+		if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
+		SH.Enabled = state
+		SH.LoopId = SH.LoopId + 1
+		if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
+		if state then
+			SH.AnimConn = RunService.Heartbeat:Connect(function() pcall(SH_BlockAnim) end)
+			local myId = SH.LoopId
+			task.spawn(function()
+				while SH.Enabled and myId == SH.LoopId do pcall(SH_Step); task.wait(3) end
+			end)
+			task.spawn(function()
+				local myId = SH.LoopId
+				while SH.Enabled and myId == SH.LoopId do pcall(SH_StepBandage); task.wait(1) end
+			end)
+		end
+	end)
+	SH_Toggle.Extras = {
+		SH_Row:Stepper({ Min = 10, Max = 95, Step = 5, Default = 50 }, function(v) SH.MinHP = v end),
+		SH_Row:Stepper({ Min = 15, Max = 99, Step = 5, Default = 80 }, function(v) SH.MaxHP = v end),
+	}
 	-- ============================================================
 	-- 3. GOD MODE (Improved: Full Absolute Protection)
 	-- ============================================================
