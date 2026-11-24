@@ -6735,232 +6735,202 @@ end)
 	-- ============================================================
 	-- 12. WORLD SETTING (Full Bright + No Fog + FPS Boost, terrain tidak disentuh)
 	-- ============================================================
-	local WS = { Enabled = false, Tracked = {}, OwnSky = nil, GlobalConns = {}, Heartbeat = nil, Enforcing = false, Orig = setmetatable({}, { __mode = "k" }), Removed = {}, Token = 0, OrigQuality = nil }
-	local WS_CFG = { Characters = false, Textures = true, Particles = true }
-	local WS_Lighting = game:GetService("Lighting")
-	local WS_FACES = { "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp" }
-	local WS_TEX = { SkyboxBk = "rbxasset://textures/sky/sky512_bk.tex", SkyboxDn = "rbxasset://textures/sky/sky512_dn.tex", SkyboxFt = "rbxasset://textures/sky/sky512_ft.tex", SkyboxLf = "rbxasset://textures/sky/sky512_lf.tex", SkyboxRt = "rbxasset://textures/sky/sky512_rt.tex", SkyboxUp = "rbxasset://textures/sky/sky512_up.tex" }
-	local WS_BRIGHT = { Brightness = 2, ClockTime = 14, ExposureCompensation = 0, FogStart = 100000, FogEnd = 100000, GlobalShadows = false, ShadowSoftness = 0, Ambient = Color3.fromRGB(170, 170, 170), OutdoorAmbient = Color3.fromRGB(170, 170, 170) }
-	local WS_LIGHT_PROPS = { "FogEnd", "FogStart", "Brightness", "ClockTime", "Ambient", "OutdoorAmbient", "GlobalShadows", "ExposureCompensation", "ShadowSoftness" }
-
-	local function WS_Set(inst, prop, value)
-		local ok, cur = pcall(function() return inst[prop] end)
-		if not ok or cur == value then return end
-		local o = WS.Orig[inst]
-		if not o then
-			o = {}
-			WS.Orig[inst] = o
+local MHD = { Enabled = false, Conns = {}, Busy = false, Acc = 0, Objs = {} }
+local MHD_L = game:GetService("Lighting")
+local MHD_PROPS = {
+	ClockTime = 6.2, Brightness = 2.6, ExposureCompensation = 0.3,
+	Ambient = Color3.fromRGB(105, 98, 108), OutdoorAmbient = Color3.fromRGB(150, 138, 140),
+	ColorShift_Top = Color3.fromRGB(255, 210, 165), ColorShift_Bottom = Color3.fromRGB(120, 140, 185),
+	EnvironmentDiffuseScale = 0.7, EnvironmentSpecularScale = 0.5,
+	GlobalShadows = true, ShadowSoftness = 0.3, FogStart = 0, FogEnd = 100000,
+}
+local MHD_SKY = { CelestialBodiesShown = true, StarCount = 0, SunAngularSize = 14, MoonAngularSize = 0 }
+for f, n in pairs({ SkyboxBk = "bk", SkyboxDn = "dn", SkyboxFt = "ft", SkyboxLf = "lf", SkyboxRt = "rt", SkyboxUp = "up" }) do
+	MHD_SKY[f] = "rbxasset://textures/sky/sky512_" .. n .. ".tex"
+end
+local MHD_SPEC = {
+	{ "Atmosphere", "FluxHD_Atmo", { Density = 0.32, Offset = 0.28, Color = Color3.fromRGB(252, 224, 196), Decay = Color3.fromRGB(255, 190, 150), Glare = 0.2, Haze = 1.4 } },
+	{ "Sky", "FluxHD_Sky", MHD_SKY },
+	{ "BloomEffect", "FluxHD_Bloom", { Enabled = true, Intensity = 0.4, Size = 30, Threshold = 0.95 } },
+	{ "ColorCorrectionEffect", "FluxHD_Color", { Enabled = true, Brightness = 0.02, Contrast = 0.2, Saturation = 0.2, TintColor = Color3.fromRGB(255, 240, 225) } },
+	{ "SunRaysEffect", "FluxHD_Rays", { Enabled = true, Intensity = 0.14, Spread = 0.7 } },
+}
+local function MHD_Same(a, b)
+	if type(a) == "number" and type(b) == "number" then return math.abs(a - b) < 0.001 end
+	return a == b
+end
+local function MHD_Set(inst, props)
+	for k, v in pairs(props) do
+		local ok, cur = pcall(function() return inst[k] end)
+		if ok and not MHD_Same(cur, v) then pcall(function() inst[k] = v end) end
+	end
+end
+local function MHD_Foreign(i)
+	return string.sub(i.Name, 1, 7) ~= "FluxHD_" and (i:IsA("Atmosphere") or i:IsA("Sky") or i:IsA("PostEffect"))
+end
+local function MHD_Apply()
+	if not MHD.Enabled or MHD.Busy then return end
+	MHD.Busy = true
+	pcall(function()
+		for _, c in ipairs(MHD_L:GetChildren()) do
+			if MHD_Foreign(c) then c:Destroy() end
 		end
-		if o[prop] == nil then o[prop] = cur end
-		pcall(function() inst[prop] = value end)
-	end
-
-	local function WS_Enforce(sky)
-		if WS.Enforcing then return end
-		WS.Enforcing = true
-		for _, f in ipairs(WS_FACES) do pcall(function() if sky[f] ~= WS_TEX[f] then sky[f] = WS_TEX[f] end end) end
-		pcall(function() if sky.CelestialBodiesShown ~= false then sky.CelestialBodiesShown = false end; if sky.StarCount ~= 0 then sky.StarCount = 0 end end)
-		WS.Enforcing = false
-	end
-
-	local function WS_EnforceLight()
-		if WS.Enforcing then return end
-		WS.Enforcing = true
-		pcall(function()
-			for p, v in pairs(WS_BRIGHT) do WS_Set(WS_Lighting, p, v) end
-			for _, i in ipairs(WS_Lighting:GetChildren()) do
-				if i:IsA("Atmosphere") then
-					WS_Set(i, "Density", 0)
-					WS_Set(i, "Haze", 0)
-					WS_Set(i, "Glare", 0)
-				elseif i:IsA("PostEffect") then
-					WS_Set(i, "Enabled", false)
+		for _, s in ipairs(MHD_SPEC) do
+			local o = MHD.Objs[s[2]]
+			if not o or o.Parent ~= MHD_L then
+				o = MHD_L:FindFirstChild(s[2])
+				if not o or o.ClassName ~= s[1] then
+					if o then o:Destroy() end
+					o = Instance.new(s[1])
+					o.Name = s[2]
+					o.Parent = MHD_L
 				end
+				MHD.Objs[s[2]] = o
 			end
-			local terrain = workspace:FindFirstChildOfClass("Terrain")
-			local clouds = terrain and terrain:FindFirstChildOfClass("Clouds")
-			if clouds then WS_Set(clouds, "Enabled", false) end
-		end)
-		WS.Enforcing = false
-	end
-
-	local function WS_Untrack(sky)
-		local c = WS.Tracked[sky]
-		if c then for _, x in ipairs(c) do pcall(function() x:Disconnect() end) end; WS.Tracked[sky] = nil end
-	end
-
-	local function WS_Track(sky)
-		if not WS.Enabled or WS.Tracked[sky] then return end
-		local c = {}; WS.Tracked[sky] = c; WS_Enforce(sky)
-		for _, f in ipairs(WS_FACES) do
-			local ok, sig = pcall(function() return sky:GetPropertyChangedSignal(f) end)
-			if ok and sig then table.insert(c, sig:Connect(function() WS_Enforce(sky) end)) end
+			MHD_Set(o, s[3])
 		end
-		table.insert(c, sky.AncestryChanged:Connect(function() if not sky:IsDescendantOf(game) then WS_Untrack(sky) end end))
-	end
-
-	local function WS_EnsureSky()
-		if WS.OwnSky == nil or WS.OwnSky.Parent ~= WS_Lighting then
-			if WS.OwnSky then WS_Untrack(WS.OwnSky); WS.OwnSky = nil end
-			local ex = WS_Lighting:FindFirstChild("FullBrightSky")
-			if ex and ex:IsA("Sky") then WS.OwnSky = ex
-			else local s = Instance.new("Sky"); s.Name = "FullBrightSky"; pcall(function() s.Parent = WS_Lighting end); if s.Parent == WS_Lighting then WS.OwnSky = s end end
-		end
-		if WS.OwnSky then WS_Track(WS.OwnSky) end
-	end
-
-	local function WS_Scan(root)
-		local ok, list = pcall(function() return root:GetDescendants() end)
-		if ok and list then for _, i in ipairs(list) do if i:IsA("Sky") then WS_Track(i) end end end
-	end
-
-	local function WS_EnforceAll() for sky in pairs(WS.Tracked) do WS_Enforce(sky) end end
-
-	local function WS_InCharacter(d)
-		local cam = workspace.CurrentCamera
-		if cam and d:IsDescendantOf(cam) then return true end
-		local p = d.Parent
-		local depth = 0
-		while p and p ~= workspace and depth < 8 do
-			if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
-			p = p.Parent
-			depth = depth + 1
-		end
-		return false
-	end
-
-	local function WS_Apply(d)
-		if not WS.Enabled then return end
-		if d:IsA("BasePart") then
-			if d:IsA("Terrain") then return end
-			WS_Set(d, "CastShadow", false)
-			if d:IsA("MeshPart") then
-				local inChar = WS_InCharacter(d)
-				if not inChar or WS_CFG.Characters then
-					WS_Set(d, "RenderFidelity", Enum.RenderFidelity.Performance)
-					if WS_CFG.Textures then WS_Set(d, "TextureID", "") end
-				end
-			end
-		elseif d:IsA("Decal") or d:IsA("Texture") then
-			if WS_CFG.Textures and (WS_CFG.Characters or not WS_InCharacter(d)) then
-				WS_Set(d, "Transparency", 1)
-			end
-		elseif d:IsA("SurfaceAppearance") then
-			if WS_CFG.Textures and (WS_CFG.Characters or not WS_InCharacter(d)) then
-				local par = d.Parent
-				if par then
-					table.insert(WS.Removed, { inst = d, parent = par })
-					pcall(function() d.Parent = nil end)
-				end
-			end
-		elseif d:IsA("ParticleEmitter") then
-			if WS_CFG.Particles and (WS_CFG.Characters or not WS_InCharacter(d)) then
-				WS_Set(d, "Enabled", false)
-				WS_Set(d, "Rate", 0)
-				WS_Set(d, "Lifetime", NumberRange.new(0))
-			end
-		elseif d:IsA("Trail") or d:IsA("Beam") or d:IsA("Smoke") or d:IsA("Fire") or d:IsA("Sparkles") then
-			if WS_CFG.Particles and (WS_CFG.Characters or not WS_InCharacter(d)) then WS_Set(d, "Enabled", false) end
-		elseif d:IsA("Light") then
-			WS_Set(d, "Shadows", false)
-		elseif d:IsA("PostEffect") then
-			WS_Set(d, "Enabled", false)
-		elseif d:IsA("Atmosphere") then
-			WS_Set(d, "Density", 0)
-			WS_Set(d, "Haze", 0)
-			WS_Set(d, "Glare", 0)
-		elseif d:IsA("Clouds") then
-			WS_Set(d, "Enabled", false)
-		elseif d:IsA("Sky") then
-			WS_Track(d)
-		end
-	end
-
-	local function WS_ScanAll(token)
-		task.spawn(function()
-			local ok, list = pcall(function() return workspace:GetDescendants() end)
-			if ok and list then
-				for i, d in ipairs(list) do
-					if not WS.Enabled or WS.Token ~= token then return end
-					pcall(WS_Apply, d)
-					if i % 400 == 0 then RunService.Heartbeat:Wait() end
-				end
-			end
-			local ok2, l2 = pcall(function() return WS_Lighting:GetDescendants() end)
-			if ok2 and l2 then
-				for _, d in ipairs(l2) do
-					if not WS.Enabled or WS.Token ~= token then return end
-					pcall(WS_Apply, d)
-				end
-			end
-		end)
-	end
-
-	local function WS_RestoreAll()
-		for inst, props in pairs(WS.Orig) do
-			for prop, val in pairs(props) do
-				pcall(function() inst[prop] = val end)
-			end
-		end
-		WS.Orig = setmetatable({}, { __mode = "k" })
-		for _, r in ipairs(WS.Removed) do
-			pcall(function()
-				if r.inst and r.parent and r.parent.Parent then r.inst.Parent = r.parent end
-			end)
-		end
-		WS.Removed = {}
-		if WS.OrigQuality ~= nil then
-			pcall(function() settings().Rendering.QualityLevel = WS.OrigQuality end)
-			WS.OrigQuality = nil
-		end
-	end
-
-	local WS_Row = Add("World Setting")
-	WS_Row:Toggle(false, function(state)
-		WS.Enabled = state
-		WS.Token = WS.Token + 1
-		if state then
-			pcall(function()
-				local r = settings().Rendering
-				if WS.OrigQuality == nil then WS.OrigQuality = r.QualityLevel end
-				r.QualityLevel = Enum.QualityLevel.Level01
-			end)
-			WS_EnsureSky()
-			WS_Scan(WS_Lighting)
-			WS_EnforceLight()
-			WS_ScanAll(WS.Token)
-			table.insert(WS.GlobalConns, workspace.DescendantAdded:Connect(function(d) if WS.Enabled then pcall(WS_Apply, d) end end))
-			table.insert(WS.GlobalConns, WS_Lighting.DescendantAdded:Connect(function(d) if WS.Enabled then pcall(WS_Apply, d) end end))
-			table.insert(WS.GlobalConns, WS_Lighting.ChildRemoved:Connect(function() if WS.Enabled then WS_EnsureSky() end end))
-			for _, p in ipairs(WS_LIGHT_PROPS) do
-				local ok, sig = pcall(function() return WS_Lighting:GetPropertyChangedSignal(p) end)
-				if ok and sig then
-					table.insert(WS.GlobalConns, sig:Connect(function() if WS.Enabled and not WS.Enforcing then WS_EnforceLight() end end))
-				end
-			end
-			local acc, accSky = 0, 0
-			WS.Heartbeat = RunService.Heartbeat:Connect(function(dt)
-				if not WS.Enabled then return end
-				acc = acc + dt
-				if acc < 0.25 then return end
-				accSky = accSky + acc
-				acc = 0
-				pcall(function()
-					WS_EnsureSky()
-					WS_EnforceAll()
-					WS_EnforceLight()
-					if accSky >= 2 then accSky = 0; WS_Scan(WS_Lighting) end
-				end)
-			end)
-		else
-			if WS.Heartbeat then pcall(function() WS.Heartbeat:Disconnect() end); WS.Heartbeat = nil end
-			for _, c in ipairs(WS.GlobalConns) do pcall(function() c:Disconnect() end) end
-			WS.GlobalConns = {}
-			for sky in pairs(WS.Tracked) do WS_Untrack(sky) end
-			if WS.OwnSky then pcall(function() WS.OwnSky:Destroy() end); WS.OwnSky = nil end
-			WS_RestoreAll()
-		end
+		MHD_Set(MHD_L, MHD_PROPS)
+		local t = workspace:FindFirstChildOfClass("Terrain")
+		local cl = t and t:FindFirstChildOfClass("Clouds")
+		if cl and cl.Enabled then cl.Enabled = false end
 	end)
+	MHD.Busy = false
+end
+local MHD_Row = Add("Map HD")
+MHD_Row:Toggle(false, function(state)
+	MHD.Enabled = state
+	for _, c in ipairs(MHD.Conns) do pcall(function() c:Disconnect() end) end
+	MHD.Conns = {}
+	if not state then return end
+	MHD_Apply()
+	table.insert(MHD.Conns, MHD_L.ChildAdded:Connect(function(c)
+		if MHD_Foreign(c) then task.defer(MHD_Apply) end
+	end))
+	table.insert(MHD.Conns, MHD_L.ChildRemoved:Connect(function(c)
+		if string.sub(c.Name, 1, 7) == "FluxHD_" then task.defer(MHD_Apply) end
+	end))
+	for p in pairs(MHD_PROPS) do
+		local ok, sig = pcall(function() return MHD_L:GetPropertyChangedSignal(p) end)
+		if ok and sig then table.insert(MHD.Conns, sig:Connect(function() task.defer(MHD_Apply) end)) end
+	end
+	table.insert(MHD.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
+		for _, d in ipairs({ 0.5, 2, 5 }) do task.delay(d, MHD_Apply) end
+	end))
+	table.insert(MHD.Conns, RunService.Heartbeat:Connect(function(dt)
+		MHD.Acc = MHD.Acc + dt
+		if MHD.Acc < 0.5 then return end
+		MHD.Acc = 0
+		MHD_Apply()
+	end))
+end)
+
+-- Aspect Ratio
+
+local AR = { Enabled = false, Mode = "Default [ 16:9 ]", Scale = 1, Bound = false }
+local AR_NAME = "FluxAspectRatio"
+local AR_MODES = {
+	["Default [ 16:9 ]"] = 1,
+	["16:10"] = 0.9,
+	["21:9"] = 1.3,
+	["4:3 Stretched"] = 0.75,
+}
+local AR_Step
+local function AR_Unbind()
+	if AR.Bound then
+		pcall(function() RunService:UnbindFromRenderStep(AR_NAME) end)
+		AR.Bound = false
+	end
+end
+local function AR_Bind()
+	AR_Unbind()
+	if AR.Scale == 1 then return end
+	local ok = pcall(function()
+		RunService:BindToRenderStep(AR_NAME, Enum.RenderPriority.Camera.Value + 10, function()
+			local cam = workspace.CurrentCamera
+			if cam then
+				cam.CFrame = cam.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, AR.Scale, 0, 0, 0, 1)
+			end
+		end)
+	end)
+	AR.Bound = ok
+end
+local function AR_Refresh()
+	if AR.Enabled then AR_Bind() else AR_Unbind() end
+end
+local AR_Row = Add("Aspect Ratio")
+local AR_Toggle = AR_Row:Toggle(false, function(state)
+	AR.Enabled = state
+	AR_Refresh()
+end)
+local AR_Drop = AR_Row:Dropdown({ "Default [ 16:9 ]", "16:10", "21:9", "4:3 Stretched" }, "Default [ 16:9 ]", function(v)
+	AR.Mode = v
+	AR.Scale = AR_MODES[v] or 1
+	if AR_Step then AR_Step.Set(AR.Scale, true) end
+	AR_Refresh()
+end)
+AR_Step = AR_Row:Stepper({ Min = 0.1, Max = 10, Step = 0.1, Decimals = 1, Default = 1 }, function(v)
+	AR.Scale = v
+	AR_Refresh()
+end)
+AR_Toggle.Extras = { AR_Drop, AR_Step }
+
+-- Camera DBD
+
+local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
+local CD_NAME = "FluxCameraDBD"
+local function CD_Speed()
+	return 2.5 * (1.6 ^ (CD.Level - 1))
+end
+local function CD_Unbind()
+	if CD.Bound then
+		pcall(function() RunService:UnbindFromRenderStep(CD_NAME) end)
+		CD.Bound = false
+	end
+	CD.Smooth = nil
+end
+local function CD_Frame(dt)
+	local cam = workspace.CurrentCamera
+	local char = Players.LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not cam or not root then CD.Smooth = nil; return end
+	local pos = root.Position
+	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
+		CD.Char = char
+		CD.Smooth = pos
+		return
+	end
+	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
+		CD.Smooth = pos
+		return
+	end
+	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
+	local sm = CD.Smooth:Lerp(pos, alpha)
+	local lag = sm - pos
+	if lag.Magnitude > 12 then
+		lag = lag.Unit * 12
+		sm = pos + lag
+	end
+	CD.Smooth = sm
+	cam.CFrame = cam.CFrame + lag
+	cam.Focus = cam.Focus + lag
+end
+local function CD_Bind()
+	CD_Unbind()
+	local ok = pcall(function()
+		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
+			pcall(CD_Frame, dt)
+		end)
+	end)
+	CD.Bound = ok
+end
+local CD_Row = Add("Camera DBD")
+local CD_Toggle = CD_Row:Toggle(false, function(state)
+	CD.Enabled = state
+	if state then CD_Bind() else CD_Unbind() end
+end)
+CD_Toggle.Extras = { CD_Row:Stepper({ Min = 1, Max = 5, Step = 0.1, Decimals = 1, Default = 3 }, function(v)
+	CD.Level = v
+end) }
 
 -- FAKE AVATAR + FAKE ACCESSORIES (v6)
 -- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
