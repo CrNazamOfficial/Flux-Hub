@@ -4669,7 +4669,7 @@ do
 	local lastPing = 0
 	local lastClean = 0
 	track(RunService.Heartbeat:Connect(function()
-		if Unloaded then return end
+		if Unloaded or not State.Enabled then return end
 		local now = os.clock()
 		pcall(function()
 			local char = LP.Character
@@ -9474,6 +9474,7 @@ task.spawn(function()
 	end
 
 	local function applyMask(char)
+		if true then return end
 		clearMask()
 		if not char or not char.Parent then return end
 		local hl = Instance.new("Highlight")
