@@ -126,6 +126,8 @@ local function SafePanelToggle(name, newState)
 	task.delay(0.05, function() PanelToggleBusy[name] = nil end)
 end
 
+task.defer(function() EnsureNamecallHook() end)
+
 -- ============================================================
 -- LIBRARY UI (sama persis seperti asli)
 -- ============================================================
@@ -677,9 +679,6 @@ local function Row(pageObj, text)
 		end
 	end
 	
--- ===== FLUX HUB FIXED - BAGIAN 1/3 (LANJUTAN) =====
--- Sambung langsung dari titik potong sebelumnya (tanpa baris kosong di awal)
-
 	function self:Toggle(default, callback)
 		local state = default and true or false
 		local btn = make("TextButton", { Name = "Toggle", Size = UDim2.new(0, 36, 0, 20), BackgroundColor3 = C.ButtonHover, BackgroundTransparency = 0.85, BorderSizePixel = 0, AutoButtonColor = false, Text = "", LayoutOrder = nextCtrl(), ZIndex = 6 }, controls)
@@ -1468,11 +1467,9 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end)
 	end
 	NF_Setup()
+	EnsureNamecallHook()
 	local NF_Row = Add("Anti Fall Damage")
-	NF_Row:Toggle(false, function(state)
-		NF_Enabled = state
-		if state then NF_Setup(); EnsureNamecallHook() end
-	end)
+	NF_Row:Toggle(false, function(state) NF_Enabled = state end)
 
 -- ============================================================
 -- 11. AUTO SKILL CHECK TRAP (dengan AUTO-SWITCH ke AG)
@@ -2886,6 +2883,8 @@ do
 		return ok
 	end
 
+	local hookOk = InstallHook()
+
 	task.spawn(function()
 		while SHARED.gen == MY_GEN do
 			pcall(RefreshTarget)
@@ -3001,9 +3000,8 @@ do
 	end)
 
 	local TOF_Row = Add("Silent Aim [ TOF ]")
-    local TOF_Toggle = TOF_Row:Toggle(false, function(state)
+	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
 		AUTO_AIM_ENABLED = state
-		if state then InstallHook() end
 		if not state then
 			hideLaser()
 			laserTarget = nil
@@ -3031,6 +3029,10 @@ do
 			end
 		end
 	end)
+
+	if not hookOk then
+		warn("[Silent Aim TOF] hookmetamethod tidak tersedia, silent aim tidak bisa jalan")
+	end
 end
 
 	-- ============================================================
@@ -3309,23 +3311,18 @@ do
 	local VelState = {}
 	local Humanoids = {}
 
-	local AB2_Inited = false
-	local function AB2_Init()
-		if AB2_Inited then return end
-		AB2_Inited = true
-		pcall(function()
-			for _, d in ipairs(workspace:GetDescendants()) do
-				if d.ClassName == "Humanoid" then Humanoids[d] = true end
-			end
-		end)
-		table.insert(AB2.Conns, workspace.DescendantAdded:Connect(function(d)
+	pcall(function()
+		for _, d in ipairs(workspace:GetDescendants()) do
 			if d.ClassName == "Humanoid" then Humanoids[d] = true end
-		end))
-		table.insert(AB2.Conns, workspace.DescendantRemoving:Connect(function(d)
-			if d.ClassName == "Humanoid" then Humanoids[d] = nil end
-		end))
-	end
-	
+		end
+	end)
+	table.insert(AB2.Conns, workspace.DescendantAdded:Connect(function(d)
+		if d.ClassName == "Humanoid" then Humanoids[d] = true end
+	end))
+	table.insert(AB2.Conns, workspace.DescendantRemoving:Connect(function(d)
+		if d.ClassName == "Humanoid" then Humanoids[d] = nil end
+	end))
+
 	local function AB2_dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
 
 	local function AB2_teamOk(plr)
@@ -3622,31 +3619,51 @@ do
 		if ok and w then AB2_wrapped = w end
 	end
 
-	local function AB2_Install()
-		if AB2.HookOk then return end
-		if hookmetamethod then
-			local ok, res = pcall(function() return hookmetamethod(game, "__namecall", AB2_wrapped) end)
-			if ok and res then AB2_oldNamecall = res; AB2.HookOk = true end
-		end
-		if not AB2.HookOk and getrawmetatable then
-			pcall(function()
-				local mt = getrawmetatable(game)
-				local orig = mt.__namecall
-				local ro = isreadonly and isreadonly(mt)
-				if setreadonly then setreadonly(mt, false)
-				elseif make_writeable then make_writeable(mt) end
-				AB2_oldNamecall = orig
-				mt.__namecall = AB2_wrapped
-				if setreadonly and ro then setreadonly(mt, true) end
-				AB2.HookOk = true
-			end)
-		end
+	if hookmetamethod then
+		local ok, res = pcall(function() return hookmetamethod(game, "__namecall", AB2_wrapped) end)
+		if ok and res then AB2_oldNamecall = res; AB2.HookOk = true end
+	end
+	if not AB2.HookOk and getrawmetatable then
+		pcall(function()
+			local mt = getrawmetatable(game)
+			local orig = mt.__namecall
+			local ro = isreadonly and isreadonly(mt)
+			if setreadonly then setreadonly(mt, false)
+			elseif make_writeable then make_writeable(mt) end
+			AB2_oldNamecall = orig
+			mt.__namecall = AB2_wrapped
+			if setreadonly and ro then setreadonly(mt, true) end
+			AB2.HookOk = true
+		end)
 	end
 
-	local acc, accSlow = 0, 0
-	table.insert(AB2.Conns, RunService.Heartbeat:Connect(function(dt)
-		if AB2.Dead or not AB2.Enabled then return end
-		local now = os.clock()
+local function AB2_isKiller()
+	local lp = Players.LocalPlayer
+	if lp.Team and lp.Team.Name == "Killer" then return true end
+	local c = lp.Character
+	if c then
+		local ok, res = pcall(function() return c:HasTag("Killer") end)
+		if ok and res then return true end
+	end
+	return false
+end
+
+local acc, accSlow, accCand = 0, 0, 0
+table.insert(AB2.Conns, RunService.Heartbeat:Connect(function(dt)
+	if AB2.Dead or not AB2.Enabled then return end
+
+	if not AB2_isKiller() then
+		AB2.Snap = nil
+		AB2.Target = nil
+		AB2.Cands = {}
+		return
+	end
+
+	local now = os.clock()
+
+	accCand = accCand + dt
+	if accCand >= 0.12 then
+		accCand = 0
 		local cands = AB2_buildCandidates()
 		AB2.Cands = cands
 		local seen = {}
@@ -3657,54 +3674,60 @@ do
 		for k in pairs(History) do
 			if not seen[k] then History[k] = nil; VelState[k] = nil end
 		end
-		local cam = workspace.CurrentCamera
-		if cam then AB2.CamPos = cam.CFrame.Position end
-		pcall(function()
-			local ch = Players.LocalPlayer.Character
-			if ch then AB2.CdA = ch:GetAttribute(AB2_CFG.CooldownAttribute) else AB2.CdA = nil end
-			AB2.CdB = Players.LocalPlayer:GetAttribute(AB2_CFG.CooldownAttribute)
-		end)
-		accSlow = accSlow + dt
-		if accSlow >= 0.25 then
-			accSlow = 0
-			AB2.PingSec = AB2_readPingSec()
-			AB2.Lead = math.clamp(AB2.PingSec * AB2_CFG.LeadPingMul, 0, AB2_CFG.MaxLead) + AB2_CFG.ExtraLead
-		end
-		acc = acc + dt
-		if acc >= 0.05 then
-			acc = 0
-			local ok, tgt = pcall(AB2_chooseTarget)
-			AB2.Target = ok and tgt or nil
-		end
-		local t = AB2.Target
-		if t and seen[t.key] and t.hrp.Parent and t.hum.Health > 0 then
-			local vel, factor = AB2_estimateVelocity(t.key, t.hrp, now)
-			local airborne, vy, floorY = false, 0, nil
-			if AB2_CFG.PredictVertical then
-				local okF, fm = pcall(function() return t.hum.FloorMaterial end)
-				if okF and fm == Enum.Material.Air then
-					airborne = true
-					vy = t.hrp.AssemblyLinearVelocity.Y
-					local okR, res = pcall(function()
-						return workspace:Raycast(t.hrp.Position, Vector3.new(0, -80, 0), AB2_makeParams({ t.key }))
-					end)
-					if okR and res then floorY = res.Position.Y + 3 end
-				end
+	end
+
+	local cam = workspace.CurrentCamera
+	if cam then AB2.CamPos = cam.CFrame.Position end
+
+	pcall(function()
+		local ch = Players.LocalPlayer.Character
+		if ch then AB2.CdA = ch:GetAttribute(AB2_CFG.CooldownAttribute) else AB2.CdA = nil end
+		AB2.CdB = Players.LocalPlayer:GetAttribute(AB2_CFG.CooldownAttribute)
+	end)
+
+	accSlow = accSlow + dt
+	if accSlow >= 0.3 then
+		accSlow = 0
+		AB2.PingSec = AB2_readPingSec()
+		AB2.Lead = math.clamp(AB2.PingSec * AB2_CFG.LeadPingMul, 0, AB2_CFG.MaxLead) + AB2_CFG.ExtraLead
+	end
+
+	acc = acc + dt
+	if acc >= 0.08 then
+		acc = 0
+		local ok, tgt = pcall(AB2_chooseTarget)
+		AB2.Target = ok and tgt or nil
+	end
+
+	local t = AB2.Target
+	if t and t.hrp and t.hrp.Parent and t.hum and t.hum.Health > 0 then
+		local vel, factor = AB2_estimateVelocity(t.key, t.hrp, now)
+		local airborne, vy, floorY = false, 0, nil
+		if AB2_CFG.PredictVertical then
+			local okF, fm = pcall(function() return t.hum.FloorMaterial end)
+			if okF and fm == Enum.Material.Air then
+				airborne = true
+				vy = t.hrp.AssemblyLinearVelocity.Y
+				local okR, res = pcall(function()
+					return workspace:Raycast(t.hrp.Position, Vector3.new(0, -80, 0), AB2_makeParams({ t.key }))
+				end)
+				if okR and res then floorY = res.Position.Y + 3 end
 			end
-			AB2.Snap = {
-				pos = t.hrp.Position + Vector3.new(0, AB2_CFG.AimHeightOffset, 0),
-				hrp = t.hrp,
-				vel = vel,
-				factor = factor,
-				lead = AB2.Lead,
-				airborne = airborne,
-				vy = vy,
-				floorY = floorY,
-			}
-		else
-			AB2.Snap = nil
 		end
-	end))
+		AB2.Snap = {
+			pos = t.hrp.Position + Vector3.new(0, AB2_CFG.AimHeightOffset, 0),
+			hrp = t.hrp,
+			vel = vel,
+			factor = factor,
+			lead = AB2.Lead,
+			airborne = airborne,
+			vy = vy,
+			floorY = floorY,
+		}
+	else
+		AB2.Snap = nil
+	end
+end))
 
 	-- Bagian FaceTarget dikosongkan/dimatikan sepenuhnya agar kamera pemain tidak ikut tergeser secara kaku sebelum tombol dilepas
 
@@ -3712,7 +3735,6 @@ do
 	local AB2_Row = Add("Aim Butcher")
 	AB2_Row:Toggle(false, function(state)
 		AB2.Enabled = state
-		if state then AB2_Init(); AB2_Install() end
 		if not state then
 			AB2.Snap = nil
 			AB2.Target = nil
@@ -4649,7 +4671,7 @@ do
 		end
 	end
 
-	
+	HookOk = ensureHook()
 
 	ThrowRemote = resolveRemote()
 	registerRemote()
@@ -4669,7 +4691,7 @@ do
 	local lastPing = 0
 	local lastClean = 0
 	track(RunService.Heartbeat:Connect(function()
-		if Unloaded or not State.Enabled then return end
+		if Unloaded then return end
 		local now = os.clock()
 		pcall(function()
 			local char = LP.Character
@@ -4703,7 +4725,6 @@ do
 	local VEIL_Row = Add("Silent Aim Veil")
 	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
 		State.Enabled = s
-		if s then HookOk = ensureHook() end
 		refreshFov()
 		if not s then
 			Aim.Target = nil
@@ -4873,111 +4894,119 @@ do
 		return best
 	end
 
-	local function step(dt)
-		if not CONFIG.ENABLED then
-			if session.active then resetSession() end
-			return
-		end
-		local cam = workspace.CurrentCamera
-		local char = Players.LocalPlayer.Character
-		if not cam or not char then resetSession(); return end
-
-		-- Jika animasi menusuk selesai, reset sesi
-		if not isSkillAnimPlaying(char) then
-			if session.active then resetSession() end
-			return
-		end
-
-		-- Jika sudah pernah mengunci target pada sesi ini, DAN targetnya sudah terkena hit/berkurang darahnya, 
-		-- maka kunci dimatikan total dan TIDAK BOLEH mencari target lain (no switch).
-		if session.lockedOnce and session.target then
-			local hum = session.target:FindFirstChildOfClass("Humanoid")
-			if hum and session.initialHealth and hum.Health < session.initialHealth then
-				resetSession()
-				return
-			end
-			if not isValidTarget(session.target) then
-				resetSession()
-				return
-			end
-		end
-
-		if not session.active then
-			session.active = true
-			session.target = nil
-			session.lost = false
-			session.lostTime = 0
-			session.initialHealth = nil
-			session.lockedOnce = false
-		end
-
-		if session.lost then return end
-
-		local origin = cam.CFrame.Position
-
-		-- Hanya mencari target jika belum punya target sama sekali di awal serangan
-		if not session.target or not isValidTarget(session.target) then
-			if session.lockedOnce then
-				-- Jika sudah pernah mengunci target lalu hilang/mati, jangan pindah ke target lain. Matikan saja.
-				resetSession()
-				return
-			end
-			local found = pickTarget(char, cam)
-			if found then
-				session.target = found
-				session.lockedOnce = true
-				local hum = found:FindFirstChildOfClass("Humanoid")
-				session.initialHealth = hum and hum.Health or nil
-				session.lostTime = 0
-			else
-				return
-			end
-		end
-
-		local tchar = session.target
-		local hum = tchar:FindFirstChildOfClass("Humanoid")
-
-		-- Pengecekan mutlak status darah target (jika terkena hit oleh kita, langsung matikan aim lock)
-		if hum then
-			if session.initialHealth and hum.Health < session.initialHealth then
-				resetSession()
-				return
-			end
-			if TargetBlock.IsBlocked(tchar) or hum.Health <= 0 then
-				resetSession()
-				return
-			end
-		end
-
-		local part = tchar:FindFirstChild(CONFIG.AIM_PART)
-		if not part then session.target = nil; session.lost = true; return end
-
-		if not isVisible(origin, tchar, char) then
-			session.lostTime = session.lostTime + dt
-			if session.lostTime >= CONFIG.LOS_GRACE then
-				session.target = nil
-				session.lost = true
-			end
-			return
-		end
-		session.lostTime = 0
-
-		-- Sistem Prediksi Pergerakan (Menghitung kecepatan objek agar tembakan/tusukan tidak meleset)
-		local targetVelocity = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
-		local predictedPos = part.Position + (targetVelocity * CONFIG.PREDICTION_FACTOR) + CONFIG.AIM_OFFSET
-
-		local dir = predictedPos - origin
-		if dir.Magnitude < 0.1 then return end
-
-		local up = Vector3.new(0, 1, 0)
-		if math.abs(dir.Unit.Y) > 0.999 then up = Vector3.new(0, 0, 1) end
-
-		local desired = CFrame.lookAt(origin, predictedPos, up)
-		
-		-- Pergerakan kamera halus menuju titik prediksi target
-		local alpha = 1 - math.exp(-CONFIG.SMOOTH_SPEED * dt)
-		cam.CFrame = cam.CFrame:Lerp(desired, alpha)
+local function ALH_isKiller()
+	local lp = Players.LocalPlayer
+	if lp.Team and lp.Team.Name == "Killer" then return true end
+	local c = lp.Character
+	if c then
+		local ok, res = pcall(function() return c:HasTag("Killer") end)
+		if ok and res then return true end
 	end
+	return false
+end
+
+local function step(dt)
+	if not CONFIG.ENABLED then
+		if session.active then resetSession() end
+		return
+	end
+
+	if not ALH_isKiller() then
+		if session.active then resetSession() end
+		return
+	end
+
+	local cam = workspace.CurrentCamera
+	local char = Players.LocalPlayer.Character
+	if not cam or not char then resetSession(); return end
+
+	if not isSkillAnimPlaying(char) then
+		if session.active then resetSession() end
+		return
+	end
+
+	if session.lockedOnce and session.target then
+		local hum = session.target:FindFirstChildOfClass("Humanoid")
+		if hum and session.initialHealth and hum.Health < session.initialHealth then
+			resetSession()
+			return
+		end
+		if not isValidTarget(session.target) then
+			resetSession()
+			return
+		end
+	end
+
+	if not session.active then
+		session.active = true
+		session.target = nil
+		session.lost = false
+		session.lostTime = 0
+		session.initialHealth = nil
+		session.lockedOnce = false
+	end
+
+	if session.lost then return end
+
+	local origin = cam.CFrame.Position
+
+	if not session.target or not isValidTarget(session.target) then
+		if session.lockedOnce then
+			resetSession()
+			return
+		end
+		local found = pickTarget(char, cam)
+		if found then
+			session.target = found
+			session.lockedOnce = true
+			local hum = found:FindFirstChildOfClass("Humanoid")
+			session.initialHealth = hum and hum.Health or nil
+			session.lostTime = 0
+		else
+			return
+		end
+	end
+
+	local tchar = session.target
+	local hum = tchar:FindFirstChildOfClass("Humanoid")
+
+	if hum then
+		if session.initialHealth and hum.Health < session.initialHealth then
+			resetSession()
+			return
+		end
+		if TargetBlock.IsBlocked(tchar) or hum.Health <= 0 then
+			resetSession()
+			return
+		end
+	end
+
+	local part = tchar:FindFirstChild(CONFIG.AIM_PART)
+	if not part then session.target = nil; session.lost = true; return end
+
+	if not isVisible(origin, tchar, char) then
+		session.lostTime = session.lostTime + dt
+		if session.lostTime >= CONFIG.LOS_GRACE then
+			session.target = nil
+			session.lost = true
+		end
+		return
+	end
+	session.lostTime = 0
+
+	local targetVelocity = part.AssemblyLinearVelocity or Vector3.new(0, 0, 0)
+	local predictedPos = part.Position + (targetVelocity * CONFIG.PREDICTION_FACTOR) + CONFIG.AIM_OFFSET
+
+	local dir = predictedPos - origin
+	if dir.Magnitude < 0.1 then return end
+
+	local up = Vector3.new(0, 1, 0)
+	if math.abs(dir.Unit.Y) > 0.999 then up = Vector3.new(0, 0, 1) end
+
+	local desired = CFrame.lookAt(origin, predictedPos, up)
+	local alpha = 1 - math.exp(-CONFIG.SMOOTH_SPEED * dt)
+	cam.CFrame = cam.CFrame:Lerp(desired, alpha)
+end
 
 	local fallbackConn = nil
 	local bound = pcall(function()
@@ -6102,7 +6131,7 @@ end)
 -- ============================================================
 local MP = { Enabled = false, Gui = nil, Box = nil, Label = nil, Conns = {}, Running = false, LastMap = nil, LastMapExists = false }
 local MP_CFG = {
-	TextSize = 7,
+	TextSize = 11,
 	StartX = 0.5,
 	StartY = 56,
 	ALWAYS_SHOW = false,
@@ -6117,7 +6146,7 @@ local function MP_Esc(s)
 end
 local function MP_IsSpec()
 	local t = Players.LocalPlayer.Team
-	return t ~= nil and t.Name == "Spectator"
+	return t \~= nil and t.Name == "Spectator"
 end
 local function MP_ReadKiller()
 	local best, bestChance = nil, -1
@@ -6179,34 +6208,34 @@ local function MP_Build()
 		Name = "Box",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(MP_CFG.StartX, 0, 0, MP_CFG.StartY),
-		Size = UDim2.new(0, 50, 0, 14),
+		Size = UDim2.new(0, 50, 0, 20),
 		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-		BackgroundTransparency = 0.3,
+		BackgroundTransparency = 0.25,
 		BorderSizePixel = 0,
 		Active = true,
 		Visible = false,
 		AutomaticSize = Enum.AutomaticSize.X,
 	}, sg)
-	corner(box, 4)
+	corner(box, 5)
 	UIS.bind(make("UIScale", {}, box), 1)
-	make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1, Transparency = 0.2 }, box)
+	make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1.2, Transparency = 0.15 }, box)
 	make("UIPadding", {
-		PaddingLeft = UDim.new(0, 5),
-		PaddingRight = UDim.new(0, 5),
-		PaddingTop = UDim.new(0, 2),
-		PaddingBottom = UDim.new(0, 2),
+		PaddingLeft = UDim.new(0, 8),
+		PaddingRight = UDim.new(0, 8),
+		PaddingTop = UDim.new(0, 3),
+		PaddingBottom = UDim.new(0, 3),
 	}, box)
 	local label = make("TextLabel", {
 		Name = "Text",
 		BackgroundTransparency = 1,
-		Size = UDim2.new(0, 0, 0, 10),
+		Size = UDim2.new(0, 0, 0, 14),
 		AutomaticSize = Enum.AutomaticSize.X,
 		RichText = true,
 		Font = Enum.Font.GothamBold,
 		TextSize = MP_CFG.TextSize,
 		TextColor3 = Color3.fromRGB(255, 255, 255),
-		TextStrokeColor3 = Color3.fromRGB(255, 255, 255),
-		TextStrokeTransparency = 0.6,
+		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
+		TextStrokeTransparency = 0.35,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Center,
 		Text = "Map : -  |  Killer : -",
@@ -6737,6 +6766,114 @@ SE_Toggle.Color = SE_Row:Color(SE.Color, function(c)
 	end
 end)
 
+-- ASPECT RATIO
+
+local AR = { Enabled = false, Mode = "Default [ 16:9 ]", Scale = 1, Bound = false }
+local AR_NAME = "FluxAspectRatio"
+local AR_MODES = {
+	["Default [ 16:9 ]"] = 1,
+	["16:10"] = 0.9,
+	["21:9"] = 1.3,
+	["4:3 Stretched"] = 0.75,
+}
+local AR_Step
+local function AR_Unbind()
+	if AR.Bound then
+		pcall(function() RunService:UnbindFromRenderStep(AR_NAME) end)
+		AR.Bound = false
+	end
+end
+local function AR_Bind()
+	AR_Unbind()
+	if AR.Scale == 1 then return end
+	local ok = pcall(function()
+		RunService:BindToRenderStep(AR_NAME, Enum.RenderPriority.Camera.Value + 10, function()
+			local cam = workspace.CurrentCamera
+			if cam then
+				cam.CFrame = cam.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, AR.Scale, 0, 0, 0, 1)
+			end
+		end)
+	end)
+	AR.Bound = ok
+end
+local function AR_Refresh()
+	if AR.Enabled then AR_Bind() else AR_Unbind() end
+end
+local AR_Row = Add("Aspect Ratio")
+local AR_Toggle = AR_Row:Toggle(false, function(state)
+	AR.Enabled = state
+	AR_Refresh()
+end)
+local AR_Drop = AR_Row:Dropdown({ "Default [ 16:9 ]", "16:10", "21:9", "4:3 Stretched" }, "Default [ 16:9 ]", function(v)
+	AR.Mode = v
+	AR.Scale = AR_MODES[v] or 1
+	if AR_Step then AR_Step.Set(AR.Scale, true) end
+	AR_Refresh()
+end)
+AR_Step = AR_Row:Stepper({ Min = 0.1, Max = 10, Step = 0.1, Decimals = 1, Default = 1 }, function(v)
+	AR.Scale = v
+	AR_Refresh()
+end)
+AR_Toggle.Extras = { AR_Drop, AR_Step }
+
+-- Camera DBD
+
+local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
+local CD_NAME = "FluxCameraDBD"
+local function CD_Speed()
+	return 2.5 * (1.6 ^ (CD.Level - 1))
+end
+local function CD_Unbind()
+	if CD.Bound then
+		pcall(function() RunService:UnbindFromRenderStep(CD_NAME) end)
+		CD.Bound = false
+	end
+	CD.Smooth = nil
+end
+local function CD_Frame(dt)
+	local cam = workspace.CurrentCamera
+	local char = Players.LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not cam or not root then CD.Smooth = nil; return end
+	local pos = root.Position
+	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
+		CD.Char = char
+		CD.Smooth = pos
+		return
+	end
+	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
+		CD.Smooth = pos
+		return
+	end
+	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
+	local sm = CD.Smooth:Lerp(pos, alpha)
+	local lag = sm - pos
+	if lag.Magnitude > 12 then
+		lag = lag.Unit * 12
+		sm = pos + lag
+	end
+	CD.Smooth = sm
+	cam.CFrame = cam.CFrame + lag
+	cam.Focus = cam.Focus + lag
+end
+local function CD_Bind()
+	CD_Unbind()
+	local ok = pcall(function()
+		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
+			pcall(CD_Frame, dt)
+		end)
+	end)
+	CD.Bound = ok
+end
+local CD_Row = Add("Camera DBD")
+local CD_Toggle = CD_Row:Toggle(false, function(state)
+	CD.Enabled = state
+	if state then CD_Bind() else CD_Unbind() end
+end)
+CD_Toggle.Extras = { CD_Row:Stepper({ Min = 1, Max = 5, Step = 0.1, Decimals = 1, Default = 3 }, function(v)
+	CD.Level = v
+end) }
+
 	-- ============================================================
 	-- 12. WORLD SETTING (Full Bright + No Fog + FPS Boost, terrain tidak disentuh)
 	-- ============================================================
@@ -6828,115 +6965,6 @@ MHD_Row:Toggle(false, function(state)
 		MHD_Apply()
 	end))
 end)
-
--- Aspect Ratio
-
-local AR = { Enabled = false, Mode = "Default [ 16:9 ]", Scale = 1, Bound = false }
-local AR_NAME = "FluxAspectRatio"
-local AR_MODES = {
-	["Default [ 16:9 ]"] = 1,
-	["16:10"] = 0.9,
-	["21:9"] = 1.3,
-	["4:3 Stretched"] = 0.75,
-}
-local AR_Step
-local function AR_Unbind()
-	if AR.Bound then
-		pcall(function() RunService:UnbindFromRenderStep(AR_NAME) end)
-		AR.Bound = false
-	end
-end
-local function AR_Bind()
-	AR_Unbind()
-	if AR.Scale == 1 then return end
-	local ok = pcall(function()
-		RunService:BindToRenderStep(AR_NAME, Enum.RenderPriority.Camera.Value + 10, function()
-			local cam = workspace.CurrentCamera
-			if cam then
-				cam.CFrame = cam.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, AR.Scale, 0, 0, 0, 1)
-			end
-		end)
-	end)
-	AR.Bound = ok
-end
-local function AR_Refresh()
-	if AR.Enabled then AR_Bind() else AR_Unbind() end
-end
-local AR_Row = Add("Aspect Ratio")
-local AR_Toggle = AR_Row:Toggle(false, function(state)
-	AR.Enabled = state
-	AR_Refresh()
-end)
-local AR_Drop = AR_Row:Dropdown({ "Default [ 16:9 ]", "16:10", "21:9", "4:3 Stretched" }, "Default [ 16:9 ]", function(v)
-	AR.Mode = v
-	AR.Scale = AR_MODES[v] or 1
-	if AR_Step then AR_Step.Set(AR.Scale, true) end
-	AR_Refresh()
-end)
-AR_Step = AR_Row:Stepper({ Min = 0.1, Max = 10, Step = 0.1, Decimals = 1, Default = 1 }, function(v)
-	AR.Scale = v
-	AR_Refresh()
-end)
-AR_Toggle.Extras = { AR_Drop, AR_Step }
-
--- Camera DBD
-
-local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Off = Vector3.new(0, 0, 0) }
-local CD_PRE, CD_POST = "FluxCameraDBD_Pre", "FluxCameraDBD"
-local CD_SPEEDS = { 2, 4, 7, 11, 16 }
-local CD_ZERO = Vector3.new(0, 0, 0)
-local function CD_Clean()
-	local cam = workspace.CurrentCamera
-	if cam and CD.Off ~= CD_ZERO then
-		cam.CFrame = cam.CFrame - CD.Off
-		cam.Focus = cam.Focus - CD.Off
-	end
-	CD.Off = CD_ZERO
-end
-local function CD_Post(dt)
-	local cam = workspace.CurrentCamera
-	if not cam then return end
-	local focus = cam.Focus.Position
-	if not CD.Smooth or (CD.Smooth - focus).Magnitude > 30 or (focus - cam.CFrame.Position).Magnitude < 1 then
-		CD.Smooth = focus
-		return
-	end
-	local speed = CD_SPEEDS[math.clamp(math.floor(CD.Level + 0.5), 1, 5)]
-	local alpha = 1 - math.exp(-math.min(dt, 0.1) * speed)
-	CD.Smooth = CD.Smooth:Lerp(focus, alpha)
-	local lag = CD.Smooth - focus
-	lag = Vector3.new(lag.X, 0, lag.Z)
-	if lag.Magnitude > 12 then lag = lag.Unit * 12 end
-	CD.Off = lag
-	cam.CFrame = cam.CFrame + lag
-	cam.Focus = cam.Focus + lag
-end
-local function CD_Unbind()
-	if CD.Bound then
-		pcall(function() RunService:UnbindFromRenderStep(CD_PRE) end)
-		pcall(function() RunService:UnbindFromRenderStep(CD_POST) end)
-		CD.Bound = false
-	end
-	pcall(CD_Clean)
-	CD.Smooth = nil
-end
-local function CD_Bind()
-	CD_Unbind()
-	local ok = pcall(function()
-		RunService:BindToRenderStep(CD_PRE, Enum.RenderPriority.Camera.Value - 1, function() pcall(CD_Clean) end)
-		RunService:BindToRenderStep(CD_POST, Enum.RenderPriority.Camera.Value + 5, function(dt) pcall(CD_Post, dt) end)
-	end)
-	CD.Bound = ok
-end
-local CD_Row = Add("Camera DBD")
-local CD_Toggle = CD_Row:Toggle(false, function(state)
-	CD.Enabled = state
-	if state then CD_Bind() else CD_Unbind() end
-end)
-local CD_Step = CD_Row:Stepper({ Min = 1, Max = 5, Step = 1, Decimals = 0, Default = 3 }, function(v)
-	CD.Level = v
-end)
-CD_Toggle.Extras = { CD_Step }
 
 -- FAKE AVATAR + FAKE ACCESSORIES (v6)
 -- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
@@ -9457,7 +9485,6 @@ task.spawn(function()
 end)
 
 -- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v3) =====
--- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v4 RINGAN) =====
 task.spawn(function()
 	local lp = Players.LocalPlayer
 	local mask, maskChar = nil, nil
@@ -9474,7 +9501,6 @@ task.spawn(function()
 	end
 
 	local function applyMask(char)
-		if true then return end
 		clearMask()
 		if not char or not char.Parent then return end
 		local hl = Instance.new("Highlight")
@@ -9531,6 +9557,7 @@ task.spawn(function()
 		return p + inst.StudsOffsetWorldSpace + cam.CFrame:VectorToWorldSpace(inst.StudsOffset)
 	end
 
+	-- semua titik sampel adornment harus tertutup badan baru disembunyikan
 	local function adornFullyOccluded(inst)
 		local ad = inst.Adornee
 		local cf = nil
@@ -9566,69 +9593,49 @@ task.spawn(function()
 	local conns = {}
 	local function watch(root)
 		if not root then return end
+		for _, d in ipairs(root:GetDescendants()) do consider(d) end
 		conns[#conns + 1] = root.DescendantAdded:Connect(consider)
-		task.spawn(function()
-			local ok, all = pcall(function() return root:GetDescendants() end)
-			if not ok then return end
-			for i, d in ipairs(all) do
-				if not gui.Parent then return end
-				consider(d)
-				if i % 300 == 0 then task.wait() end
-			end
-		end)
 	end
 	watch(workspace)
 	pcall(function() watch(lp:FindFirstChild("PlayerGui")) end)
 	pcall(function() if parentGui then watch(parentGui) end end)
 
-	local function process(inst, kind, char)
-		local prop = (kind == "B") and "Enabled" or "Visible"
-		if not inst.AlwaysOnTop or (char and inst:IsDescendantOf(char)) then
-			if hidden[inst] then
-				hidden[inst] = nil
-				inst[prop] = true
-			end
-			return
-		end
-		local occ = false
-		if kind == "B" then
-			local pos = anchorPoint(inst)
-			occ = pos ~= nil and selfOccluded(pos)
-		else
-			occ = adornFullyOccluded(inst)
-		end
-		if occ then
-			if not hidden[inst] and inst[prop] == true then
-				hidden[inst] = true
-				inst[prop] = false
-			end
-		elseif hidden[inst] then
-			hidden[inst] = nil
-			inst[prop] = true
-		end
-	end
-
-	local list, li, lastBuild, frame = {}, 1, 0, 0
-	conns[#conns + 1] = RunService.Heartbeat:Connect(function()
+	local frame = 0
+	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
 		frame = frame + 1
-		if frame % 4 ~= 0 then return end
-		local now = os.clock()
-		if li > #list or now - lastBuild > 1 then
-			list = {}
-			for inst in pairs(tracked) do list[#list + 1] = inst end
-			li, lastBuild = 1, now
-		end
+		if frame % 2 ~= 0 then return end
 		local char = lp.Character
-		for _ = 1, 10 do
-			local inst = list[li]
-			if not inst then break end
-			li = li + 1
-			local kind = tracked[inst]
-			if not kind or not inst.Parent then
+		for inst, kind in pairs(tracked) do
+			if not inst.Parent then
 				tracked[inst] = nil
 				hidden[inst] = nil
 			else
-				pcall(process, inst, kind, char)
+				pcall(function()
+					local prop = (kind == "B") and "Enabled" or "Visible"
+					if not inst.AlwaysOnTop or (char and inst:IsDescendantOf(char)) then
+						if hidden[inst] then
+							hidden[inst] = nil
+							inst[prop] = true
+						end
+						return
+					end
+					local occ = false
+					if kind == "B" then
+						local pos = anchorPoint(inst)
+						occ = pos ~= nil and selfOccluded(pos)
+					else
+						occ = adornFullyOccluded(inst)
+					end
+					if occ then
+						if not hidden[inst] and inst[prop] == true then
+							hidden[inst] = true
+							inst[prop] = false
+						end
+					elseif hidden[inst] then
+						hidden[inst] = nil
+						inst[prop] = true
+					end
+				end)
 			end
 		end
 	end)
