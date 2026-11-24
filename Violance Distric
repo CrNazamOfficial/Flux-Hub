@@ -9452,6 +9452,7 @@ task.spawn(function()
 end)
 
 -- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v3) =====
+-- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v4 RINGAN) =====
 task.spawn(function()
 	local lp = Players.LocalPlayer
 	local mask, maskChar = nil, nil
@@ -9524,7 +9525,6 @@ task.spawn(function()
 		return p + inst.StudsOffsetWorldSpace + cam.CFrame:VectorToWorldSpace(inst.StudsOffset)
 	end
 
-	-- semua titik sampel adornment harus tertutup badan baru disembunyikan
 	local function adornFullyOccluded(inst)
 		local ad = inst.Adornee
 		local cf = nil
@@ -9560,49 +9560,69 @@ task.spawn(function()
 	local conns = {}
 	local function watch(root)
 		if not root then return end
-		for _, d in ipairs(root:GetDescendants()) do consider(d) end
 		conns[#conns + 1] = root.DescendantAdded:Connect(consider)
+		task.spawn(function()
+			local ok, all = pcall(function() return root:GetDescendants() end)
+			if not ok then return end
+			for i, d in ipairs(all) do
+				if not gui.Parent then return end
+				consider(d)
+				if i % 300 == 0 then task.wait() end
+			end
+		end)
 	end
 	watch(workspace)
 	pcall(function() watch(lp:FindFirstChild("PlayerGui")) end)
 	pcall(function() if parentGui then watch(parentGui) end end)
 
-	local frame = 0
-	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
+	local function process(inst, kind, char)
+		local prop = (kind == "B") and "Enabled" or "Visible"
+		if not inst.AlwaysOnTop or (char and inst:IsDescendantOf(char)) then
+			if hidden[inst] then
+				hidden[inst] = nil
+				inst[prop] = true
+			end
+			return
+		end
+		local occ = false
+		if kind == "B" then
+			local pos = anchorPoint(inst)
+			occ = pos ~= nil and selfOccluded(pos)
+		else
+			occ = adornFullyOccluded(inst)
+		end
+		if occ then
+			if not hidden[inst] and inst[prop] == true then
+				hidden[inst] = true
+				inst[prop] = false
+			end
+		elseif hidden[inst] then
+			hidden[inst] = nil
+			inst[prop] = true
+		end
+	end
+
+	local list, li, lastBuild, frame = {}, 1, 0, 0
+	conns[#conns + 1] = RunService.Heartbeat:Connect(function()
 		frame = frame + 1
-		if frame % 2 ~= 0 then return end
+		if frame % 4 ~= 0 then return end
+		local now = os.clock()
+		if li > #list or now - lastBuild > 1 then
+			list = {}
+			for inst in pairs(tracked) do list[#list + 1] = inst end
+			li, lastBuild = 1, now
+		end
 		local char = lp.Character
-		for inst, kind in pairs(tracked) do
-			if not inst.Parent then
+		for _ = 1, 10 do
+			local inst = list[li]
+			if not inst then break end
+			li = li + 1
+			local kind = tracked[inst]
+			if not kind or not inst.Parent then
 				tracked[inst] = nil
 				hidden[inst] = nil
 			else
-				pcall(function()
-					local prop = (kind == "B") and "Enabled" or "Visible"
-					if not inst.AlwaysOnTop or (char and inst:IsDescendantOf(char)) then
-						if hidden[inst] then
-							hidden[inst] = nil
-							inst[prop] = true
-						end
-						return
-					end
-					local occ = false
-					if kind == "B" then
-						local pos = anchorPoint(inst)
-						occ = pos ~= nil and selfOccluded(pos)
-					else
-						occ = adornFullyOccluded(inst)
-					end
-					if occ then
-						if not hidden[inst] and inst[prop] == true then
-							hidden[inst] = true
-							inst[prop] = false
-						end
-					elseif hidden[inst] then
-						hidden[inst] = nil
-						inst[prop] = true
-					end
-				end)
+				pcall(process, inst, kind, char)
 			end
 		end
 	end)
