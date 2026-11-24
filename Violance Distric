@@ -6876,50 +6876,50 @@ AR_Toggle.Extras = { AR_Drop, AR_Step }
 
 -- Camera DBD
 
-local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
-local CD_NAME = "FluxCameraDBD"
-local function CD_Speed()
-	return 2.5 * (1.6 ^ (CD.Level - 1))
+local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Off = Vector3.new(0, 0, 0) }
+local CD_PRE, CD_POST = "FluxCameraDBD_Pre", "FluxCameraDBD"
+local CD_SPEEDS = { 2, 4, 7, 11, 16 }
+local CD_ZERO = Vector3.new(0, 0, 0)
+local function CD_Clean()
+	local cam = workspace.CurrentCamera
+	if cam and CD.Off ~= CD_ZERO then
+		cam.CFrame = cam.CFrame - CD.Off
+		cam.Focus = cam.Focus - CD.Off
+	end
+	CD.Off = CD_ZERO
+end
+local function CD_Post(dt)
+	local cam = workspace.CurrentCamera
+	if not cam then return end
+	local focus = cam.Focus.Position
+	if not CD.Smooth or (CD.Smooth - focus).Magnitude > 30 or (focus - cam.CFrame.Position).Magnitude < 1 then
+		CD.Smooth = focus
+		return
+	end
+	local speed = CD_SPEEDS[math.clamp(math.floor(CD.Level + 0.5), 1, 5)]
+	local alpha = 1 - math.exp(-math.min(dt, 0.1) * speed)
+	CD.Smooth = CD.Smooth:Lerp(focus, alpha)
+	local lag = CD.Smooth - focus
+	lag = Vector3.new(lag.X, 0, lag.Z)
+	if lag.Magnitude > 12 then lag = lag.Unit * 12 end
+	CD.Off = lag
+	cam.CFrame = cam.CFrame + lag
+	cam.Focus = cam.Focus + lag
 end
 local function CD_Unbind()
 	if CD.Bound then
-		pcall(function() RunService:UnbindFromRenderStep(CD_NAME) end)
+		pcall(function() RunService:UnbindFromRenderStep(CD_PRE) end)
+		pcall(function() RunService:UnbindFromRenderStep(CD_POST) end)
 		CD.Bound = false
 	end
+	pcall(CD_Clean)
 	CD.Smooth = nil
-end
-local function CD_Frame(dt)
-	local cam = workspace.CurrentCamera
-	local char = Players.LocalPlayer.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not cam or not root then CD.Smooth = nil; return end
-	local pos = root.Position
-	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
-		CD.Char = char
-		CD.Smooth = pos
-		return
-	end
-	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
-		CD.Smooth = pos
-		return
-	end
-	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
-	local sm = CD.Smooth:Lerp(pos, alpha)
-	local lag = sm - pos
-	if lag.Magnitude > 12 then
-		lag = lag.Unit * 12
-		sm = pos + lag
-	end
-	CD.Smooth = sm
-	cam.CFrame = cam.CFrame + lag
-	cam.Focus = cam.Focus + lag
 end
 local function CD_Bind()
 	CD_Unbind()
 	local ok = pcall(function()
-		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
-			pcall(CD_Frame, dt)
-		end)
+		RunService:BindToRenderStep(CD_PRE, Enum.RenderPriority.Camera.Value - 1, function() pcall(CD_Clean) end)
+		RunService:BindToRenderStep(CD_POST, Enum.RenderPriority.Camera.Value + 5, function(dt) pcall(CD_Post, dt) end)
 	end)
 	CD.Bound = ok
 end
@@ -6928,9 +6928,10 @@ local CD_Toggle = CD_Row:Toggle(false, function(state)
 	CD.Enabled = state
 	if state then CD_Bind() else CD_Unbind() end
 end)
-CD_Toggle.Extras = { CD_Row:Stepper({ Min = 1, Max = 5, Step = 0.1, Decimals = 1, Default = 3 }, function(v)
+local CD_Step = CD_Row:Stepper({ Min = 1, Max = 5, Step = 1, Decimals = 0, Default = 3 }, function(v)
 	CD.Level = v
-end) }
+end)
+CD_Toggle.Extras = { CD_Step }
 
 -- FAKE AVATAR + FAKE ACCESSORIES (v6)
 -- Tempel di dalam RunTab("Visual", function(Add, Title, AddFeature) ... end),
