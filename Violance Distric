@@ -126,8 +126,6 @@ local function SafePanelToggle(name, newState)
 	task.delay(0.05, function() PanelToggleBusy[name] = nil end)
 end
 
-task.defer(function() EnsureNamecallHook() end)
-
 -- ============================================================
 -- LIBRARY UI (sama persis seperti asli)
 -- ============================================================
@@ -1470,9 +1468,11 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		end)
 	end
 	NF_Setup()
-	EnsureNamecallHook()
 	local NF_Row = Add("Anti Fall Damage")
-	NF_Row:Toggle(false, function(state) NF_Enabled = state end)
+	NF_Row:Toggle(false, function(state)
+		NF_Enabled = state
+		if state then NF_Setup(); EnsureNamecallHook() end
+	end)
 
 -- ============================================================
 -- 11. AUTO SKILL CHECK TRAP (dengan AUTO-SWITCH ke AG)
@@ -2886,8 +2886,6 @@ do
 		return ok
 	end
 
-	local hookOk = InstallHook()
-
 	task.spawn(function()
 		while SHARED.gen == MY_GEN do
 			pcall(RefreshTarget)
@@ -3003,8 +3001,9 @@ do
 	end)
 
 	local TOF_Row = Add("Silent Aim [ TOF ]")
-	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
+    local TOF_Toggle = TOF_Row:Toggle(false, function(state)
 		AUTO_AIM_ENABLED = state
+		if state then InstallHook() end
 		if not state then
 			hideLaser()
 			laserTarget = nil
@@ -3032,10 +3031,6 @@ do
 			end
 		end
 	end)
-
-	if not hookOk then
-		warn("[Silent Aim TOF] hookmetamethod tidak tersedia, silent aim tidak bisa jalan")
-	end
 end
 
 	-- ============================================================
@@ -3314,18 +3309,23 @@ do
 	local VelState = {}
 	local Humanoids = {}
 
-	pcall(function()
-		for _, d in ipairs(workspace:GetDescendants()) do
+	local AB2_Inited = false
+	local function AB2_Init()
+		if AB2_Inited then return end
+		AB2_Inited = true
+		pcall(function()
+			for _, d in ipairs(workspace:GetDescendants()) do
+				if d.ClassName == "Humanoid" then Humanoids[d] = true end
+			end
+		end)
+		table.insert(AB2.Conns, workspace.DescendantAdded:Connect(function(d)
 			if d.ClassName == "Humanoid" then Humanoids[d] = true end
-		end
-	end)
-	table.insert(AB2.Conns, workspace.DescendantAdded:Connect(function(d)
-		if d.ClassName == "Humanoid" then Humanoids[d] = true end
-	end))
-	table.insert(AB2.Conns, workspace.DescendantRemoving:Connect(function(d)
-		if d.ClassName == "Humanoid" then Humanoids[d] = nil end
-	end))
-
+		end))
+		table.insert(AB2.Conns, workspace.DescendantRemoving:Connect(function(d)
+			if d.ClassName == "Humanoid" then Humanoids[d] = nil end
+		end))
+	end
+	
 	local function AB2_dot(a, b) return a.X * b.X + a.Y * b.Y + a.Z * b.Z end
 
 	local function AB2_teamOk(plr)
@@ -3622,22 +3622,25 @@ do
 		if ok and w then AB2_wrapped = w end
 	end
 
-	if hookmetamethod then
-		local ok, res = pcall(function() return hookmetamethod(game, "__namecall", AB2_wrapped) end)
-		if ok and res then AB2_oldNamecall = res; AB2.HookOk = true end
-	end
-	if not AB2.HookOk and getrawmetatable then
-		pcall(function()
-			local mt = getrawmetatable(game)
-			local orig = mt.__namecall
-			local ro = isreadonly and isreadonly(mt)
-			if setreadonly then setreadonly(mt, false)
-			elseif make_writeable then make_writeable(mt) end
-			AB2_oldNamecall = orig
-			mt.__namecall = AB2_wrapped
-			if setreadonly and ro then setreadonly(mt, true) end
-			AB2.HookOk = true
-		end)
+	local function AB2_Install()
+		if AB2.HookOk then return end
+		if hookmetamethod then
+			local ok, res = pcall(function() return hookmetamethod(game, "__namecall", AB2_wrapped) end)
+			if ok and res then AB2_oldNamecall = res; AB2.HookOk = true end
+		end
+		if not AB2.HookOk and getrawmetatable then
+			pcall(function()
+				local mt = getrawmetatable(game)
+				local orig = mt.__namecall
+				local ro = isreadonly and isreadonly(mt)
+				if setreadonly then setreadonly(mt, false)
+				elseif make_writeable then make_writeable(mt) end
+				AB2_oldNamecall = orig
+				mt.__namecall = AB2_wrapped
+				if setreadonly and ro then setreadonly(mt, true) end
+				AB2.HookOk = true
+			end)
+		end
 	end
 
 	local acc, accSlow = 0, 0
@@ -3709,6 +3712,7 @@ do
 	local AB2_Row = Add("Aim Butcher")
 	AB2_Row:Toggle(false, function(state)
 		AB2.Enabled = state
+		if state then AB2_Init(); AB2_Install() end
 		if not state then
 			AB2.Snap = nil
 			AB2.Target = nil
@@ -4645,7 +4649,7 @@ do
 		end
 	end
 
-	HookOk = ensureHook()
+	
 
 	ThrowRemote = resolveRemote()
 	registerRemote()
@@ -4699,6 +4703,7 @@ do
 	local VEIL_Row = Add("Silent Aim Veil")
 	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
 		State.Enabled = s
+		if s then HookOk = ensureHook() end
 		refreshFov()
 		if not s then
 			Aim.Target = nil
