@@ -6611,15 +6611,10 @@ end)
 		if bottom:GetAttribute("ESP_OrigTrans") == nil then bottom:SetAttribute("ESP_OrigTrans", bottom.Transparency) end
 		if bottom.Transparency > 0.5 then bottom.Transparency = 0.5 end
 		local hl = Instance.new("Highlight")
-        hl.Adornee = win
-        hl.FillColor = WE.Color
-        hl.FillTransparency = 0.5
-        hl.OutlineColor = WE.Color
-        hl.OutlineTransparency = 0
-        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        hl.Enabled = true
-        hl.Parent = win
-        WE.Objects[win] = { bottom = bottom, hl = hl }
+		hl.Adornee = bottom; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
+		hl.OutlineTransparency = 1
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = true; hl.Parent = bottom
+		WE.Objects[win] = { bottom = bottom, hl = hl }
 	end
 	local function WE_Scan()
 		if not WE.Enabled then return end
