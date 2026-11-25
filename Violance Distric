@@ -16,7 +16,7 @@ local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local GUI_NAME = "RobloxCoreUI_" .. tostring(math.random(1000, 9999))
-local SIZE_FACTOR = 0.75
+local SIZE_FACTOR = 0.85
 local DRAG_SMOOTH = 20
 
 local ICONS = {
@@ -242,13 +242,13 @@ end
 
 local opened, minimized, busy, closing, revealed, buildDone = false, false, false, false, false, false
 local revealMenu, reclampAll
-local WIN_W, WIN_H, HEADER_H = 700, 420, 44
+local WIN_W, WIN_H, HEADER_H = 620, 368, 44
 local UIS = { Mult = 1, bound = {} }
 function UIS.main()
 	local vp = viewportSize()
 	local short = math.min(vp.X, vp.Y)
 	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	local f = (short * (touch and 0.5 or 0.36)) / WIN_H
+	local f = (short * (touch and 0.72 or 0.52)) / WIN_H
 	f = math.clamp(f, 0.3, SIZE_FACTOR) * UIS.Mult
 	return math.max(f, 0.22)
 end
@@ -2132,7 +2132,7 @@ task.spawn(function()
 	end
 end)
 
-track(RunService.RenderStepped:Connect(function()
+track(RunService.Heartbeat:Connect(function()
 	if not AP.Cfg.AutoParry then return end
 	local myChar = Players.LocalPlayer.Character
 	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -5870,7 +5870,7 @@ local GE_Toggle = GE_Row:Toggle(false, function(state)
 	GE.Enabled = state
 	if state then
 		GE_ScanAll()
-		table.insert(GE.Conns, RunService.RenderStepped:Connect(GE_UpdateLabels))
+		table.insert(GE.Conns, RunService.Heartbeat:Connect(GE_UpdateLabels))
 		table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d)
 			task.wait(0.3)
 			if GE.Enabled and d:IsA("Model") then GE_Apply(d) end
@@ -6958,7 +6958,7 @@ MHD_Row:Toggle(false, function(state)
 	end))
 	table.insert(MHD.Conns, RunService.Heartbeat:Connect(function(dt)
 		MHD.Acc = MHD.Acc + dt
-		if MHD.Acc < 0.5 then return end
+		if MHD.Acc < 3 then return end
 		MHD.Acc = 0
 		MHD_Apply()
 	end))
