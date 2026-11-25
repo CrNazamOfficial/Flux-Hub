@@ -56,28 +56,6 @@ C.Accent = C.White
 
 local conns = {}
 
-local function IsKillerRole()
-	local t = Players.LocalPlayer.Team
-	if t and string.find(string.lower(t.Name), "killer", 1, true) then return true end
-	local char = Players.LocalPlayer.Character
-	if char then
-		local ok, res = pcall(function() return char:HasTag("Killer") end)
-		if ok and res then return true end
-		if char:FindFirstChild("Lookscriptkiller", true) then return true end
-	end
-	return false
-end
-
-local function IsSurvivorRole()
-	local t = Players.LocalPlayer.Team
-	if not t then return true end
-	local n = string.lower(t.Name)
-	if string.find(n, "killer", 1, true) then return false end
-	if string.find(n, "spect", 1, true) then return false end
-	return true
-end
-
-
 -- ============================================================
 -- FOUNDATION: Global Hook Registry (FIX CRASH)
 -- ============================================================
@@ -248,7 +226,7 @@ function UIS.main()
 	local vp = viewportSize()
 	local short = math.min(vp.X, vp.Y)
 	local touch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
-	local f = (short * (touch and 0.72 or 0.52)) / WIN_H
+	local f = (short * (touch and 0.5 or 0.36)) / WIN_H
 	f = math.clamp(f, 0.3, SIZE_FACTOR) * UIS.Mult
 	return math.max(f, 0.22)
 end
@@ -1409,20 +1387,12 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
 		SH.Enabled = state
 		SH.LoopId = SH.LoopId + 1
-		if SH.AnimConn then pcall(function() task.cancel(SH.AnimConn) end); SH.AnimConn = nil end
+		if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
 		if state then
-			SH.AnimConn = task.spawn(function()
-    while SH.Enabled do
-        pcall(SH_BlockAnim)
-        task.wait(0.1)
-    end
-end)
+			SH.AnimConn = RunService.Heartbeat:Connect(function() pcall(SH_BlockAnim) end)
 			local myId = SH.LoopId
 			task.spawn(function()
-				while SH.Enabled and myId == SH.LoopId do
-						if IsSurvivorRole() then pcall(SH_Step) end
-						task.wait(3)
-					end
+				while SH.Enabled and myId == SH.LoopId do pcall(SH_Step); task.wait(3) end
 			end)
 		end
 	end)
@@ -1431,24 +1401,20 @@ end)
 	-- 3. GOD MODE (Improved: Full Absolute Protection)
 	-- ============================================================
 	local GM = { Enabled = false, Conns = {} }
-local GM_LastApply = 0
-local function GM_Apply()
-    if not IsSurvivorRole() then return end
-    local now = os.clock()
-    if now - GM_LastApply < 0.5 then return end
-    GM_LastApply = now
-    local c = Players.LocalPlayer.Character
-    if not c then return end
-    local h = c:FindFirstChildOfClass("Humanoid")
-    if h and h.MaxHealth > 0 then
-        if h.Health < h.MaxHealth then
-            h.Health = h.MaxHealth
-        end
-        if c:GetAttribute("Knocked") then
-            c:SetAttribute("Knocked", false)
-        end
-    end
-end
+	local function GM_Apply()
+		local c = Players.LocalPlayer.Character
+		if not c then return end
+		local h = c:FindFirstChildOfClass("Humanoid")
+		if h and h.MaxHealth > 0 then
+			if h.Health < h.MaxHealth then
+				h.Health = h.MaxHealth
+			end
+			-- Mencegah modifikasi state cedera/knocked jika ada
+			if c:GetAttribute("Knocked") then
+				c:SetAttribute("Knocked", false)
+			end
+		end
+	end
 	
 	local GM_Row = Add("God Mode")
 	GM_Row:Toggle(false, function(state)
@@ -1602,7 +1568,6 @@ local function AST_PressAt(goal, snap, now)
 	if AST_Press() then AST.LastPress = now end
 end
 local function AST_Step()
-	if not IsSurvivorRole() then return end
 	local now = os.clock()
 	if (not AST.Check or not AST.Check.Parent or not AST.Line or not AST.Line.Parent) and now - AST.LastRefresh > 0.25 then AST_Refresh() end
 
@@ -1735,7 +1700,7 @@ local function FV_HookModules()
 		if mod and not mod._hookedFastVaultVD then
 			FV.OrigEvaluate = mod.evaluate
 			mod.evaluate = function(...)
-				if FV.Enabled and IsSurvivorRole() then return true, "ready", FV.FAST_CONST end
+				if FV.Enabled then return true, "ready", FV.FAST_CONST end
 				return FV.OrigEvaluate(...)
 			end
 			mod._hookedFastVaultVD = true
@@ -1782,7 +1747,7 @@ FV_Row:Toggle(false, function(state)
 			end
 		end)
 		table.insert(FV.Conns, RunService.Heartbeat:Connect(function()
-			if not FV.Enabled or not IsSurvivorRole() then return end
+			if not FV.Enabled then return end
 			local now = os.clock()
 			if now - (FV.LastStateSearch or 0) >= 3 then
 				FV.LastStateSearch = now
@@ -2141,7 +2106,7 @@ task.spawn(function()
 	end
 end)
 
-track(RunService.Heartbeat:Connect(function()
+track(RunService.RenderStepped:Connect(function()
 	if not AP.Cfg.AutoParry then return end
 	local myChar = Players.LocalPlayer.Character
 	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -2834,7 +2799,6 @@ do
 
 	local function SilentDirection()
 		if not AUTO_AIM_ENABLED then return nil end
-		if not IsSurvivorRole() then return nil end
 		do
 			local myChar = GetCharacter()
 			local t = PLAYER.Team
@@ -3191,7 +3155,6 @@ end
 	local function AG_MainLoop()
 	local conn
 	conn = RunService.RenderStepped:Connect(function()
-		if not IsSurvivorRole() then return end
 		local now = os.clock()
 		if not AG_Check or not AG_Check.Parent then AG_Refresh() end
 		local vis = AG_Check ~= nil and AG_Check.Parent ~= nil and AG_Check.Visible == true
@@ -3582,7 +3545,6 @@ do
 
 	local function AB2_onFire(remote, args)
 		if AB2.Dead then return nil end
-		if not IsKillerRole() then return nil end
 		local a1 = args[1]
 		local now = os.clock()
 		
@@ -3677,7 +3639,7 @@ do
 
 	local acc, accSlow = 0, 0
 	table.insert(AB2.Conns, RunService.Heartbeat:Connect(function(dt)
-		if AB2.Dead or not AB2.Enabled or not IsKillerRole() then return end
+		if AB2.Dead or not AB2.Enabled then return end
 		local now = os.clock()
 		local cands = AB2_buildCandidates()
 		AB2.Cands = cands
@@ -4908,10 +4870,6 @@ do
 			if session.active then resetSession() end
 			return
 		end
-		if not IsKillerRole() then
-			if session.active then resetSession() end
-			return
-		end
 		local cam = workspace.CurrentCamera
 		local char = Players.LocalPlayer.Character
 		if not cam or not char then resetSession(); return end
@@ -5038,15 +4996,13 @@ end
 	local function AB_Loop()
 		AB.Thread = task.spawn(function()
 			while AB.Enabled do
-				if IsSurvivorRole() then
-					local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-					if pg then
-						for _, d in ipairs(pg:GetDescendants()) do
-							if d:IsA("GuiObject") and d.Name == "Blind" then pcall(function() d:Destroy() end) end
-						end
+				local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+				if pg then
+					for _, d in ipairs(pg:GetDescendants()) do
+						if d:IsA("GuiObject") and d.Name == "Blind" then pcall(function() d:Destroy() end) end
 					end
 				end
-				task.wait(1.5)
+				task.wait(0.5)
 			end
 		end)
 	end
@@ -5120,7 +5076,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 		local rpos = root.Position
 		if (rpos - cam.CFrame.Position).Magnitude > FK_CFG.MAX_DISTANCE then FK_HideObj(o); return end
 		local xz = o.xz; local total = #xz
-		if (not o.gy) or now - o.lastSample >= 0.2 then
+		if (not o.gy) or now - o.lastSample >= 0.1 then
 			o.lastSample = now
 			local hip = hum.HipHeight; if hip < 0.1 then hip = 2 end
 			local fallback = rpos.Y - hip - root.Size.Y / 2
@@ -5175,7 +5131,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 			for _, p in ipairs(Players:GetPlayers()) do if p.Character then table.insert(list, p.Character) end end
 			FK_RayParams.FilterDescendantsInstances = list
 		end
-		if now - FK.FovScanT >= 0.4 then
+		if now - FK.FovScanT >= 0.25 then
 			FK.FovScanT = now
 			local seen = {}
 			for _, p in ipairs(Players:GetPlayers()) do
@@ -5879,7 +5835,7 @@ local GE_Toggle = GE_Row:Toggle(false, function(state)
 	GE.Enabled = state
 	if state then
 		GE_ScanAll()
-		table.insert(GE.Conns, RunService.Heartbeat:Connect(GE_UpdateLabels))
+		table.insert(GE.Conns, RunService.RenderStepped:Connect(GE_UpdateLabels))
 		table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d)
 			task.wait(0.3)
 			if GE.Enabled and d:IsA("Model") then GE_Apply(d) end
@@ -6215,17 +6171,17 @@ local function MP_Build()
 		Name = "Box",
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(MP_CFG.StartX, 0, 0, MP_CFG.StartY),
-		Size = UDim2.new(0, 0, 0, 0),
-		BackgroundColor3 = Color3.fromRGB(10, 10, 10),
-		BackgroundTransparency = 0.15,
+		Size = UDim2.new(0, 50, 0, 14),
+		BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+		BackgroundTransparency = 0.3,
 		BorderSizePixel = 0,
 		Active = true,
 		Visible = false,
-		AutomaticSize = Enum.AutomaticSize.XY,
+		AutomaticSize = Enum.AutomaticSize.X,
 	}, sg)
-	corner(box, 6)
+	corner(box, 4)
 	UIS.bind(make("UIScale", {}, box), 1)
-	make("UIStroke", { Color = Color3.fromRGB(220, 220, 220), Thickness = 1.2, Transparency = 0.1 }, box)
+	make("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Thickness = 1.2, Transparency = 0.1 }, box)
 	make("UIPadding", {
 		PaddingLeft = UDim.new(0, 10),
 		PaddingRight = UDim.new(0, 10),
@@ -6236,9 +6192,9 @@ local function MP_Build()
 		Name = "Text",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(0, 0, 0, 0),
-		AutomaticSize = Enum.AutomaticSize.XY,
+		AutomaticSize = Enum.AutomaticSize.X,
 		RichText = true,
-		Font = Enum.Font.GothamMedium,
+		Font = Enum.Font.GothamBold,
 		TextSize = MP_CFG.TextSize,
 		TextColor3 = Color3.fromRGB(240, 240, 240),
 		TextStrokeColor3 = Color3.fromRGB(0, 0, 0),
@@ -6775,112 +6731,6 @@ end)
 
 -- ASPECT RATIO
 
-local AR = { Enabled = false, Mode = "Default [ 16:9 ]", Scale = 1, Bound = false }
-local AR_NAME = "FluxAspectRatio"
-local AR_MODES = {
-	["Default [ 16:9 ]"] = 1,
-	["16:10"] = 0.9,
-	["21:9"] = 1.3,
-	["4:3 Stretched"] = 0.75,
-}
-local AR_Step
-local function AR_Unbind()
-	if AR.Bound then
-		pcall(function() RunService:UnbindFromRenderStep(AR_NAME) end)
-		AR.Bound = false
-	end
-end
-local function AR_Bind()
-	AR_Unbind()
-	if AR.Scale == 1 then return end
-	local ok = pcall(function()
-		RunService:BindToRenderStep(AR_NAME, Enum.RenderPriority.Camera.Value + 10, function()
-			local cam = workspace.CurrentCamera
-			if cam then
-				cam.CFrame = cam.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, AR.Scale, 0, 0, 0, 1)
-			end
-		end)
-	end)
-	AR.Bound = ok
-end
-local function AR_Refresh()
-	if AR.Enabled then AR_Bind() else AR_Unbind() end
-end
-local AR_Row = Add("Aspect Ratio")
-local AR_Toggle = AR_Row:Toggle(false, function(state)
-	AR.Enabled = state
-	AR_Refresh()
-end)
-local AR_Drop = AR_Row:Dropdown({ "Default [ 16:9 ]", "16:10", "21:9", "4:3 Stretched" }, "Default [ 16:9 ]", function(v)
-	AR.Mode = v
-	AR.Scale = AR_MODES[v] or 1
-	if AR_Step then AR_Step.Set(AR.Scale, true) end
-	AR_Refresh()
-end)
-AR_Step = AR_Row:Stepper({ Min = 0.1, Max = 10, Step = 0.1, Decimals = 1, Default = 1 }, function(v)
-	AR.Scale = v
-	AR_Refresh()
-end)
-AR_Toggle.Extras = { AR_Drop, AR_Step }
-
--- Camera DBD
-
-local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
-local CD_NAME = "FluxCameraDBD"
-local function CD_Speed()
-	return 2.5 * (1.6 ^ (CD.Level - 1))
-end
-local function CD_Unbind()
-	if CD.Bound then
-		pcall(function() RunService:UnbindFromRenderStep(CD_NAME) end)
-		CD.Bound = false
-	end
-	CD.Smooth = nil
-end
-local function CD_Frame(dt)
-	local cam = workspace.CurrentCamera
-	local char = Players.LocalPlayer.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not cam or not root then CD.Smooth = nil; return end
-	local pos = root.Position
-	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
-		CD.Char = char
-		CD.Smooth = pos
-		return
-	end
-	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
-		CD.Smooth = pos
-		return
-	end
-	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
-	local sm = CD.Smooth:Lerp(pos, alpha)
-	local lag = sm - pos
-	if lag.Magnitude > 12 then
-		lag = lag.Unit * 12
-		sm = pos + lag
-	end
-	CD.Smooth = sm
-	cam.CFrame = cam.CFrame + lag
-	cam.Focus = cam.Focus + lag
-end
-local function CD_Bind()
-	CD_Unbind()
-	local ok = pcall(function()
-		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
-			pcall(CD_Frame, dt)
-		end)
-	end)
-	CD.Bound = ok
-end
-local CD_Row = Add("Camera DBD")
-local CD_Toggle = CD_Row:Toggle(false, function(state)
-	CD.Enabled = state
-	if state then CD_Bind() else CD_Unbind() end
-end)
-CD_Toggle.Extras = { CD_Row:Stepper({ Min = 1, Max = 5, Step = 0.1, Decimals = 1, Default = 3 }, function(v)
-	CD.Level = v
-end) }
-
 	-- ============================================================
 	-- 12. WORLD SETTING (Full Bright + No Fog + FPS Boost, terrain tidak disentuh)
 	-- ============================================================
@@ -6967,7 +6817,7 @@ MHD_Row:Toggle(false, function(state)
 	end))
 	table.insert(MHD.Conns, RunService.Heartbeat:Connect(function(dt)
 		MHD.Acc = MHD.Acc + dt
-		if MHD.Acc < 3 then return end
+		if MHD.Acc < 0.5 then return end
 		MHD.Acc = 0
 		MHD_Apply()
 	end))
@@ -9032,7 +8882,7 @@ end,
 	end
 end
 	task.spawn(function()
-		while gui.Parent do task.wait(1); for name in pairs(floatBtns) do updateFloatVisual(name) end end
+		while gui.Parent do task.wait(0.3); for name in pairs(floatBtns) do updateFloatVisual(name) end end
 	end)
 	local function setLocked(v)
 		locked = v and true or false
@@ -9610,7 +9460,7 @@ task.spawn(function()
 	local frame = 0
 	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
 		frame = frame + 1
-		if frame % 6 ~= 0 then return end
+		if frame % 2 ~= 0 then return end
 		local char = lp.Character
 		for inst, kind in pairs(tracked) do
 			if not inst.Parent then
