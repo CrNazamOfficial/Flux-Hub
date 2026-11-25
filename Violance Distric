@@ -1409,9 +1409,14 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		if state and SH_IsKiller() then SH_Toggle.Set(false, true); return end
 		SH.Enabled = state
 		SH.LoopId = SH.LoopId + 1
-		if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
+		if SH.AnimConn then pcall(function() task.cancel(SH.AnimConn) end); SH.AnimConn = nil end
 		if state then
-			SH.AnimConn = RunService.Heartbeat:Connect(function() pcall(SH_BlockAnim) end)
+			SH.AnimConn = task.spawn(function()
+    while SH.Enabled do
+        pcall(SH_BlockAnim)
+        task.wait(0.1)
+    end
+end)
 			local myId = SH.LoopId
 			task.spawn(function()
 				while SH.Enabled and myId == SH.LoopId do
@@ -1426,20 +1431,24 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 	-- 3. GOD MODE (Improved: Full Absolute Protection)
 	-- ============================================================
 	local GM = { Enabled = false, Conns = {} }
-	local function GM_Apply()
-		if not IsSurvivorRole() then return end
-		local c = Players.LocalPlayer.Character
-		if not c then return end
-		local h = c:FindFirstChildOfClass("Humanoid")
-		if h and h.MaxHealth > 0 then
-			if h.Health < h.MaxHealth then
-				h.Health = h.MaxHealth
-			end
-			if c:GetAttribute("Knocked") then
-				c:SetAttribute("Knocked", false)
-			end
-		end
-	end
+local GM_LastApply = 0
+local function GM_Apply()
+    if not IsSurvivorRole() then return end
+    local now = os.clock()
+    if now - GM_LastApply < 0.5 then return end
+    GM_LastApply = now
+    local c = Players.LocalPlayer.Character
+    if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if h and h.MaxHealth > 0 then
+        if h.Health < h.MaxHealth then
+            h.Health = h.MaxHealth
+        end
+        if c:GetAttribute("Knocked") then
+            c:SetAttribute("Knocked", false)
+        end
+    end
+end
 	
 	local GM_Row = Add("God Mode")
 	GM_Row:Toggle(false, function(state)
@@ -5037,7 +5046,7 @@ end
 						end
 					end
 				end
-				task.wait(0.5)
+				task.wait(1.5)
 			end
 		end)
 	end
@@ -6602,10 +6611,15 @@ end)
 		if bottom:GetAttribute("ESP_OrigTrans") == nil then bottom:SetAttribute("ESP_OrigTrans", bottom.Transparency) end
 		if bottom.Transparency > 0.5 then bottom.Transparency = 0.5 end
 		local hl = Instance.new("Highlight")
-		hl.Adornee = bottom; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
-		hl.OutlineTransparency = 1
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = true; hl.Parent = bottom
-		WE.Objects[win] = { bottom = bottom, hl = hl }
+        hl.Adornee = win
+        hl.FillColor = WE.Color
+        hl.FillTransparency = 0.5
+        hl.OutlineColor = WE.Color
+        hl.OutlineTransparency = 0
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.Enabled = true
+        hl.Parent = win
+        WE.Objects[win] = { bottom = bottom, hl = hl }
 	end
 	local function WE_Scan()
 		if not WE.Enabled then return end
@@ -9023,7 +9037,7 @@ end,
 	end
 end
 	task.spawn(function()
-		while gui.Parent do task.wait(0.3); for name in pairs(floatBtns) do updateFloatVisual(name) end end
+		while gui.Parent do task.wait(1); for name in pairs(floatBtns) do updateFloatVisual(name) end end
 	end)
 	local function setLocked(v)
 		locked = v and true or false
@@ -9601,7 +9615,7 @@ task.spawn(function()
 	local frame = 0
 	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
 		frame = frame + 1
-		if frame % 4 ~= 0 then return end
+		if frame % 6 ~= 0 then return end
 		local char = lp.Character
 		for inst, kind in pairs(tracked) do
 			if not inst.Parent then
