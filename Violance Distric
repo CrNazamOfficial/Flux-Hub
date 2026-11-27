@@ -15,6 +15,43 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- ===== GLOBAL ROLE HELPERS =====
+local function LP_IsKiller()
+	local lp = Players.LocalPlayer
+	if lp.Team and string.find(string.lower(lp.Team.Name), "killer", 1, true) then return true end
+	local char = lp.Character
+	if not char then return false end
+	local ok, res = pcall(function() return char:HasTag("Killer") end)
+	if ok and res then return true end
+	if char:FindFirstChild("Lookscriptkiller", true) then return true end
+	return false
+end
+
+local LP_KILLER_CHARS = {
+	["veil"]    = true,
+	["butcher"] = true,
+	["hidden"]  = true,
+	["jason"]   = true,
+	["myers"]   = true,
+	["cure"]    = true,
+	["masked"]  = true,
+	["abys"]    = true,
+	["jeff"]    = true,
+}
+
+local function LP_KillerChar()
+	local char = Players.LocalPlayer.Character
+	if not char then return nil end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return nil end
+	local name = string.lower(hum.DisplayName ~= "" and hum.DisplayName or char.Name)
+	for k in pairs(LP_KILLER_CHARS) do
+		if string.find(name, k, 1, true) then return k end
+	end
+	return nil
+end
+-- ===== END GLOBAL ROLE HELPERS =====
+
 local GUI_NAME = "RobloxCoreUI_" .. tostring(math.random(1000, 9999))
 local SIZE_FACTOR = 0.6
 local DRAG_SMOOTH = 20
@@ -2199,6 +2236,7 @@ AP._RingConn = nil
 
 local NP_Row = Add("Auto Parry")
 NP_Row:Toggle(false, function(state)
+	if state and LP_IsKiller() then NP_Row:Toggle(false); return end
 	AP.Cfg.AutoParry = state
 	if state then
 		if not AP._ScanConn then
@@ -3008,6 +3046,7 @@ do
 
 	local TOF_Row = Add("Silent Aim [ TOF ]")
 	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
+		if state and not LP_IsKiller() then TOF_Toggle.Set(false, true); return end
 		AUTO_AIM_ENABLED = state
 		if not state then
 			hideLaser()
@@ -3681,6 +3720,7 @@ do
 	-- ===== ROW UI (Flux Hub) =====
 	local AB2_Row = Add("Aim Butcher")
 	AB2_Row:Toggle(false, function(state)
+		if state and not LP_IsKiller() then AB2_Row:Toggle(false); return end
 		AB2.Enabled = state
 		if not state then
 			AB2.Snap = nil
@@ -4620,6 +4660,7 @@ do
 
 	local VEIL_Row = Add("Silent Aim Veil")
 	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
+		if s and not LP_IsKiller() then VEIL_Toggle.Set(false, true); return end
 		State.Enabled = s
 		refreshFov()
 		if not s then
@@ -4907,7 +4948,9 @@ do
 	end
 
 	local ALH_Row = Add("Aim Lock Hidden")
+	-- role-gate dipasang di toggle di bawah
 	ALH_Row:Toggle(false, function(state)
+		if state and not LP_IsKiller() then ALH_Row:Toggle(false); return end
 		CONFIG.ENABLED = state
 		if not state then resetSession() end
 	end)
@@ -5081,6 +5124,7 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	end
 	local FK_Row = Add("Fov Killer Outline")
 	local FK_Toggle = FK_Row:Toggle(false, function(state)
+		if state and not LP_IsKiller() then FK_Toggle.Set(false, true); return end
 		FK.Enabled = state
 		if state then
 			local fkFrame = 0
@@ -5680,7 +5724,7 @@ local function GE_Apply(obj)
 	lbl.Name = "GenESP_Tag"
 	lbl.Adornee = adornee
 	lbl.Size = UDim2.fromOffset(80, 20)
-	lbl.StudsOffset = Vector3.new(0, 3, 0)
+	lbl.StudsOffset = Vector3.new(0, 3.5, 0)
 	lbl.AlwaysOnTop = true
 	lbl.ResetOnSpawn = false
 	lbl.Enabled = false
@@ -5715,7 +5759,7 @@ local function GE_Apply(obj)
 				lastPct = pct
 				local c = GE_Color(p / 100)
 				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
-				lbl.Text = string.format('<font color="#%s">%d%%</font>', hex, pct)
+				lbl_text.Text = string.format('<font color="#%s">%d%%</font>', hex, pct)
 				hl.FillTransparency = (pct >= 100) and 1 or 0.6
 				o.hide = (pct >= 100)
 			end
@@ -5731,10 +5775,6 @@ local function GE_ScanAll()
 end
 local function GE_ClearAll()
 	for obj in pairs(GE.Objs) do GE_Cleanup(obj) end
-	if GE.Screen then
-		pcall(function() GE.Screen:Destroy() end)
-		GE.Screen = nil
-	end
 	for _, o in ipairs(workspace:GetDescendants()) do
 		if o.Name == "GenESP_HL" or o.Name == "GenESP_Tag" then
 			pcall(function() o:Destroy() end)
@@ -5768,6 +5808,7 @@ local function GE_UpdateLabels()
 			if lbl.Enabled ~= show then lbl.Enabled = show end
 		end
 	end
+end
 local GE_Row = Add("Generator Esp + Progress")
 local GE_Toggle = GE_Row:Toggle(false, function(state)
 	GE.Enabled = state
@@ -6746,37 +6787,30 @@ local function CD_Frame(dt)
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not cam or not root then CD.Smooth = nil; CD.PrevRoot = nil; return end
 	local pos = root.Position
-
 	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 20 then
 		CD.Char = char
 		CD.Smooth = pos
 		CD.PrevRoot = pos
 		return
 	end
-
 	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
 		CD.Smooth = pos
 		CD.PrevRoot = pos
 		return
 	end
-
 	local safedt = math.min(dt, 0.05)
 	local alpha = 1 - math.exp(-safedt * CD_Speed())
 	local sm = CD.Smooth:Lerp(pos, alpha)
 	local lag = sm - pos
-
-	local maxLag = 6
-	if lag.Magnitude > maxLag then
-		lag = lag.Unit * maxLag
+	if lag.Magnitude > 6 then
+		lag = lag.Unit * 6
 		sm = pos + lag
 	end
-
 	if lag.Magnitude < 0.001 then
 		CD.Smooth = pos
 		CD.PrevRoot = pos
 		return
 	end
-
 	CD.Smooth = sm
 	CD.PrevRoot = pos
 	cam.CFrame = cam.CFrame + lag
@@ -7249,11 +7283,12 @@ do
 			local desc = nil
 			local src = baseDesc or (FA.Target and FA.Target.Desc)
 			if src then
-				local ok, c = pcall(function() return src:Clone() end)
-				if ok and c then desc = c end
-				if not desc and not baseDesc and FA.Target then
-					local ok2, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(FA.Target.Id) end)
-					if ok2 and d then desc = d end
+				if typeof(src) == "Instance" then
+					local ok, c = pcall(function() return src:Clone() end)
+					if ok and c then desc = c end
+				elseif type(src) == "table" then
+					local ok, d = pcall(FA_DataToDesc, src)
+					if ok and d then desc = d end
 				end
 			end
 			if not desc then desc = Instance.new("HumanoidDescription") end
@@ -8452,15 +8487,24 @@ do
 			task.spawn(function()
 				local desc, tid, tname, isSelf = nil, nil, nil, false
 				if FA.Target and FA.Target.Desc then
-					desc, tid, tname, isSelf = FA.Target.Desc, FA.Target.Id, FA.Target.Name, FA.Target.Self == true
+					-- Lock: pakai snapshot yang sudah ada di Target.Desc saat save, bukan re-fetch live
+					desc = FA.Target.Desc
+					tid, tname, isSelf = FA.Target.Id, FA.Target.Name, FA.Target.Self == true
 				else
 					desc = FA_OwnDescCached()
 					tid, tname, isSelf = FA_LP.UserId, FA_LP.Name, true
 				end
+				-- Jika desc adalah HumanoidDescription (live), konversi ke snapshot data dulu
 				local snapshot = nil
 				if desc then
-					local ok, data = pcall(FA_DescToData, desc)
-					if ok then snapshot = data end
+					if typeof(desc) == "Instance" then
+						-- Live HumanoidDescription — snapshot sekarang, lock
+						local ok, data = pcall(FA_DescToData, desc)
+						if ok then snapshot = data end
+					elseif type(desc) == "table" then
+						-- Sudah snapshot data
+						snapshot = desc
+					end
 				end
 				if not snapshot then
 					FA_Notify("Save Slot", "Avatar gagal dibaca")
@@ -8484,12 +8528,25 @@ do
 			targetLoadToken = targetLoadToken + 1
 			Pv.Pending = nil
 			if s.Desc and s.TargetId then
-				local ok, desc = pcall(FA_DataToDesc, s.Desc)
-				if not ok or not desc then
+				-- Pakai snapshot data yang tersimpan — jangan re-fetch live dari userId
+				local descObj = nil
+				if type(s.Desc) == "table" then
+					local ok, d = pcall(FA_DataToDesc, s.Desc)
+					if ok and d then descObj = d end
+				elseif typeof(s.Desc) == "Instance" then
+					descObj = s.Desc
+				end
+				if not descObj then
 					FA_Notify("Save Slot", "Data slot rusak")
 					return
 				end
-				FA.Target = { Id = s.TargetId, Name = s.TargetName or "target", Desc = desc, Self = s.Self == true, Stamp = os.clock() }
+				-- Lock: simpan snapshot sebagai data table di Target.Desc bukan live desc
+				local snapData = s.Desc
+				if typeof(snapData) == "Instance" then
+					local ok2, sd = pcall(FA_DescToData, snapData)
+					if ok2 then snapData = sd end
+				end
+				FA.Target = { Id = s.TargetId, Name = s.TargetName or "target", Desc = snapData, Self = s.Self == true, Stamp = os.clock() }
 				FA.Input.Text = s.Self and "" or FA.Target.Name
 			else
 				FA.Target = nil
