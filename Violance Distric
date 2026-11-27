@@ -5676,27 +5676,32 @@ local function GE_Apply(obj)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Parent = obj
 
-	local screen = GE_EnsureScreen()
-	local lbl = Instance.new("TextLabel")
+	local lbl = Instance.new("BillboardGui")
 	lbl.Name = "GenESP_Tag"
-	lbl.AnchorPoint = Vector2.new(0.5, 1)
-	lbl.Size = UDim2.fromOffset(180, GE_CFG.TEXT_SIZE + 4)
-	lbl.Position = UDim2.fromOffset(0, 0)
-	lbl.BackgroundTransparency = 1
-	lbl.RichText = true
-	lbl.Font = Enum.Font.GothamBold
-	lbl.TextSize = GE_CFG.TEXT_SIZE
-	lbl.TextColor3 = GE_CFG.TEXT
-	lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	lbl.TextStrokeTransparency = 0.4
-	lbl.TextXAlignment = Enum.TextXAlignment.Center
-	lbl.TextYAlignment = Enum.TextYAlignment.Center
-	lbl.Text = "0%"
-	lbl.Visible = false
-	lbl.Parent = screen
+	lbl.Adornee = adornee
+	lbl.Size = UDim2.fromOffset(80, 20)
+	lbl.StudsOffset = Vector3.new(0, 3, 0)
+	lbl.AlwaysOnTop = true
+	lbl.ResetOnSpawn = false
+	lbl.Enabled = false
+	lbl.Parent = adornee
+
+	local lbl_text = Instance.new("TextLabel")
+	lbl_text.Size = UDim2.new(1, 0, 1, 0)
+	lbl_text.BackgroundTransparency = 1
+	lbl_text.RichText = true
+	lbl_text.Font = Enum.Font.GothamBold
+	lbl_text.TextSize = GE_CFG.TEXT_SIZE
+	lbl_text.TextColor3 = GE_CFG.TEXT
+	lbl_text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	lbl_text.TextStrokeTransparency = 0.4
+	lbl_text.TextXAlignment = Enum.TextXAlignment.Center
+	lbl_text.TextYAlignment = Enum.TextYAlignment.Center
+	lbl_text.Text = "0%"
+	lbl_text.Parent = lbl
 	local tag = lbl
 
-	GE.Objs[obj] = { hl = hl, tag = tag, lbl = lbl, adornee = adornee }
+	GE.Objs[obj] = { hl = hl, tag = tag, lbl = lbl, lbl_text = lbl_text, adornee = adornee }
 
 	task.spawn(function()
 		local lastPct = -1
@@ -5710,7 +5715,7 @@ local function GE_Apply(obj)
 				lastPct = pct
 				local c = GE_Color(p / 100)
 				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
-				lbl.Text = string.format(' <font color="#%s">%d%%</font>', hex, pct)
+				lbl_text.Text = string.format('<font color="#%s">%d%%</font>', hex, pct)
 				hl.FillTransparency = (pct >= 100) and 1 or 0.6
 				o.hide = (pct >= 100)
 			end
@@ -5755,16 +5760,14 @@ local function GE_UpdateLabels()
 				local wp = ad.Position + Vector3.new(0, (ad.Size.Y / 2) + 0.5, 0)
 				local sp, onScreen = cam:WorldToViewportPoint(wp)
 				if onScreen and sp.Z > 0 and sp.Z <= GE_CFG.MAX_DIST then
-					lbl.Position = UDim2.fromOffset(math.floor(sp.X + 0.5), math.floor(sp.Y + 0.5))
 					show = true
 					local occ = shared.FluxSelfOcc
 					if occ and occ(wp) then show = false end
 				end
 			end
-			if lbl.Visible ~= show then lbl.Visible = show end
+			if lbl.Enabled ~= show then lbl.Enabled = show end
 		end
 	end
-end
 local GE_Row = Add("Generator Esp + Progress")
 local GE_Toggle = GE_Row:Toggle(false, function(state)
 	GE.Enabled = state
@@ -6724,10 +6727,10 @@ AR_Toggle.Extras = { AR_Drop, AR_Step }
 
 -- Camera DBD
 
-local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
+local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil, PrevRoot = nil }
 local CD_NAME = "FluxCameraDBD"
 local function CD_Speed()
-	return 2.5 * (1.6 ^ (CD.Level - 1))
+	return 1.8 * (1.4 ^ (CD.Level - 1))
 end
 local function CD_Unbind()
 	if CD.Bound then
@@ -6735,37 +6738,54 @@ local function CD_Unbind()
 		CD.Bound = false
 	end
 	CD.Smooth = nil
+	CD.PrevRoot = nil
 end
 local function CD_Frame(dt)
 	local cam = workspace.CurrentCamera
 	local char = Players.LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not cam or not root then CD.Smooth = nil; return end
+	if not cam or not root then CD.Smooth = nil; CD.PrevRoot = nil; return end
 	local pos = root.Position
-	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
+
+	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 20 then
 		CD.Char = char
 		CD.Smooth = pos
+		CD.PrevRoot = pos
 		return
 	end
+
 	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
 		CD.Smooth = pos
+		CD.PrevRoot = pos
 		return
 	end
-	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
+
+	local safedt = math.min(dt, 0.05)
+	local alpha = 1 - math.exp(-safedt * CD_Speed())
 	local sm = CD.Smooth:Lerp(pos, alpha)
 	local lag = sm - pos
-	if lag.Magnitude > 12 then
-		lag = lag.Unit * 12
+
+	local maxLag = 6
+	if lag.Magnitude > maxLag then
+		lag = lag.Unit * maxLag
 		sm = pos + lag
 	end
+
+	if lag.Magnitude < 0.001 then
+		CD.Smooth = pos
+		CD.PrevRoot = pos
+		return
+	end
+
 	CD.Smooth = sm
+	CD.PrevRoot = pos
 	cam.CFrame = cam.CFrame + lag
 	cam.Focus = cam.Focus + lag
 end
 local function CD_Bind()
 	CD_Unbind()
 	local ok = pcall(function()
-		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
+		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 1, function(dt)
 			pcall(CD_Frame, dt)
 		end)
 	end)
