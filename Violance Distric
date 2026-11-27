@@ -5710,7 +5710,7 @@ local function GE_Apply(obj)
 				lastPct = pct
 				local c = GE_Color(p / 100)
 				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
-				lbl.Text = string.format('Generator | <font color="#%s">%d%%</font>', hex, pct)
+				lbl.Text = string.format(' <font color="#%s">%d%%</font>', hex, pct)
 				hl.FillTransparency = (pct >= 100) and 1 or 0.6
 				o.hide = (pct >= 100)
 			end
