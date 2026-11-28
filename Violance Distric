@@ -15,43 +15,6 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- ===== GLOBAL ROLE HELPERS =====
-local function LP_IsKiller()
-	local lp = Players.LocalPlayer
-	if lp.Team and string.find(string.lower(lp.Team.Name), "killer", 1, true) then return true end
-	local char = lp.Character
-	if not char then return false end
-	local ok, res = pcall(function() return char:HasTag("Killer") end)
-	if ok and res then return true end
-	if char:FindFirstChild("Lookscriptkiller", true) then return true end
-	return false
-end
-
-local LP_KILLER_CHARS = {
-	["veil"]    = true,
-	["butcher"] = true,
-	["hidden"]  = true,
-	["jason"]   = true,
-	["myers"]   = true,
-	["cure"]    = true,
-	["masked"]  = true,
-	["abys"]    = true,
-	["jeff"]    = true,
-}
-
-local function LP_KillerChar()
-	local char = Players.LocalPlayer.Character
-	if not char then return nil end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return nil end
-	local name = string.lower(hum.DisplayName ~= "" and hum.DisplayName or char.Name)
-	for k in pairs(LP_KILLER_CHARS) do
-		if string.find(name, k, 1, true) then return k end
-	end
-	return nil
-end
--- ===== END GLOBAL ROLE HELPERS =====
-
 local GUI_NAME = "RobloxCoreUI_" .. tostring(math.random(1000, 9999))
 local SIZE_FACTOR = 0.6
 local DRAG_SMOOTH = 20
@@ -226,17 +189,14 @@ pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
 gui.Parent = parentGui
 
 -- ANTI-BLOCK: paksa GUI selalu enabled + DisplayOrder max
--- anti-block merged (loop tunggal, interval 1s)
 task.spawn(function()
 	while gui.Parent do
-		task.wait(1)
 		pcall(function()
 			if gui.Enabled ~= true then gui.Enabled = true end
 			if gui.DisplayOrder ~= 2147483647 then gui.DisplayOrder = 2147483647 end
 			if gui.IgnoreGuiInset ~= true then gui.IgnoreGuiInset = true end
-			if gui.Parent ~= parentGui then gui.Parent = parentGui end
-			if not root.Visible and revealed and not minimized then root.Visible = true end
 		end)
+		task.wait(0.5)
 	end
 end)
 
@@ -1429,27 +1389,11 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		SH.LoopId = SH.LoopId + 1
 		if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end); SH.AnimConn = nil end
 		if state then
-			local function SH_HookAnimator()
-				local c = Players.LocalPlayer.Character
-				local h = c and c:FindFirstChildOfClass("Humanoid")
-				local a = h and h:FindFirstChildOfClass("Animator")
-				if a then
-					if SH.AnimConn then pcall(function() SH.AnimConn:Disconnect() end) end
-					SH.AnimConn = a.AnimationPlayed:Connect(function() pcall(SH_BlockAnim) end)
-				end
-			end
-			SH_HookAnimator()
-			if SH._CharConn then pcall(function() SH._CharConn:Disconnect() end) end
-			SH._CharConn = Players.LocalPlayer.CharacterAdded:Connect(function()
-				task.wait(0.3)
-				SH_HookAnimator()
-			end)
+			SH.AnimConn = RunService.Heartbeat:Connect(function() pcall(SH_BlockAnim) end)
 			local myId = SH.LoopId
 			task.spawn(function()
 				while SH.Enabled and myId == SH.LoopId do pcall(SH_Step); task.wait(3) end
 			end)
-		else
-			if SH._CharConn then pcall(function() SH._CharConn:Disconnect() end); SH._CharConn = nil end
 		end
 	end)
 
@@ -1479,24 +1423,28 @@ RunTab("Survivor", function(Add, Title, AddFeature)
 		GM.Conns = {}
 		
 		if state then
+			-- Proteksi instan tiap frame dan event perubahan health
+			table.insert(GM.Conns, RunService.Heartbeat:Connect(GM_Apply))
 			local lp = Players.LocalPlayer
-			local function GM_HookChar(char)
-				if not char then return end
+			table.insert(GM.Conns, lp.CharacterAdded:Connect(function(char)
 				task.wait(0.2)
-				if not GM.Enabled then return end
-				local hum = char:FindFirstChildOfClass("Humanoid")
-				if hum then
-					table.insert(GM.Conns, hum.HealthChanged:Connect(function()
-						if GM.Enabled then GM_Apply() end
-					end))
-					table.insert(GM.Conns, hum:GetPropertyChangedSignal("Health"):Connect(function()
-						if GM.Enabled then GM_Apply() end
-					end))
+				if GM.Enabled then
+					local hum = char:FindFirstChildOfClass("Humanoid")
+					if hum then
+						table.insert(GM.Conns, hum.HealthChanged:Connect(function()
+							if GM.Enabled then GM_Apply() end
+						end))
+					end
 				end
-				GM_Apply()
+			end))
+			local curChar = lp.Character
+			local curHum = curChar and curChar:FindFirstChildOfClass("Humanoid")
+			if curHum then
+				table.insert(GM.Conns, curHum.HealthChanged:Connect(function()
+					if GM.Enabled then GM_Apply() end
+				end))
 			end
-			table.insert(GM.Conns, lp.CharacterAdded:Connect(GM_HookChar))
-			GM_HookChar(lp.Character)
+			GM_Apply()
 		end
 	end)
 
@@ -1798,14 +1746,14 @@ FV_Row:Toggle(false, function(state)
 				task.wait(1)
 			end
 		end)
-		local fvToken = {}
-		FV._token = fvToken
-		task.spawn(function()
-			while FV.Enabled and FV._token == fvToken do
-				task.wait(3)
-				if FV.Enabled then pcall(FV_HookModules); pcall(FV_HookState) end
+		table.insert(FV.Conns, RunService.Heartbeat:Connect(function()
+			if not FV.Enabled then return end
+			local now = os.clock()
+			if now - (FV.LastStateSearch or 0) >= 3 then
+				FV.LastStateSearch = now
+				pcall(FV_HookModules); pcall(FV_HookState)
 			end
-		end)
+		end))
 	else
 		for _, c in ipairs(FV.Conns) do pcall(function() c:Disconnect() end) end
 		FV.Conns = {}
@@ -1875,7 +1823,7 @@ end)
 					local active = ADC_IsActive()
 					if active and not ADC.IsCrouching then ADC.IsCrouching = true; ADC_FireCrouch(true)
 					elseif not active and ADC.IsCrouching then ADC.IsCrouching = false; ADC_FireCrouch(false) end
-					task.wait(0.1)
+					task.wait(0.05)
 				end
 				if ADC.IsCrouching then ADC.IsCrouching = false; ADC_FireCrouch(false) end
 			end)
@@ -2158,7 +2106,23 @@ task.spawn(function()
 	end
 end)
 
-AP._ScanConn = nil
+track(RunService.RenderStepped:Connect(function()
+	if not AP.Cfg.AutoParry then return end
+	local myChar = Players.LocalPlayer.Character
+	local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHRP then return end
+	local maxRange = AP_MaxRange()
+	for kChar, anim in pairs(AP.Tracked) do
+		if not kChar.Parent or not anim.Parent then
+			AP.Tracked[kChar] = nil
+		else
+			local kHRP = kChar:FindFirstChild("HumanoidRootPart")
+			if kHRP and (myHRP.Position - kHRP.Position).Magnitude <= maxRange then
+				AP_ScanTracks(kChar, anim:GetPlayingAnimationTracks(), myChar, myHRP, kHRP)
+			end
+		end
+	end
+end))
 
 local function AP_DestroyRing()
 	if AP.State.RingFolder then pcall(function() AP.State.RingFolder:Destroy() end); AP.State.RingFolder = nil end
@@ -2232,48 +2196,20 @@ local function AP_UpdateRing(hrp, myChar, range)
 	end
 end
 
-AP._RingConn = nil
+track(RunService.Heartbeat:Connect(function()
+	local char = Players.LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if AP.Cfg.Circle and AP.Cfg.AutoParry and hrp then
+		AP_UpdateRing(hrp, char, AP.Cfg.Radius)
+	elseif AP.State.RingFolder then
+		AP_DestroyRing()
+	end
+end))
 
 local NP_Row = Add("Auto Parry")
 NP_Row:Toggle(false, function(state)
-	if state and LP_IsKiller() then NP_Row:Toggle(false); return end
 	AP.Cfg.AutoParry = state
-	if state then
-		if not AP._ScanConn then
-			AP._ScanConn = RunService.RenderStepped:Connect(function()
-				if not AP.Cfg.AutoParry then return end
-				local myChar = Players.LocalPlayer.Character
-				local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
-				if not myHRP then return end
-				local maxRange = AP_MaxRange()
-				for kChar, anim in pairs(AP.Tracked) do
-					if not kChar.Parent or not anim.Parent then
-						AP.Tracked[kChar] = nil
-					else
-						local kHRP = kChar:FindFirstChild("HumanoidRootPart")
-						if kHRP and (myHRP.Position - kHRP.Position).Magnitude <= maxRange then
-							AP_ScanTracks(kChar, anim:GetPlayingAnimationTracks(), myChar, myHRP, kHRP)
-						end
-					end
-				end
-			end)
-		end
-		if not AP._RingConn then
-			AP._RingConn = RunService.Heartbeat:Connect(function()
-				local char = Players.LocalPlayer.Character
-				local hrp = char and char:FindFirstChild("HumanoidRootPart")
-				if AP.Cfg.Circle and AP.Cfg.AutoParry and hrp then
-					AP_UpdateRing(hrp, char, AP.Cfg.Radius)
-				elseif AP.State.RingFolder then
-					AP_DestroyRing()
-				end
-			end)
-		end
-	else
-		if AP._ScanConn then AP._ScanConn:Disconnect(); AP._ScanConn = nil end
-		if AP._RingConn then AP._RingConn:Disconnect(); AP._RingConn = nil end
-		AP_DestroyRing()
-	end
+	if not state then AP_DestroyRing() end
 end)
 NP_Row:Stepper({ Min = 5, Max = 12, Step = 1, Default = 12 }, function(v)
 	AP.Cfg.Radius = v
@@ -2903,28 +2839,47 @@ do
 
 	local function InstallHook()
 		if SHARED.hooked then return true end
-		local ok = EnsureNamecallHook()
-		if ok then
-			RegisterHookHandler("__AimLockSpear__", function(args, self)
-				local match = (self == SHARED.remote)
-				if not match and typeof(self) == "Instance" and self.Name == "Fire" then
-					local p = self.Parent
-					if p and p.Name == SHARED.tool then SHARED.remote = self; match = true end
-				end
-				if match then
-					local fn = SHARED.aim
-					if fn and typeof(args[2]) == "Vector3" then
-						local okAim, newDir = pcall(fn)
-						if okAim and typeof(newDir) == "Vector3" then
-							args[2] = newDir
-							return args
+		if not (hookmetamethod and getnamecallmethod and setnamecallmethod and newcclosure) then
+			return false
+		end
+		local ok = pcall(function()
+			local old
+			old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+				local method = getnamecallmethod()
+				if method == "FireServer" then
+					local match = (self == SHARED.remote)
+					if not match and typeof(self) == "Instance" and self.Name == "Fire" then
+						local p = self.Parent
+						if p and p.Name == SHARED.tool then
+							SHARED.remote = self
+							match = true
 						end
 					end
-					return false
+					if match then
+						local mine = false
+						if checkcaller then mine = checkcaller() end
+						if not mine then
+							local fn = SHARED.aim
+							if fn then
+								local args = table.pack(...)
+								if typeof(args[1]) == "Instance" and typeof(args[2]) == "Vector3" then
+									local okAim, newDir = pcall(fn)
+									if okAim and typeof(newDir) == "Vector3" then
+										args[2] = newDir
+										setnamecallmethod("FireServer")
+										return old(self, table.unpack(args, 1, args.n))
+									end
+								end
+							end
+						end
+						setnamecallmethod("FireServer")
+						return old(self, ...)
+					end
 				end
-			end)
-			SHARED.hooked = true
-		end
+				return old(self, ...)
+			end))
+		end)
+		if ok then SHARED.hooked = true end
 		return ok
 	end
 
@@ -3046,7 +3001,6 @@ do
 
 	local TOF_Row = Add("Silent Aim [ TOF ]")
 	local TOF_Toggle = TOF_Row:Toggle(false, function(state)
-		if state and not LP_IsKiller() then TOF_Toggle.Set(false, true); return end
 		AUTO_AIM_ENABLED = state
 		if not state then
 			hideLaser()
@@ -3644,13 +3598,44 @@ do
 		return out
 	end
 
-	RegisterHookHandler("__AB2__", function(args, self)
-		if not AB2.Bypass and typeof(self) == "Instance" and self.Name == AB2_CFG.RemoteName then
+	local AB2_oldNamecall
+	local function AB2_handler(self, ...)
+		local method = getnamecallmethod and getnamecallmethod() or ""
+		if method == "FireServer" and not AB2.Bypass and typeof(self) == "Instance"
+			and self.Name == AB2_CFG.RemoteName and not (checkcaller and checkcaller()) then
+			local args = table.pack(...)
 			local ok, newArgs = pcall(AB2_onFire, self, args)
-			if ok and newArgs then return newArgs end
+			if setnamecallmethod then pcall(setnamecallmethod, "FireServer") end
+			if ok and newArgs then
+				return AB2_oldNamecall(self, table.unpack(newArgs, 1, newArgs.n))
+			end
 		end
-	end)
-	AB2.HookOk = EnsureNamecallHook()
+		return AB2_oldNamecall(self, ...)
+	end
+
+	local AB2_wrapped = AB2_handler
+	if newcclosure then
+		local ok, w = pcall(newcclosure, AB2_handler)
+		if ok and w then AB2_wrapped = w end
+	end
+
+	if hookmetamethod then
+		local ok, res = pcall(function() return hookmetamethod(game, "__namecall", AB2_wrapped) end)
+		if ok and res then AB2_oldNamecall = res; AB2.HookOk = true end
+	end
+	if not AB2.HookOk and getrawmetatable then
+		pcall(function()
+			local mt = getrawmetatable(game)
+			local orig = mt.__namecall
+			local ro = isreadonly and isreadonly(mt)
+			if setreadonly then setreadonly(mt, false)
+			elseif make_writeable then make_writeable(mt) end
+			AB2_oldNamecall = orig
+			mt.__namecall = AB2_wrapped
+			if setreadonly and ro then setreadonly(mt, true) end
+			AB2.HookOk = true
+		end)
+	end
 
 	local acc, accSlow = 0, 0
 	table.insert(AB2.Conns, RunService.Heartbeat:Connect(function(dt)
@@ -3720,7 +3705,6 @@ do
 	-- ===== ROW UI (Flux Hub) =====
 	local AB2_Row = Add("Aim Butcher")
 	AB2_Row:Toggle(false, function(state)
-		if state and not LP_IsKiller() then AB2_Row:Toggle(false); return end
 		AB2.Enabled = state
 		if not state then
 			AB2.Snap = nil
@@ -4496,9 +4480,61 @@ do
 
 	local function ensureHook()
 		if Reg.Installed then return true end
-		local ok = EnsureNamecallHook()
-		if ok then Reg.Installed = true end
-		return ok
+		local wrap = newcclosure or function(f) return f end
+		if hookmetamethod and getnamecallmethod then
+			local ok = pcall(function()
+				local old
+				old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+					local method = getnamecallmethod()
+					if method == "FireServer" then
+						local fn = Reg.Handlers[self]
+						if fn then
+							local mine = false
+							if checkcaller then mine = checkcaller() end
+							if not mine then
+								local args = table.pack(...)
+								local okH, result = pcall(fn, args, self)
+								if setnamecallmethod then
+									pcall(setnamecallmethod, method)
+								end
+								if okH and type(result) == "table" then
+									return old(self, table.unpack(result, 1, result.n or #result))
+								end
+							end
+						end
+					end
+					return old(self, ...)
+				end))
+				Reg.Old = old
+				Reg.Installed = true
+			end)
+			if ok and Reg.Installed then return true end
+		end
+		if hookfunction then
+			local ok = pcall(function()
+				local fs = Instance.new("RemoteEvent").FireServer
+				local old
+				old = hookfunction(fs, wrap(function(self, ...)
+					local fn = Reg.Handlers[self]
+					if fn then
+						local mine = false
+						if checkcaller then mine = checkcaller() end
+						if not mine then
+							local args = table.pack(...)
+							local okH, result = pcall(fn, args, self)
+							if okH and type(result) == "table" then
+								return old(self, table.unpack(result, 1, result.n or #result))
+							end
+						end
+					end
+					return old(self, ...)
+				end))
+				Reg.Old = old
+				Reg.Installed = true
+			end)
+			if ok and Reg.Installed then return true end
+		end
+		return false
 	end
 
 	local function resolveRemote()
@@ -4512,7 +4548,6 @@ do
 	local function registerRemote()
 		if ThrowRemote and ThrowRemote.Parent then
 			Reg.Handlers[ThrowRemote] = throwHandler
-			RegisterHookHandler(ThrowRemote, throwHandler)
 		end
 	end
 
@@ -4626,39 +4661,31 @@ do
 
 	local lastPing = 0
 	local lastClean = 0
-	local SAV_HBConn = nil
-	local function SAV_StartHB()
-		if SAV_HBConn then return end
-		SAV_HBConn = RunService.Heartbeat:Connect(function()
-			if Unloaded then return end
-			local now = os.clock()
-			pcall(function()
-				local char = LP.Character
-				Aim.MyRoot = char and char:FindFirstChild("HumanoidRootPart")
-				Aim.IsKiller = isKillerNow()
-				if now - lastPing >= 0.5 then
-					lastPing = now
-					local ok, v = pcall(function() return LP:GetNetworkPing() end)
-					if ok and type(v) == "number" then
-						Aim.Ping = Aim.Ping + (math.clamp(v, 0, 0.4) - Aim.Ping) * Config.PingSmooth
-					end
+	track(RunService.Heartbeat:Connect(function()
+		if Unloaded then return end
+		local now = os.clock()
+		pcall(function()
+			local char = LP.Character
+			Aim.MyRoot = char and char:FindFirstChild("HumanoidRootPart")
+			Aim.IsKiller = isKillerNow()
+			if now - lastPing >= 0.5 then
+				lastPing = now
+				local ok, v = pcall(function() return LP:GetNetworkPing() end)
+				if ok and type(v) == "number" then
+					Aim.Ping = Aim.Ping + (math.clamp(v, 0, 0.4) - Aim.Ping) * Config.PingSmooth
 				end
-				if now - lastClean >= 3 then
-					lastClean = now
-					cleanTargetTables()
-				end
-				if State.Enabled and Aim.IsKiller and Aim.MyRoot then
-					refreshTargets(now)
-				else
-					Aim.Target = nil
-				end
-			end)
+			end
+			if now - lastClean >= 3 then
+				lastClean = now
+				cleanTargetTables()
+			end
+			if State.Enabled and Aim.IsKiller and Aim.MyRoot then
+				refreshTargets(now)
+			else
+				Aim.Target = nil
+			end
 		end)
-	end
-	local function SAV_StopHB()
-		if SAV_HBConn then pcall(function() SAV_HBConn:Disconnect() end); SAV_HBConn = nil end
-		Aim.Target = nil
-	end
+	end))
 
 	Env.VDSilent = { Unload = unload, State = State, Config = Config, Aim = Aim, IsCharging = isChargingThrow }
 
@@ -4668,8 +4695,6 @@ do
 
 	local VEIL_Row = Add("Silent Aim Veil")
 	local VEIL_Toggle = VEIL_Row:Toggle(false, function(s)
-		if s and not LP_IsKiller() then VEIL_Toggle.Set(false, true); return end
-		if s then SAV_StartHB() else SAV_StopHB() end
 		State.Enabled = s
 		refreshFov()
 		if not s then
@@ -4947,44 +4972,19 @@ do
 	end
 
 	local fallbackConn = nil
-	local ALH_Bound = false
-
-	local function ALH_Bind()
-		if ALH_Bound then return end
-		local ok = pcall(function()
-			RunService:BindToRenderStep(BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function(dt)
-				pcall(step, dt)
-			end)
+	local bound = pcall(function()
+		RunService:BindToRenderStep(BIND_NAME, Enum.RenderPriority.Camera.Value + 1, function(dt)
+			pcall(step, dt)
 		end)
-		if ok then
-			ALH_Bound = true
-		else
-			fallbackConn = RunService.RenderStepped:Connect(function(dt) pcall(step, dt) end)
-		end
-	end
-
-	local function ALH_Unbind()
-		if ALH_Bound then
-			pcall(function() RunService:UnbindFromRenderStep(BIND_NAME) end)
-			ALH_Bound = false
-		end
-		if fallbackConn then
-			pcall(function() fallbackConn:Disconnect() end)
-			fallbackConn = nil
-		end
+	end)
+	if not bound then
+		fallbackConn = RunService.RenderStepped:Connect(function(dt) pcall(step, dt) end)
 	end
 
 	local ALH_Row = Add("Aim Lock Hidden")
-	-- role-gate dipasang di toggle di bawah
 	ALH_Row:Toggle(false, function(state)
-		if state and not LP_IsKiller() then ALH_Row:Toggle(false); return end
 		CONFIG.ENABLED = state
-		if state then
-			ALH_Bind()
-		else
-			resetSession()
-			ALH_Unbind()
-		end
+		if not state then resetSession() end
 	end)
 end
 
@@ -5156,20 +5156,9 @@ RunTab("Visual", function(Add, Title, AddFeature)
 	end
 	local FK_Row = Add("Fov Killer Outline")
 	local FK_Toggle = FK_Row:Toggle(false, function(state)
-		if state and not LP_IsKiller() then FK_Toggle.Set(false, true); return end
 		FK.Enabled = state
-		if state then
-			local fkFrame = 0
-			table.insert(FK.Conns, RunService.Heartbeat:Connect(function()
-				fkFrame = fkFrame + 1
-				if fkFrame % 2 ~= 0 then return end
-				pcall(FK_Update, os.clock())
-			end))
-		else
-			for _, c in ipairs(FK.Conns) do pcall(function() c:Disconnect() end) end
-			FK.Conns = {}
-			FK_DestroyAll()
-		end
+		if state then table.insert(FK.Conns, RunService.Heartbeat:Connect(function() pcall(FK_Update, os.clock()) end))
+		else for _, c in ipairs(FK.Conns) do pcall(function() c:Disconnect() end) end; FK.Conns = {}; FK_DestroyAll() end
 	end)
 	FK_Toggle.Color = FK_Row:Color(FK.Color, function(c)
 		FK.Color = c
@@ -5458,7 +5447,7 @@ do
 						lastScan = 0
 					end
 					local now = os.clock()
-					if map and now - lastScan >= 5 then
+					if map and now - lastScan >= 2 then
 						lastScan = now
 						for _, inst in ipairs(map:GetDescendants()) do
 							if inst:IsA("Model") and inst.Name:lower() == "hook" then
@@ -5474,7 +5463,7 @@ do
 						end
 					end
 				end)
-				task.wait(1)
+				task.wait(0.5)
 			end
 			if HE.Token == my and not gui.Parent then
 				HE.Enabled = false
@@ -5571,17 +5560,17 @@ local function KE_Apply(p)
 	if p:GetAttribute("_KESP_Hooked") then return end
 	p:SetAttribute("_KESP_Hooked", true)
 	table.insert(KE.Conns, p.CharacterAdded:Connect(function(char)
-		for i = 1, 3 do
-			task.wait(i == 1 and 0.2 or 0.5)
-			if not char.Parent or not KE.Enabled then return end
+		for i = 1, 6 do
+			task.wait(i == 1 and 0.1 or 0.4)
+			if not char.Parent then return end
 			KE_Refresh(p)
 		end
 	end))
 	if p.Character then
 		task.spawn(function()
-			for i = 1, 3 do
-				task.wait(i == 1 and 0.2 or 0.5)
-				if not p.Character or not p.Character.Parent or not KE.Enabled then return end
+			for i = 1, 6 do
+				task.wait(i == 1 and 0.1 or 0.4)
+				if not p.Character or not p.Character.Parent then return end
 				KE_Refresh(p)
 			end
 		end)
@@ -5593,7 +5582,7 @@ local function KE_Apply(p)
 	end))
 	table.insert(KE.Conns, p.CharacterAdded:Connect(function(char)
 		char.ChildAdded:Connect(function(c)
-			if c:IsA("Tool") and KE.Enabled then task.wait(0.2); KE_Refresh(p) end
+			if c:IsA("Tool") then task.wait(0.2); KE_Refresh(p) end
 		end)
 	end))
 end
@@ -5752,32 +5741,27 @@ local function GE_Apply(obj)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Parent = obj
 
-	local lbl = Instance.new("BillboardGui")
+	local screen = GE_EnsureScreen()
+	local lbl = Instance.new("TextLabel")
 	lbl.Name = "GenESP_Tag"
-	lbl.Adornee = adornee
-	lbl.Size = UDim2.fromOffset(80, 20)
-	lbl.StudsOffset = Vector3.new(0, 3.5, 0)
-	lbl.AlwaysOnTop = true
-	lbl.ResetOnSpawn = false
-	lbl.Enabled = false
-	lbl.Parent = adornee
-
-	local lbl_text = Instance.new("TextLabel")
-	lbl_text.Size = UDim2.new(1, 0, 1, 0)
-	lbl_text.BackgroundTransparency = 1
-	lbl_text.RichText = true
-	lbl_text.Font = Enum.Font.GothamBold
-	lbl_text.TextSize = GE_CFG.TEXT_SIZE
-	lbl_text.TextColor3 = GE_CFG.TEXT
-	lbl_text.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	lbl_text.TextStrokeTransparency = 0.4
-	lbl_text.TextXAlignment = Enum.TextXAlignment.Center
-	lbl_text.TextYAlignment = Enum.TextYAlignment.Center
-	lbl_text.Text = "0%"
-	lbl_text.Parent = lbl
+	lbl.AnchorPoint = Vector2.new(0.5, 1)
+	lbl.Size = UDim2.fromOffset(180, GE_CFG.TEXT_SIZE + 4)
+	lbl.Position = UDim2.fromOffset(0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.RichText = true
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextSize = GE_CFG.TEXT_SIZE
+	lbl.TextColor3 = GE_CFG.TEXT
+	lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	lbl.TextStrokeTransparency = 0.4
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.Text = "0%"
+	lbl.Visible = false
+	lbl.Parent = screen
 	local tag = lbl
 
-	GE.Objs[obj] = { hl = hl, tag = tag, lbl = lbl, lbl_text = lbl_text, adornee = adornee }
+	GE.Objs[obj] = { hl = hl, tag = tag, lbl = lbl, adornee = adornee }
 
 	task.spawn(function()
 		local lastPct = -1
@@ -5791,7 +5775,7 @@ local function GE_Apply(obj)
 				lastPct = pct
 				local c = GE_Color(p / 100)
 				local hex = string.format("%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
-				lbl_text.Text = string.format('<font color="#%s">%d%%</font>', hex, pct)
+				lbl.Text = string.format('Generator | <font color="#%s">%d%%</font>', hex, pct)
 				hl.FillTransparency = (pct >= 100) and 1 or 0.6
 				o.hide = (pct >= 100)
 			end
@@ -5807,6 +5791,10 @@ local function GE_ScanAll()
 end
 local function GE_ClearAll()
 	for obj in pairs(GE.Objs) do GE_Cleanup(obj) end
+	if GE.Screen then
+		pcall(function() GE.Screen:Destroy() end)
+		GE.Screen = nil
+	end
 	for _, o in ipairs(workspace:GetDescendants()) do
 		if o.Name == "GenESP_HL" or o.Name == "GenESP_Tag" then
 			pcall(function() o:Destroy() end)
@@ -5832,12 +5820,13 @@ local function GE_UpdateLabels()
 				local wp = ad.Position + Vector3.new(0, (ad.Size.Y / 2) + 0.5, 0)
 				local sp, onScreen = cam:WorldToViewportPoint(wp)
 				if onScreen and sp.Z > 0 and sp.Z <= GE_CFG.MAX_DIST then
+					lbl.Position = UDim2.fromOffset(math.floor(sp.X + 0.5), math.floor(sp.Y + 0.5))
 					show = true
 					local occ = shared.FluxSelfOcc
 					if occ and occ(wp) then show = false end
 				end
 			end
-			if lbl.Enabled ~= show then lbl.Enabled = show end
+			if lbl.Visible ~= show then lbl.Visible = show end
 		end
 	end
 end
@@ -5846,11 +5835,7 @@ local GE_Toggle = GE_Row:Toggle(false, function(state)
 	GE.Enabled = state
 	if state then
 		GE_ScanAll()
-		local geFrame = 0
-		table.insert(GE.Conns, RunService.RenderStepped:Connect(function()
-			geFrame = geFrame + 1
-			if geFrame % 3 == 0 then GE_UpdateLabels() end
-		end))
+		table.insert(GE.Conns, RunService.RenderStepped:Connect(GE_UpdateLabels))
 		table.insert(GE.Conns, workspace.DescendantAdded:Connect(function(d)
 			task.wait(0.3)
 			if GE.Enabled and d:IsA("Model") then GE_Apply(d) end
@@ -6388,7 +6373,7 @@ local PK_CFG = {
 	StartY = 0.30,
 	MaxPerks = 5,
 	LineHeight = 9,
-	UpdateRate = 2,
+	UpdateRate = 1,
 }
 local function PK_Esc(s)
 	s = tostring(s)
@@ -6410,11 +6395,9 @@ local function PK_KillerPlayer()
 	end
 	return nil
 end
-local PK_Cache = { char = nil, result = {} }
 local function PK_ReadPerks(char)
-	if not char then return {} end
-	if PK_Cache.char == char then return PK_Cache.result end
 	local result, seen = {}, {}
+	if not char then return result end
 	for _, c in ipairs(char:GetDescendants()) do
 		local n, lv = string.match(tostring(c.Name), "^(.+)%s+(%d+)$")
 		if n then
@@ -6427,8 +6410,6 @@ local function PK_ReadPerks(char)
 		end
 	end
 	table.sort(result, function(a, b) return a.Name < b.Name end)
-	PK_Cache.char = char
-	PK_Cache.result = result
 	return result
 end
 local function PK_SetText(label, txt)
@@ -6583,15 +6564,12 @@ end)
 			return
 		end
 		WE.Scanned[win] = true
+		if bottom:GetAttribute("ESP_OrigTrans") == nil then bottom:SetAttribute("ESP_OrigTrans", bottom.Transparency) end
+		if bottom.Transparency > 0.5 then bottom.Transparency = 0.5 end
 		local hl = Instance.new("Highlight")
-		hl.Adornee = win
-		hl.FillColor = WE.Color
-		hl.FillTransparency = 0.65
-		hl.OutlineColor = WE.Color
-		hl.OutlineTransparency = 0
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		hl.Enabled = true
-		hl.Parent = win
+		hl.Adornee = bottom; hl.FillColor = WE.Color; hl.FillTransparency = 0.9
+		hl.OutlineTransparency = 1
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop; hl.Enabled = true; hl.Parent = bottom
 		WE.Objects[win] = { bottom = bottom, hl = hl }
 	end
 	local function WE_Scan()
@@ -6617,7 +6595,7 @@ end)
 			WE.Conns = {}
 		end
 	end)
-	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.hl then d.hl.FillColor = c; d.hl.OutlineColor = c end end end)
+	WE_Toggle.Color = WE_Row:Color(WE.Color, function(c) WE.Color = c; for _, d in pairs(WE.Objects) do if d.hl then d.hl.FillColor = c end end end)
 
 -- ============================================================
 -- 11. SURVIVOR ESP
@@ -6686,17 +6664,17 @@ local function SE_Apply(p)
 	if p:GetAttribute("_ESP_Hooked") then return end
 	p:SetAttribute("_ESP_Hooked", true)
 	table.insert(SE.Conns, p.CharacterAdded:Connect(function(char)
-		for i = 1, 3 do
-			task.wait(i == 1 and 0.2 or 0.5)
-			if not char.Parent or not SE.Enabled then return end
+		for i = 1, 6 do
+			task.wait(i == 1 and 0.1 or 0.4)
+			if not char.Parent then return end
 			SE_RefreshHighlight(p)
 		end
 	end))
 	if p.Character then
 		task.spawn(function()
-			for i = 1, 3 do
-				task.wait(i == 1 and 0.2 or 0.5)
-				if not p.Character or not p.Character.Parent or not SE.Enabled then return end
+			for i = 1, 6 do
+				task.wait(i == 1 and 0.1 or 0.4)
+				if not p.Character or not p.Character.Parent then return end
 				SE_RefreshHighlight(p)
 			end
 		end)
@@ -6803,10 +6781,10 @@ AR_Toggle.Extras = { AR_Drop, AR_Step }
 
 -- Camera DBD
 
-local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil, PrevRoot = nil }
+local CD = { Enabled = false, Level = 3, Bound = false, Smooth = nil, Char = nil }
 local CD_NAME = "FluxCameraDBD"
 local function CD_Speed()
-	return 1.8 * (1.4 ^ (CD.Level - 1))
+	return 2.5 * (1.6 ^ (CD.Level - 1))
 end
 local function CD_Unbind()
 	if CD.Bound then
@@ -6814,47 +6792,37 @@ local function CD_Unbind()
 		CD.Bound = false
 	end
 	CD.Smooth = nil
-	CD.PrevRoot = nil
 end
 local function CD_Frame(dt)
 	local cam = workspace.CurrentCamera
 	local char = Players.LocalPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
-	if not cam or not root then CD.Smooth = nil; CD.PrevRoot = nil; return end
+	if not cam or not root then CD.Smooth = nil; return end
 	local pos = root.Position
-	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 20 then
+	if CD.Char ~= char or not CD.Smooth or (CD.Smooth - pos).Magnitude > 30 then
 		CD.Char = char
 		CD.Smooth = pos
-		CD.PrevRoot = pos
 		return
 	end
 	if (cam.Focus.Position - cam.CFrame.Position).Magnitude < 1.5 then
 		CD.Smooth = pos
-		CD.PrevRoot = pos
 		return
 	end
-	local safedt = math.min(dt, 0.05)
-	local alpha = 1 - math.exp(-safedt * CD_Speed())
+	local alpha = 1 - math.exp(-math.min(dt, 0.1) * CD_Speed())
 	local sm = CD.Smooth:Lerp(pos, alpha)
 	local lag = sm - pos
-	if lag.Magnitude > 6 then
-		lag = lag.Unit * 6
+	if lag.Magnitude > 12 then
+		lag = lag.Unit * 12
 		sm = pos + lag
 	end
-	if lag.Magnitude < 0.001 then
-		CD.Smooth = pos
-		CD.PrevRoot = pos
-		return
-	end
 	CD.Smooth = sm
-	CD.PrevRoot = pos
 	cam.CFrame = cam.CFrame + lag
 	cam.Focus = cam.Focus + lag
 end
 local function CD_Bind()
 	CD_Unbind()
 	local ok = pcall(function()
-		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 1, function(dt)
+		RunService:BindToRenderStep(CD_NAME, Enum.RenderPriority.Camera.Value + 5, function(dt)
 			pcall(CD_Frame, dt)
 		end)
 	end)
@@ -6953,14 +6921,12 @@ MHD_Row:Toggle(false, function(state)
 	table.insert(MHD.Conns, Players.LocalPlayer.CharacterAdded:Connect(function()
 		for _, d in ipairs({ 0.5, 2, 5 }) do task.delay(d, MHD_Apply) end
 	end))
-	local mhdToken = {}
-	MHD._token = mhdToken
-	task.spawn(function()
-		while MHD.Enabled and MHD._token == mhdToken and gui.Parent do
-			task.wait(2)
-			if MHD.Enabled then pcall(MHD_Apply) end
-		end
-	end)
+	table.insert(MHD.Conns, RunService.Heartbeat:Connect(function(dt)
+		MHD.Acc = MHD.Acc + dt
+		if MHD.Acc < 0.5 then return end
+		MHD.Acc = 0
+		MHD_Apply()
+	end))
 end)
 
 -- FAKE AVATAR + FAKE ACCESSORIES (v6)
@@ -7318,12 +7284,11 @@ do
 			local desc = nil
 			local src = baseDesc or (FA.Target and FA.Target.Desc)
 			if src then
-				if typeof(src) == "Instance" then
-					local ok, c = pcall(function() return src:Clone() end)
-					if ok and c then desc = c end
-				elseif type(src) == "table" then
-					local ok, d = pcall(FA_DataToDesc, src)
-					if ok and d then desc = d end
+				local ok, c = pcall(function() return src:Clone() end)
+				if ok and c then desc = c end
+				if not desc and not baseDesc and FA.Target then
+					local ok2, d = pcall(function() return Players:GetHumanoidDescriptionFromUserId(FA.Target.Id) end)
+					if ok2 and d then desc = d end
 				end
 			end
 			if not desc then desc = Instance.new("HumanoidDescription") end
@@ -7394,17 +7359,7 @@ do
 			return holder
 		end
 
-		local FA_LegPartsCache = {}
 		local function FA_LegParts(field, id)
-			local cacheKey = field .. "_" .. tostring(id)
-			if FA_LegPartsCache[cacheKey] then
-				local cached = {}
-				for _, v in ipairs(FA_LegPartsCache[cacheKey]) do
-					local ok, c = pcall(function() return v:Clone() end)
-					if ok and c then cached[#cached + 1] = c end
-				end
-				if #cached > 0 then return cached end
-			end
 			local side = (field == "LeftLeg") and "Left" or "Right"
 			local names = { side .. "UpperLeg", side .. "LowerLeg", side .. "Foot" }
 			local out = {}
@@ -7442,7 +7397,6 @@ do
 					pcall(function() obj:Destroy() end)
 				end
 			end
-			if #out > 0 then FA_LegPartsCache[cacheKey] = out end
 			return out
 		end
 
@@ -8007,9 +7961,8 @@ do
 
 			if tpl.Full then
 				FA_Sweep(char, bk)
-				if bk.Conn then pcall(function() bk.Conn:Disconnect() end) end
 				bk.Conn = char.ChildAdded:Connect(function(c)
-					if FA.Backups[char] ~= bk then bk.Conn:Disconnect(); bk.Conn = nil; return end
+					if FA.Backups[char] ~= bk then return end
 					if c:IsA("Accessory") or FA_IsClothing(c) then
 						task.defer(FA_Sweep, char, bk)
 					end
@@ -8124,7 +8077,7 @@ do
 					warn("[FluxHub] Fake Avatar: " .. tostring(err))
 					task.wait(0.5)
 				end
-			until not FA.Dirty or guard >= 3 or not gui.Parent
+			until not FA.Dirty or guard >= 4 or not gui.Parent
 			FA.Busy = false
 		end
 
@@ -8137,8 +8090,9 @@ do
 			end)
 		end
 
+		-- pastikan karakter baru (setelah mati / reset / respawn) langsung memakai fake avatar
 		local function FA_Ensure(char)
-			for _ = 1, 6 do
+			for _ = 1, 14 do
 				if not gui.Parent or not FA.Enabled or FA_LP.Character ~= char or not char.Parent then return end
 				if FA.Target == nil and #FA_SelectedItems() == 0 then return end
 				if FA_IsKiller(char) then return end
@@ -8146,11 +8100,11 @@ do
 				local hum = char:FindFirstChildOfClass("Humanoid")
 				local bk = FA.Backups[char]
 				if bk and bk.Sig == FA_Sig(FA_RigOf(char, hum)) and FA_Verify(char, bk) then
-					task.wait(1.5)
+					task.wait(2)
 					FA_Sweep(char, bk)
 					return
 				end
-				task.wait(1.5)
+				task.wait(1)
 			end
 		end
 
@@ -8522,24 +8476,15 @@ do
 			task.spawn(function()
 				local desc, tid, tname, isSelf = nil, nil, nil, false
 				if FA.Target and FA.Target.Desc then
-					-- Lock: pakai snapshot yang sudah ada di Target.Desc saat save, bukan re-fetch live
-					desc = FA.Target.Desc
-					tid, tname, isSelf = FA.Target.Id, FA.Target.Name, FA.Target.Self == true
+					desc, tid, tname, isSelf = FA.Target.Desc, FA.Target.Id, FA.Target.Name, FA.Target.Self == true
 				else
 					desc = FA_OwnDescCached()
 					tid, tname, isSelf = FA_LP.UserId, FA_LP.Name, true
 				end
-				-- Jika desc adalah HumanoidDescription (live), konversi ke snapshot data dulu
 				local snapshot = nil
 				if desc then
-					if typeof(desc) == "Instance" then
-						-- Live HumanoidDescription — snapshot sekarang, lock
-						local ok, data = pcall(FA_DescToData, desc)
-						if ok then snapshot = data end
-					elseif type(desc) == "table" then
-						-- Sudah snapshot data
-						snapshot = desc
-					end
+					local ok, data = pcall(FA_DescToData, desc)
+					if ok then snapshot = data end
 				end
 				if not snapshot then
 					FA_Notify("Save Slot", "Avatar gagal dibaca")
@@ -8563,25 +8508,12 @@ do
 			targetLoadToken = targetLoadToken + 1
 			Pv.Pending = nil
 			if s.Desc and s.TargetId then
-				-- Pakai snapshot data yang tersimpan — jangan re-fetch live dari userId
-				local descObj = nil
-				if type(s.Desc) == "table" then
-					local ok, d = pcall(FA_DataToDesc, s.Desc)
-					if ok and d then descObj = d end
-				elseif typeof(s.Desc) == "Instance" then
-					descObj = s.Desc
-				end
-				if not descObj then
+				local ok, desc = pcall(FA_DataToDesc, s.Desc)
+				if not ok or not desc then
 					FA_Notify("Save Slot", "Data slot rusak")
 					return
 				end
-				-- Lock: simpan snapshot sebagai data table di Target.Desc bukan live desc
-				local snapData = s.Desc
-				if typeof(snapData) == "Instance" then
-					local ok2, sd = pcall(FA_DescToData, snapData)
-					if ok2 then snapData = sd end
-				end
-				FA.Target = { Id = s.TargetId, Name = s.TargetName or "target", Desc = snapData, Self = s.Self == true, Stamp = os.clock() }
+				FA.Target = { Id = s.TargetId, Name = s.TargetName or "target", Desc = desc, Self = s.Self == true, Stamp = os.clock() }
 				FA.Input.Text = s.Self and "" or FA.Target.Name
 			else
 				FA.Target = nil
@@ -9056,7 +8988,7 @@ end,
 	end
 end
 	task.spawn(function()
-		while gui.Parent do task.wait(1); for name in pairs(floatBtns) do updateFloatVisual(name) end end
+		while gui.Parent do task.wait(0.3); for name in pairs(floatBtns) do updateFloatVisual(name) end end
 	end)
 	local function setLocked(v)
 		locked = v and true or false
@@ -9503,7 +9435,17 @@ revealMenu = function()
 end
 buildDone = true
 
--- anti-block sudah di-merge ke atas (satu loop)
+-- ANTI-BLOCK: kalau GUI kehapus game, re-mount
+task.spawn(function()
+	while gui.Parent do
+		task.wait(1)
+		pcall(function()
+			if not gui.Parent then return end
+			if gui.Parent ~= parentGui then gui.Parent = parentGui end
+			if not root.Visible and revealed and not minimized then root.Visible = true end
+		end)
+	end
+end)
 
 -- ===== ESP TIDAK TEMBUS KARAKTER SENDIRI (v3) =====
 task.spawn(function()
@@ -9624,7 +9566,7 @@ task.spawn(function()
 	local frame = 0
 	conns[#conns + 1] = RunService.RenderStepped:Connect(function()
 		frame = frame + 1
-		if frame % 3 ~= 0 then return end
+		if frame % 2 ~= 0 then return end
 		local char = lp.Character
 		for inst, kind in pairs(tracked) do
 			if not inst.Parent then
